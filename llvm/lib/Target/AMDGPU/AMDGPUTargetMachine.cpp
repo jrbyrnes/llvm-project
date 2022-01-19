@@ -54,6 +54,7 @@
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/SimplifyLibCalls.h"
 #include "llvm/Transforms/Vectorize.h"
+#include "OptSched/lib/Wrapper/OptimizingScheduler.cpp"
 
 using namespace llvm;
 
@@ -420,6 +421,7 @@ createIterativeILPMachineScheduler(MachineSchedContext *C) {
   DAG->addMutation(createAMDGPUMacroFusionDAGMutation());
   return DAG;
 }
+
 
 static MachineSchedRegistry
 SISchedRegistry("si", "Run SI's custom scheduler",
@@ -1082,6 +1084,7 @@ bool AMDGPUPassConfig::addGCPasses() {
 
 llvm::ScheduleDAGInstrs *
 AMDGPUPassConfig::createMachineScheduler(MachineSchedContext *C) const {
+  //createOptSched(C);
   ScheduleDAGMILive *DAG = createGenericSchedLive(C);
   DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
   return DAG;

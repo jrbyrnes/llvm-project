@@ -69,6 +69,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <stdio.h>
 
 using namespace llvm;
 
@@ -337,8 +338,24 @@ nextIfDebug(MachineBasicBlock::iterator I,
 
 /// Instantiate a ScheduleDAGInstrs that will be owned by the caller.
 ScheduleDAGInstrs *MachineScheduler::createMachineScheduler() {
+  MachineSchedRegistry *it = &DefaultSchedRegistry;
+  MachineSchedRegistry::ScheduleDAGCtor Ctor;
+
+  while (it->getName() != "optsched" && it->getNext() != nullptr) {
+    printf("found %s\n", it->getName().data());
+    it = it->getNext();
+  }
+
+  if (it->getName() == "optsched") {
+    printf("found %s!!!!!!!!\n", it->getName().data());
+    Ctor = it->getCtor();
+    return Ctor(this);
+  }
+
+  else {printf("didnt find optsched registry\n");}
+
   // Select the scheduler, or set the default.
-  MachineSchedRegistry::ScheduleDAGCtor Ctor = MachineSchedOpt;
+  Ctor = MachineSchedOpt;
   if (Ctor != useDefaultMachineSched)
     return Ctor(this);
 

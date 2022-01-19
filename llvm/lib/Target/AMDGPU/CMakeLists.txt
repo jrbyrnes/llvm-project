@@ -157,6 +157,9 @@ add_llvm_target(AMDGPUCodeGen
   SIShrinkInstructions.cpp
   SIWholeQuadMode.cpp
 
+  ADDITIONAL_HEADERS
+  OptSched/include/opt-sched/Scheduler
+
   LINK_COMPONENTS
   Analysis
   AsmPrinter
@@ -182,9 +185,13 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPU
   )
 
+
 add_subdirectory(AsmParser)
 add_subdirectory(Disassembler)
 add_subdirectory(MCA)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)
 add_subdirectory(Utils)
+add_subdirectory(OptSched)
+
+target_link_libraries(LLVMAMDGPUCodeGen PRIVATE LLVMOptSched)
