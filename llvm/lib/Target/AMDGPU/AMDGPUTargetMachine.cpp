@@ -1035,7 +1035,7 @@ ScheduleDAGInstrs *GCNPassConfig::createMachineScheduler(
   //if (ST.enableSIScheduler())
   //  return createSIMachineScheduler(C);
   //return createGCNMaxOccupancyMachineScheduler(C);
-  return createOptSchedGCN();
+  return createOptSchedGCN(C);
 }
 
 bool GCNPassConfig::addPreISel() {
