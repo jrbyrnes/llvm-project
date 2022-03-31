@@ -397,13 +397,19 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
   MachineOperand &MO = MI->getOperand(OperIdx);
   Register Reg = MO.getReg();
 
+  //errs() << "Processing def ";
+  //MO.print(errs());
+  //errs() << "\n";
+  //errs() << "Maps to reg ";
+  //errs() << Reg.id();
+  //errs() << "\n";
+
   LaneBitmask DefLaneMask;
   LaneBitmask KillLaneMask;
   if (TrackLaneMasks) {
     bool IsKill = MO.getSubReg() == 0 || MO.isUndef();
     DefLaneMask = getLaneMaskForMO(MO);
-    // If we have a <read-undef> flag, none of the lane values comes from an
-    // earlier instruction.
+
     KillLaneMask = IsKill ? LaneBitmask::getAll() : DefLaneMask;
 
     if (MO.getSubReg() != 0 && MO.isUndef()) {
@@ -422,6 +428,7 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
     // Def is first.
     MO.setIsUndef(false);
   } else {
+
     DefLaneMask = LaneBitmask::getAll();
     KillLaneMask = LaneBitmask::getAll();
   }
@@ -447,23 +454,27 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
         Dep.setLatency(SchedModel.computeOperandLatency(MI, OperIdx, Use,
                                                         I->OperandIndex));
         ST.adjustSchedDependency(SU, OperIdx, UseSU, I->OperandIndex, Dep);
+
         UseSU->addPred(Dep);
       }
+
 
       LaneMask &= ~KillLaneMask;
       // If we found a Def for all lanes of this use, remove it from the list.
       if (LaneMask.any()) {
         I->LaneMask = LaneMask;
         ++I;
-      } else
+      } else {
         I = CurrentVRegUses.erase(I);
+      }
     }
   }
 
   // Shortcut: Singly defined vregs do not have output/anti dependencies.
-  if (MRI.hasOneDef(Reg))
+  if (MRI.hasOneDef(Reg)) {
+    //errs() << "This is only def for reg, exiting\n";
     return;
-
+  }
   // Add output dependence to the next nearest defs of this vreg.
   //
   // Unless this definition is dead, the output dependence should be
@@ -489,6 +500,7 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
     SDep Dep(SU, SDep::Output, Reg);
     Dep.setLatency(
       SchedModel.computeOutputLatency(MI, OperIdx, DefSU->getInstr()));
+
     DefSU->addPred(Dep);
 
     // Update current definition. This can get tricky if the def was about a
@@ -524,6 +536,11 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
                                         : LaneBitmask::getAll();
   CurrentVRegUses.insert(VReg2SUnitOperIdx(Reg, LaneMask, OperIdx, SU));
 
+  //MO.print(errs());
+  //errs() << "USE has LaneMask ";
+  //errs() << LaneMask.getAsInteger();
+  //errs() << "\n";
+ 
   // Add antidependences to the following defs of the vreg.
   for (VReg2SUnit &V2SU : make_range(CurrentVRegDefs.find(Reg),
                                      CurrentVRegDefs.end())) {
@@ -533,6 +550,10 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
       continue;
     if (V2SU.SU == SU)
       continue;
+
+    //V2SU.SU->getInstr()->print(errs());
+    //errs() << "is a Succ of ";
+    //SU->getInstr()->print(errs());
 
     V2SU.SU->addPred(SDep(SU, SDep::Anti, Reg));
   }
@@ -843,11 +864,18 @@ void ScheduleDAGInstrs::buildSchedGraph(AAResults *AA,
     // on the operand list before the def. Do two passes over the operand
     // list to make sure that defs are processed before any uses.
     bool HasVRegDef = false;
+    //errs() << "\n\n\nParsing ";
+    //SU->getInstr()->print(errs());
     for (unsigned j = 0, n = MI.getNumOperands(); j != n; ++j) {
       const MachineOperand &MO = MI.getOperand(j);
       if (!MO.isReg() || !MO.isDef())
         continue;
       Register Reg = MO.getReg();
+      //errs() << "Found def for ";
+      //SU->getInstr()->print(errs());
+      //errs() << "On";
+      //MO.print(errs());
+      //errs() << "\n";
       if (Register::isPhysicalRegister(Reg)) {
         addPhysRegDeps(SU, j);
       } else if (Register::isVirtualRegister(Reg)) {
@@ -865,6 +893,11 @@ void ScheduleDAGInstrs::buildSchedGraph(AAResults *AA,
       if (!MO.isReg() || !MO.isUse())
         continue;
       Register Reg = MO.getReg();
+      //errs() << "Found use for ";
+      //SU->getInstr()->print(errs());
+      //errs() << "On";
+      //MO.print(errs());
+      //errs() << "\n";
       if (Register::isPhysicalRegister(Reg)) {
         addPhysRegDeps(SU, j);
       } else if (Register::isVirtualRegister(Reg) && MO.readsReg()) {

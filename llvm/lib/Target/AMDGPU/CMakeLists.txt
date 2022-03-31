@@ -168,7 +168,7 @@ add_llvm_target(AMDGPUCodeGen
   SelectionDAG
   Support
   Target
-  TransformUtils
+ TransformUtils
   Vectorize
   GlobalISel
   BinaryFormat
@@ -184,5 +184,7 @@ add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)
 add_subdirectory(Utils)
 add_subdirectory(OptSched)
+
+target_compile_options(LLVMAMDGPUCodeGen PRIVATE -Wno-suggest-override)
 
 target_link_libraries(LLVMAMDGPUCodeGen PRIVATE LLVMOptSched)

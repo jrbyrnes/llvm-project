@@ -33,6 +33,8 @@
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/DebugCounter.h"
 #include "llvm/Support/TargetParser.h"
+#include "llvm/Support/raw_ostream.h"
+
 using namespace llvm;
 
 #define DEBUG_TYPE "si-insert-waitcnts"
@@ -1527,6 +1529,7 @@ bool SIInsertWaitcnts::insertWaitcntInBlock(MachineFunction &MF,
 }
 
 bool SIInsertWaitcnts::runOnMachineFunction(MachineFunction &MF) {
+  errs() << "In insert waitcnts\n";
   ST = &MF.getSubtarget<GCNSubtarget>();
   TII = ST->getInstrInfo();
   TRI = &TII->getRegisterInfo();

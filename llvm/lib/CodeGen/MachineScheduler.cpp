@@ -402,6 +402,8 @@ bool MachineScheduler::runOnMachineFunction(MachineFunction &mf) {
   } else if (!mf.getSubtarget().enableMachineScheduler())
     return false;
 
+  //dbgs() << "Before MISched:\n"; mf.print(dbgs()); 
+
   LLVM_DEBUG(dbgs() << "Before MISched:\n"; mf.print(dbgs()));
 
   // Initialize the context of the pass.
@@ -423,6 +425,8 @@ bool MachineScheduler::runOnMachineFunction(MachineFunction &mf) {
   // optimization level.
   std::unique_ptr<ScheduleDAGInstrs> Scheduler(createMachineScheduler());
   scheduleRegions(*Scheduler, false);
+
+  //mf.print(errs());
 
   LLVM_DEBUG(LIS->dump());
   if (VerifyScheduling)

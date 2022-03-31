@@ -1,0 +1,361 @@
+./clang/utils/creduce-clang-crash.py:               r"\*\*\* Bad machine code: .+ \*\*\*",
+Binary file ./build/bin/llvm-lto matches
+Binary file ./build/bin/llvm-isel-fuzzer matches
+Binary file ./build/bin/llc matches
+Binary file ./build/bin/clang-13 matches
+Binary file ./build/bin/opt matches
+Binary file ./build/bin/llvm-gsymutil matches
+Binary file ./build/bin/llvm-lto2 matches
+Binary file ./build/bin/lli matches
+Binary file ./build/bin/dsymutil matches
+Binary file ./build/bin/llvm-c-test matches
+Binary file ./build/bin/llvm-dwp matches
+Binary file ./build/bin/clang-check matches
+Binary file ./build/bin/bugpoint matches
+Binary file ./build/bin/lld matches
+Binary file ./build/bin/llvm-exegesis matches
+Binary file ./build/bin/llvm-opt-fuzzer matches
+Binary file ./build/lib/libLLVMCodeGen.a matches
+Binary file ./build/lib/CodeGen/CMakeFiles/LLVMCodeGen.dir/MachineVerifier.cpp.o matches
+Binary file ./build/lib/libclang.so.13 matches
+Binary file ./build/lib/libLTO.so.13git matches
+./llvm/test/MachineVerifier/test_g_dyn_stackalloc.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/verifier-statepoint.mir:# CHECK: Bad machine code: STATEPOINT defs expected to be tied
+./llvm/test/MachineVerifier/verifier-statepoint.mir:# CHECK: Bad machine code: STATEPOINT def tied to non-gc operand
+./llvm/test/MachineVerifier/verifier-statepoint.mir:# CHECK: Bad machine code: STATEPOINT def tied to non-gc operand
+./llvm/test/MachineVerifier/test_g_sextload.mir:    ; CHECK: Bad machine code: Generic memory instruction must access a pointer
+./llvm/test/MachineVerifier/test_g_sextload.mir:    ; CHECK: *** Bad machine code: Generic instruction accessing memory must have one mem operand ***
+./llvm/test/MachineVerifier/test_g_sextload.mir:    ; CHECK: Bad machine code: Generic extload must have a narrower memory type
+./llvm/test/MachineVerifier/test_g_sextload.mir:    ; CHECK: Bad machine code: Generic extload must have a narrower memory type
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: Explicit definition marked as use
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: ptrtoint result type must not be a pointer
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: ptrtoint result type must not be a pointer
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: ptrtoint source type must be a pointer
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_ptrtoint.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_ubfx_sbfx.mir:    ; CHECK: *** Bad machine code: Bitfield extraction is not supported on vectors ***
+./llvm/test/MachineVerifier/test_g_ubfx_sbfx.mir:    ; CHECK: *** Bad machine code: Bitfield extraction is not supported on vectors ***
+./llvm/test/MachineVerifier/generic-vreg-undef-use.mir:    ; CHECK: *** Bad machine code: Generic virtual register use cannot be undef ***
+./llvm/test/MachineVerifier/generic-vreg-undef-use.mir:    ; CHECK: *** Bad machine code: Generic virtual register use cannot be undef ***
+./llvm/test/MachineVerifier/generic-vreg-undef-use.mir:    ; CHECK: *** Bad machine code: Generic virtual register use cannot be undef ***
+./llvm/test/MachineVerifier/test_g_bitcast.mir:   ; CHECK:  Bad machine code: bitcast cannot convert between pointers and other types
+./llvm/test/MachineVerifier/test_g_bitcast.mir:    ; CHECK:  Bad machine code: bitcast cannot convert between pointers and other
+./llvm/test/MachineVerifier/test_g_bitcast.mir:    ; CHECK: Bad machine code: bitcast sizes must match
+./llvm/test/MachineVerifier/test_g_bitcast.mir:    ; CHECK: Bad machine code: bitcast sizes must match
+./llvm/test/MachineVerifier/test_g_bitcast.mir:    ; CHECK: Bad machine code: bitcast sizes must match
+./llvm/test/MachineVerifier/test_g_bitcast.mir:    ; CHECK: Bad machine code: bitcast sizes must match
+./llvm/test/MachineVerifier/test_g_bitcast.mir:    ; CHECK: Bad machine code: bitcast must change the type
+./llvm/test/MachineVerifier/verify-regbankselected.mir:# CHECK: *** Bad machine code: Generic virtual register must have a bank in a RegBankSelected function ***
+./llvm/test/MachineVerifier/test_g_jump_table.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Incorrect mask operand type for G_SHUFFLE_VECTOR
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Incorrect mask operand type for G_SHUFFLE_VECTOR
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Incorrect mask operand type for G_SHUFFLE_VECTOR
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Incorrect mask operand type for G_SHUFFLE_VECTOR
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Wrong result type for shufflemask
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Wrong result type for shufflemask
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: G_SHUFFLE_VECTOR cannot change element type
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Source operands must be the same type
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Out of bounds shuffle index
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Out of bounds shuffle index
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Source operands must be the same type
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: G_SHUFFLE_VECTOR cannot change element type
+./llvm/test/MachineVerifier/test_g_shuffle_vector.mir:    ; CHECK: Bad machine code: Out of bounds shuffle index
+./llvm/test/MachineVerifier/live-ins-02.mir:# CHECK: *** Bad machine code: Live in register not found to be live out from predecessor. ***
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR must produce a vector from scalar operands
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR must produce a vector from scalar operands
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR must have an operand for each elemement
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR result element type must match source type
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR must have an operand for each elemement
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR result element type must match source type
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR must have an operand for each elemement
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR result element type must match source type
+./llvm/test/MachineVerifier/test_g_build_vector.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR result element type must match source type
+./llvm/test/MachineVerifier/verifier-pseudo-terminators.mir:# CHECK: *** Bad machine code: MBB exits via jump or conditional branch, but its target isn't a CFG successor! ***
+./llvm/test/MachineVerifier/verifier-pseudo-terminators.mir:# CHECK: *** Bad machine code: MBB has unexpected successors which are not branch targets, fallthrough, EHPads, or inlineasm_br targets. ***
+./llvm/test/MachineVerifier/test_g_fconstant.mir:    ; CHECK: Bad machine code: Instruction cannot use a vector result type
+./llvm/test/MachineVerifier/test_g_fconstant.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_fconstant.mir:    ; CHECK: Bad machine code:  G_FCONSTANT operand must be fpimm
+./llvm/test/MachineVerifier/test_g_fconstant.mir:    ; CHECK: Bad machine code:  G_FCONSTANT operand must be fpimm
+./llvm/test/MachineVerifier/test_g_fconstant.mir:   ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/test_g_fconstant.mir:    ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/live-ins-01.mir:# CHECK: *** Bad machine code: Live in register not found to be live out from predecessor. ***
+./llvm/test/MachineVerifier/test_g_assert_zext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT source and destination register banks must match ***
+./llvm/test/MachineVerifier/test_g_assert_zext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT source and destination register classes must match ***
+./llvm/test/MachineVerifier/test_g_assert_zext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT source and destination register classes must match ***
+./llvm/test/MachineVerifier/test_g_assert_zext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT source and destination register banks must match ***
+./llvm/test/MachineVerifier/test_g_assert_zext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT source and destination register banks must match ***
+./llvm/test/MachineVerifier/test_g_assert_zext_register_bank_class.mir:   ; CHECK: *** Bad machine code: Generic instruction cannot have physical register ***
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: Explicit definition marked as use
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: inttoptr result type must be a pointer
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: inttoptr result type must be a pointer
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_inttoptr.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_zextload.mir:    ; CHECK: Bad machine code: Generic memory instruction must access a pointer
+./llvm/test/MachineVerifier/test_g_zextload.mir:    ; CHECK: *** Bad machine code: Generic instruction accessing memory must have one mem operand ***
+./llvm/test/MachineVerifier/test_g_zextload.mir:    ; CHECK: Bad machine code: Generic extload must have a narrower memory type
+./llvm/test/MachineVerifier/test_g_zextload.mir:    ; CHECK: Bad machine code: Generic extload must have a narrower memory type
+./llvm/test/MachineVerifier/test_g_assert_sext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT source and destination register banks must match ***
+./llvm/test/MachineVerifier/test_g_assert_sext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT source and destination register classes must match ***
+./llvm/test/MachineVerifier/test_g_assert_sext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT source and destination register classes must match ***
+./llvm/test/MachineVerifier/test_g_assert_sext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT source and destination register banks must match ***
+./llvm/test/MachineVerifier/test_g_assert_sext_register_bank_class.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT source and destination register banks must match ***
+./llvm/test/MachineVerifier/test_g_assert_sext_register_bank_class.mir:   ; CHECK: *** Bad machine code: Generic instruction cannot have physical register ***
+./llvm/test/MachineVerifier/verifier-phi-fail0.mir:# CHECK: Bad machine code: PHI operand is not live-out from predecessor
+./llvm/test/MachineVerifier/verifier-phi-fail0.mir:# CHECK: Bad machine code: PHI operand is not live-out from predecessor
+./llvm/test/MachineVerifier/test_vector_reductions.mir:    ; CHECK: Bad machine code: Vector reduction requires a scalar destination type
+./llvm/test/MachineVerifier/test_vector_reductions.mir:    ; CHECK: Bad machine code: Sequential FADD/FMUL vector reduction requires a scalar 1st operand
+./llvm/test/MachineVerifier/test_vector_reductions.mir:    ; CHECK: Bad machine code: Sequential FADD/FMUL vector reduction must have a vector 2nd operand
+./llvm/test/MachineVerifier/test_vector_reductions.mir:    ; CHECK: Bad machine code: Vector reduction requires vector source
+./llvm/test/MachineVerifier/verifier-generic-types-2.mir:# CHECK: Bad machine code: Generic instruction is missing a virtual register type
+./llvm/test/MachineVerifier/verifier-generic-types-2.mir:# CHECK: Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_store.mir:    ; CHECK: Bad machine code: Generic memory instruction must access a pointer
+./llvm/test/MachineVerifier/test_g_store.mir:    ; CHECK: Bad machine code: store memory size cannot exceed value size
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: Explicit definition marked as use
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: generic instruction must use register operands
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_add.mir:    ; CHECK: Bad machine code: Generic virtual register does not allow subregister index
+./llvm/test/MachineVerifier/verifier-generic-types-1.mir:# CHECK: Bad machine code: Generic instruction is missing a virtual register type
+./llvm/test/MachineVerifier/test_g_fcmp.mir:   ; CHECK: Bad machine code: Generic vector icmp/fcmp must preserve number of lanes
+./llvm/test/MachineVerifier/test_g_fcmp.mir:    ; CHECK: Bad machine code: Generic vector icmp/fcmp must preserve number of lanes
+./llvm/test/MachineVerifier/test_g_fcmp.mir:    ; CHECK: Bad machine code: Generic vector icmp/fcmp must preserve number of
+./llvm/test/MachineVerifier/test_g_fcmp.mir:    ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_phi.mir:    ; CHECK: Bad machine code: Generic Instruction G_PHI has operands with incompatible/missing types
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK:  Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: ptrmask result type must be a pointer
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK:  Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: ptrmask mask type must be an integer
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: ptrmask result type must be a pointer
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK:  Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: ptrmask mask type must be an integer
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_ptrmask.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_build_vector_trunc.mir:    ; CHECK: Bad machine code: G_BUILD_VECTOR_TRUNC source operand types are not larger than dest elt type
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: G_INTRINSIC used with intrinsic that accesses memory
+./llvm/test/MachineVerifier/test_g_intrinsic.mir:    ; CHECK: Bad machine code: G_INTRINSIC used with intrinsic that accesses memory
+./llvm/test/MachineVerifier/test_g_ptr_add.mir:    ; CHECK:  Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptr_add.mir:    ; CHECK:  Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptr_add.mir:    ; CHECK: Bad machine code: gep offset operand must not be a pointer
+./llvm/test/MachineVerifier/test_g_ptr_add.mir:    ; CHECK: Bad machine code: Type mismatch in generic instruction
+./llvm/test/MachineVerifier/test_g_ptr_add.mir:    ; CHECK: Bad machine code: gep first operand must be a pointer
+./llvm/test/MachineVerifier/test_g_intrinsic_w_side_effects.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_intrinsic_w_side_effects.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic_w_side_effects.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic_w_side_effects.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic_w_side_effects.mir:    ; CHECK: Bad machine code: G_INTRINSIC first src operand must be an intrinsic ID
+./llvm/test/MachineVerifier/test_g_intrinsic_w_side_effects.mir:    ; CHECK: Bad machine code: G_INTRINSIC_W_SIDE_EFFECTS used with readnone intrinsic
+./llvm/test/MachineVerifier/test_g_extract.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_extract.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_extract.mir:    ; CHECK: Bad machine code: extract source must be a register
+./llvm/test/MachineVerifier/test_g_extract.mir:    ; CHECK: Bad machine code: extract offset must be a constant
+./llvm/test/MachineVerifier/test_g_extract.mir:    ; CHECK: Bad machine code: extract source must be larger than result
+./llvm/test/MachineVerifier/test_g_extract.mir:    ; CHECK: Bad machine code: extract reads past end of register
+./llvm/test/MachineVerifier/test_copy_mismatch_types.mir:    ; CHECK: Bad machine code: Copy Instruction is illegal with mismatching types
+./llvm/test/MachineVerifier/test_g_bzero.mir:    ; CHECK: *** Bad machine code: bzero must have 1 memory operand ***
+./llvm/test/MachineVerifier/test_g_bzero.mir:    ; CHECK: *** Bad machine code: bzero memory operand must be a store ***
+./llvm/test/MachineVerifier/test_g_bzero.mir:    ; CHECK: *** Bad machine code: Missing mayLoad flag ***
+./llvm/test/MachineVerifier/test_g_bzero.mir:    ; CHECK: *** Bad machine code: bzero memory operand must be a store ***
+./llvm/test/MachineVerifier/test_g_bzero.mir:    ; CHECK: *** Bad machine code: inconsistent bzero address space ***
+./llvm/test/MachineVerifier/test_g_bzero.mir:   ; CHECK: *** Bad machine code: bzero operand must be a pointer ***
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: Explicit definition marked as use
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: addrspacecast types must be pointers
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: addrspacecast types must be pointers
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: addrspacecast types must be pointers
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: addrspacecast types must be pointers
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: addrspacecast must convert different address spaces
+./llvm/test/MachineVerifier/test_g_addrspacecast.mir:    ; CHECK: Bad machine code: addrspacecast must convert different address spaces
+./llvm/test/MachineVerifier/test_g_trunc.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_trunc.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_trunc.mir:    ; CHECK: Bad machine code: Explicit definition marked as use
+./llvm/test/MachineVerifier/live-ins-03.mir:# CHECK: *** Bad machine code: Live in register not found to be live out from predecessor. ***
+./llvm/test/MachineVerifier/test_copy.mir:    ; CHECK: Bad machine code: Copy Instruction is illegal with mismatching sizes
+./llvm/test/MachineVerifier/test_phis_precede_nonphis.mir:# CHECK-NOT: Bad machine code
+./llvm/test/MachineVerifier/test_phis_precede_nonphis.mir:# CHECK-LABEL: Bad machine code: Found PHI instruction after non-PHI
+./llvm/test/MachineVerifier/test_phis_precede_nonphis.mir:# CHECK-NOT: Bad machine code
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT expects an immediate operand #2 ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT expects an immediate operand #2 ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT size must be >= 1 ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_SEXT size must be less than source bit width ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_assert_sext.mir:   ; CHECK: *** Bad machine code: Generic instruction cannot have physical register ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT expects an immediate operand #2 ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT expects an immediate operand #2 ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT size must be >= 1 ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: G_ASSERT_ZEXT size must be less than source bit width ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_assert_zext.mir:   ; CHECK: *** Bad machine code: Generic instruction cannot have physical register ***
+./llvm/test/MachineVerifier/test_g_brjt.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_concat_vectors.mir:    ; CHECK: Bad machine code: G_CONCAT_VECTOR num dest and source elements should match
+./llvm/test/MachineVerifier/test_g_concat_vectors.mir:    ; CHECK: Bad machine code: G_CONCAT_VECTOR requires at least 2 source operands
+./llvm/test/MachineVerifier/test_g_concat_vectors.mir:    ; CHECK: *** Bad machine code: Explicit definition marked as use ***
+./llvm/test/MachineVerifier/test_g_icmp.mir:   ; CHECK: Bad machine code: Generic vector icmp/fcmp must preserve number of lanes
+./llvm/test/MachineVerifier/test_g_icmp.mir:    ; CHECK: Bad machine code: Generic vector icmp/fcmp must preserve number of lanes
+./llvm/test/MachineVerifier/test_g_icmp.mir:    ; CHECK: Bad machine code: Generic vector icmp/fcmp must preserve number of
+./llvm/test/MachineVerifier/test_g_icmp.mir:    ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_constant.mir:   ; CHECK: Bad machine code: Instruction cannot use a vector result type
+./llvm/test/MachineVerifier/test_g_constant.mir:   ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code:  G_CONSTANT operand must be cimm
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code:  G_CONSTANT operand must be cimm
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/test_g_constant.mir:    ; CHECK: Bad machine code: inconsistent constant size
+./llvm/test/MachineVerifier/verifier-implicit-virtreg-invalid-physreg-liveness.mir:# ERROR: *** Bad machine code: Using an undefined physical register ***
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: Too few operands
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: generic instruction must use register operands
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: generic instruction must use register operands
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: generic instruction must use register operands
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: insert source must be a register
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: insert writes past end of register
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: insert offset must be a constant
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: insert offset must be a constant
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: inserted size must be smaller than total register
+./llvm/test/MachineVerifier/test_g_insert.mir:    ; CHECK: Bad machine code: inserted size must be smaller than total register
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: memcpy/memmove must have 2 memory operands ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: memcpy/memmove must have 2 memory operands ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: memcpy/memmove must have 2 memory operands ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: wrong memory operand types ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: inconsistent memory operand sizes ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: inconsistent memory operand sizes ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: inconsistent memory operand sizes ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: inconsistent store address space ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: inconsistent load address space ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: memory instruction operand must be a pointer ***
+./llvm/test/MachineVerifier/test_g_memcpy.mir:    ; CHECK: *** Bad machine code: memory instruction operand must be a pointer ***
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: Generic extend/truncate can not operate on pointers
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: Generic extend has destination type no larger than source
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: Generic truncate has destination type no smaller than source ***
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: Generic extend/truncate can not operate on pointers
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: Generic extend has destination type no larger than source
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: Generic extend/truncate can not operate on pointers
+./llvm/test/MachineVerifier/verifier-generic-extend-truncate.mir:# CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_memset.mir:    ; CHECK: *** Bad machine code: memset must have 1 memory operand ***
+./llvm/test/MachineVerifier/test_g_memset.mir:    ; CHECK: *** Bad machine code: memset memory operand must be a store ***
+./llvm/test/MachineVerifier/test_g_memset.mir:    ; CHECK: *** Bad machine code: Missing mayLoad flag ***
+./llvm/test/MachineVerifier/test_g_memset.mir:    ; CHECK: *** Bad machine code: memset memory operand must be a store ***
+./llvm/test/MachineVerifier/test_g_memset.mir:    ; CHECK: *** Bad machine code: inconsistent memset address space ***
+./llvm/test/MachineVerifier/test_g_memset.mir:   ; CHECK: *** Bad machine code: memset operand must be a pointer ***
+./llvm/test/MachineVerifier/test_g_load.mir:    ; CHECK: Bad machine code: Generic memory instruction must access a pointer
+./llvm/test/MachineVerifier/test_g_load.mir:    ; CHECK: Bad machine code: load memory size cannot exceed result size
+./llvm/test/MachineVerifier/verify-regops.mir:# CHECK: *** Bad machine code: Expected a register operand. ***
+./llvm/test/MachineVerifier/verify-regops.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/MachineVerifier/verify-selected.mir:   ; CHECK: *** Bad machine code: Unexpected generic instruction in a Selected function ***
+./llvm/test/MachineVerifier/verify-selected.mir:   ; CHECK: *** Bad machine code: Generic virtual register invalid in a Selected function ***
+./llvm/test/MachineVerifier/test_g_merge_values.mir:    ; CHECK: Bad machine code: G_MERGE_VALUES cannot operate on vectors
+./llvm/test/MachineVerifier/test_g_merge_values.mir:    ; CHECK: Bad machine code: G_MERGE_VALUES result size is inconsistent
+./llvm/test/MachineVerifier/test_g_merge_values.mir:    ; CHECK: Bad machine code: G_MERGE_VALUES result size is inconsistent
+./llvm/test/MachineVerifier/test_g_merge_values.mir:    ; CHECK: Bad machine code: G_MERGE_VALUES source types do not match
+./llvm/test/MachineVerifier/test_g_select.mir:    ; CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/MachineVerifier/test_g_select.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_select.mir:    ; CHECK: Bad machine code: operand types must preserve number of vector elements
+./llvm/test/MachineVerifier/test_g_sext_inreg.mir:   ; CHECK: *** Bad machine code: G_SEXT_INREG expects an immediate operand #2 ***
+./llvm/test/MachineVerifier/test_g_sext_inreg.mir:   ; CHECK: *** Bad machine code: G_SEXT_INREG expects an immediate operand #2 ***
+./llvm/test/MachineVerifier/test_g_sext_inreg.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_sext_inreg.mir:   ; CHECK: *** Bad machine code: Type mismatch in generic instruction ***
+./llvm/test/MachineVerifier/test_g_sext_inreg.mir:   ; CHECK: *** Bad machine code: G_SEXT_INREG size must be >= 1 ***
+./llvm/test/MachineVerifier/test_g_sext_inreg.mir:   ; CHECK: *** Bad machine code: G_SEXT_INREG size must be less than source bit width ***
+./llvm/test/DebugInfo/MIR/AArch64/no-dbg-value-after-terminator.mir:# CHECK: *** Bad machine code: Non-terminator instruction after the first terminator ***
+./llvm/test/CodeGen/PowerPC/two-address-crash.mir:# Bad machine code: Two-address instruction operands must be identical
+./llvm/test/CodeGen/Mips/indirect-jump-hazard/guards-verify-call.mir:# CHECK: Bad machine code: invalid instruction when using jump guards!
+./llvm/test/CodeGen/Mips/indirect-jump-hazard/guards-verify-tailcall.mir:# CHECK: Bad machine code: invalid instruction when using jump guards!
+./llvm/test/CodeGen/AArch64/PHIElimination-crash.mir:#     *** Bad machine code: LiveVariables: Block should not be in AliveBlocks ***
+./llvm/test/CodeGen/AArch64/GlobalISel/legalize-inttoptr-xfail-2.mir:# CHECK: Bad machine code: operand types must be all-vector or all-scalar
+./llvm/test/CodeGen/AArch64/GlobalISel/legalize-inttoptr-xfail-1.mir:# CHECK:  Bad machine code: inttoptr result type must be a pointer
+./llvm/test/CodeGen/AArch64/GlobalISel/legalize-inttoptr-xfail-1.mir:# CHECK: Bad machine code: inttoptr source type must not be a pointer
+./llvm/test/CodeGen/MIR/Generic/dbg-value-missing-loc.mir:# CHECK: Bad machine code: Missing DebugLoc for debug instruction
+./llvm/test/CodeGen/MIR/X86/machine-verifier.mir:   ; CHECK: *** Bad machine code: Too few operands ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Addressing mode operands corrupt! ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Addressing mode operands corrupt! ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/CodeGen/SystemZ/mverify-optypes.mir:# CHECK: *** Bad machine code: Expected a non-register operand. ***
+./llvm/test/CodeGen/SystemZ/undef-flag.ll:; CHECK-NOT: *** Bad machine code: Using an undefined physical register ***
+./llvm/test/CodeGen/AMDGPU/verify-constant-bus-violations.mir:# GFX9-ERR: *** Bad machine code: VOP* instruction violates constant bus restriction ***
+./llvm/test/CodeGen/AMDGPU/verify-constant-bus-violations.mir:# GFX10-ERR: *** Bad machine code: VOP* instruction violates constant bus restriction ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:    ; CHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:# ; XCHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:# ; XCHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/verify-gfx90a-aligned-vgprs.mir:# ; XCHECK: *** Bad machine code: Subtarget requires even aligned vector registers ***
+./llvm/test/CodeGen/AMDGPU/at-least-one-def-value-assert.mir:# CHECK: *** Bad machine code: No live subrange at use ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/verify-ds-gws-align.mir:# GFX90A-ERR: *** Bad machine code: Subtarget requires even aligned vector registers for DS_GWS instructions ***
+./llvm/test/CodeGen/AMDGPU/GlobalISel/insertelement.ll:; ERR: Bad machine code: VOP* instruction violates constant bus restriction
+./llvm/test/CodeGen/AMDGPU/verify-sop.mir:# CHECK: *** Bad machine code: SOP2/SOPC instruction requires too many immediate constants
+./llvm/test/CodeGen/AMDGPU/verify-sop.mir:# CHECK: *** Bad machine code: SOP2/SOPC instruction requires too many immediate constants
+./llvm/test/CodeGen/AMDGPU/verify-sop.mir:# CHECK-NOT: Bad machine code
+./llvm/test/CodeGen/ARM/machine-verifier.mir:   ; CHECK: *** Bad machine code: Unsupported register in Thumb1 push/pop ***
+./llvm/test/CodeGen/ARM/machine-verifier.mir:   ; CHECK: *** Bad machine code: Non-flag-setting Thumb1 mov is v6-only ***
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# We are expecting four "Bad machine code" when subregister liveness is used.
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB-NOT: Bad machine code
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB: Bad machine code: Live range continues after dead def flag
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB-NOT: Bad machine code
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB: Bad machine code: Live range continues after dead def flag
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB-NOT: Bad machine code
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB: Bad machine code: Live range continues after dead def flag
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB: Bad machine code: Live range continues after dead def flag
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-SUB-NOT: Bad machine code
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-NOSUB-NOT: Bad machine code
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-NOSUB: Bad machine code: Live range continues after dead def flag
+./llvm/test/CodeGen/Hexagon/verify-liveness-at-def.mir:# CHECK-NOSUB-NOT: Bad machine code
+./llvm/test/CodeGen/RISCV/verify-instr.mir:# CHECK: *** Bad machine code: Invalid immediate ***
+./llvm/test/CodeGen/X86/coalesce-dbg-value-subreg-rewrite.mir:# do before the bugfix, which resulted in "Bad machine code: Illegal
+./llvm/lib/CodeGen/MachineVerifier.cpp:  errs() << "*** Bad machine code: " << msg << " ***\n"

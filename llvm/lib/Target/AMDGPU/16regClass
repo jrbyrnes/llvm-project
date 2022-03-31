@@ -1,0 +1,416 @@
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 53 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 53 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 53 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 53}
+INFO: End of first pass through
+ (Time = 53 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 53}
+INFO: End of second pass through (Time = 53 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 59 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 60 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 60 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 60}
+INFO: End of first pass through
+ (Time = 60 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 60}
+INFO: End of second pass through (Time = 60 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 63 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 63 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 63 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 63}
+INFO: End of first pass through
+ (Time = 63 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 63}
+INFO: End of second pass through (Time = 63 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 67 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 67 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 67 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 67}
+INFO: End of first pass through
+ (Time = 67 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 67}
+INFO: End of second pass through (Time = 67 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 70 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 70 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 70 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 70}
+INFO: End of first pass through
+ (Time = 70 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 70}
+INFO: End of second pass through (Time = 70 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 73 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 73 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 73 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 73}
+INFO: End of first pass through
+ (Time = 73 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 73}
+INFO: End of second pass through (Time = 73 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 76 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 76 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 76 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 76}
+INFO: End of first pass through
+ (Time = 76 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 76}
+INFO: End of second pass through (Time = 76 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 80 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 80 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 80 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 80}
+INFO: End of first pass through
+ (Time = 80 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 80}
+INFO: End of second pass through (Time = 80 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 83 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 83 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 83 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 83}
+INFO: End of first pass through
+ (Time = 83 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 83}
+INFO: End of second pass through (Time = 83 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 86 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 86 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 86 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 86}
+INFO: End of first pass through
+ (Time = 86 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 87}
+INFO: End of second pass through (Time = 87 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 90 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 90 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 90 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 90}
+INFO: End of first pass through
+ (Time = 90 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 90}
+INFO: End of second pass through (Time = 90 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 93 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 93 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 93 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 93}
+INFO: End of first pass through
+ (Time = 93 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 93}
+INFO: End of second pass through (Time = 93 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 96 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 96 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 96 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 96}
+INFO: End of first pass through
+ (Time = 96 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 96}
+INFO: End of second pass through (Time = 96 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 99 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 99 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 99 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 100}
+INFO: End of first pass through
+ (Time = 100 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 100}
+INFO: End of second pass through (Time = 100 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 103 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 103 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 103 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 103}
+INFO: End of first pass through
+ (Time = 103 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 103}
+INFO: End of second pass through (Time = 103 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 106 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 106 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 106 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 106}
+INFO: End of first pass through
+ (Time = 106 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 106}
+INFO: End of second pass through (Time = 106 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 109 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 109 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 109 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 110}
+INFO: End of first pass through
+ (Time = 110 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 110}
+INFO: End of second pass through (Time = 110 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 113 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 113 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 113 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 113}
+INFO: End of first pass through
+ (Time = 113 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 113}
+INFO: End of second pass through (Time = 113 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 116 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 116 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 116 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 116}
+INFO: End of first pass through
+ (Time = 116 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 116}
+INFO: End of second pass through (Time = 116 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 119 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 119 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 119 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 120}
+INFO: End of first pass through
+ (Time = 120 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 120}
+INFO: End of second pass through (Time = 120 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 123 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 123 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 123 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 123}
+INFO: End of first pass through
+ (Time = 123 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 123}
+INFO: End of second pass through (Time = 123 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 126 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 126 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 126 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 126}
+INFO: End of first pass through
+ (Time = 126 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 126}
+INFO: End of second pass through (Time = 126 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 129 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 129 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 129 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 130}
+INFO: End of first pass through
+ (Time = 130 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 130}
+INFO: End of second pass through (Time = 130 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 133 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 133 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 133 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 133}
+INFO: End of first pass through
+ (Time = 133 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 133}
+INFO: End of second pass through (Time = 133 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 136 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 136 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 136 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 136}
+INFO: End of first pass through
+ (Time = 136 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 136}
+INFO: End of second pass through (Time = 136 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 140 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 140 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 140 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 140}
+INFO: End of first pass through
+ (Time = 140 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 140}
+INFO: End of second pass through (Time = 140 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 143 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 143 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 143 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 143}
+INFO: End of first pass through
+ (Time = 143 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 143}
+INFO: End of second pass through (Time = 143 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 146 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 146 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 146 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 146}
+INFO: End of first pass through
+ (Time = 146 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 146}
+INFO: End of second pass through (Time = 146 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 149 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 149 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 149 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 149}
+INFO: End of first pass through
+ (Time = 149 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 149}
+INFO: End of second pass through (Time = 149 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 152 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 152 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 152 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 152}
+INFO: End of first pass through
+ (Time = 152 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 153}
+INFO: End of second pass through (Time = 153 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 156 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 156 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 156 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 156}
+INFO: End of first pass through
+ (Time = 156 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 156}
+INFO: End of second pass through (Time = 156 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 159 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 159 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 159 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 159}
+INFO: End of first pass through
+ (Time = 159 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 159}
+INFO: End of second pass through (Time = 159 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 162 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 162 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 162 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 162}
+INFO: End of first pass through
+ (Time = 162 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 162}
+INFO: End of second pass through (Time = 162 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 165 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 165 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 165 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 165}
+INFO: End of first pass through
+ (Time = 165 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 165}
+INFO: End of second pass through (Time = 165 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 168 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 168 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 168 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 169}
+INFO: End of first pass through
+ (Time = 169 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 169}
+INFO: End of second pass through (Time = 169 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 172 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 172 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 172 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 172}
+INFO: End of first pass through
+ (Time = 172 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 172}
+INFO: End of second pass through (Time = 172 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 175 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 175 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 175 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 175}
+INFO: End of first pass through
+ (Time = 175 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 175}
+INFO: End of second pass through (Time = 175 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 179 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 179 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 179 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 179}
+INFO: End of first pass through
+ (Time = 179 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 179}
+INFO: End of second pass through (Time = 179 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 182 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 182 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 182 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 182}
+INFO: End of first pass through
+ (Time = 182 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 182}
+INFO: End of second pass through (Time = 182 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 185 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 185 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 185 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 185}
+INFO: End of first pass through
+ (Time = 185 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 185}
+INFO: End of second pass through (Time = 185 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 189 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 189 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 189 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 189}
+INFO: End of first pass through
+ (Time = 189 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 189}
+INFO: End of second pass through (Time = 189 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 192 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 192 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 192 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 192}
+INFO: End of first pass through
+ (Time = 192 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 192}
+INFO: End of second pass through (Time = 192 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 196 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 196 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 196 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 196}
+INFO: End of first pass through
+ (Time = 196 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 196}
+INFO: End of second pass through (Time = 196 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 199 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 199 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 199 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 199}
+INFO: End of first pass through
+ (Time = 199 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 199}
+INFO: End of second pass through (Time = 199 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 202 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 202 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 202 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 202}
+INFO: End of first pass through
+ (Time = 202 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 202}
+INFO: End of second pass through (Time = 202 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 206 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 206 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 206 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 206}
+INFO: End of first pass through
+ (Time = 206 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 206}
+INFO: End of second pass through (Time = 206 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 209 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 209 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 209 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 209}
+INFO: End of first pass through
+ (Time = 209 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 209}
+INFO: End of second pass through (Time = 209 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 212 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 212 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 212 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 213}
+INFO: End of first pass through
+ (Time = 213 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 213}
+INFO: End of second pass through (Time = 213 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 216 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 216 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 216 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 216}
+INFO: End of first pass through
+ (Time = 216 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 216}
+INFO: End of second pass through (Time = 216 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 219 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 219 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 219 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 219}
+INFO: End of first pass through
+ (Time = 220 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 220}
+INFO: End of second pass through (Time = 220 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 223 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 223 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 223 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 223}
+INFO: End of first pass through
+ (Time = 223 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 223}
+INFO: End of second pass through (Time = 223 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry generic (Time = 226 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn-amd-amdhsa (Time = 226 ms)
+INFO: comparing LLVM amdgcn-unknown-linux-gnu to registry amdgcn (Time = 226 ms)
+EVENT: {"event_id": "PassFinished", "num": 1, "time": 226}
+INFO: End of first pass through
+ (Time = 226 ms)
+EVENT: {"event_id": "PassFinished", "num": 2, "time": 226}
+INFO: End of second pass through (Time = 226 ms)

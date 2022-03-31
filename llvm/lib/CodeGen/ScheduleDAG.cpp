@@ -164,6 +164,12 @@ bool SUnit::addPred(const SDep &D, bool Required) {
     }
   }
   Preds.push_back(D);
+  //if (N != nullptr && N != NULL && this != nullptr && this != NULL) {// N->getInstr() != nullptr && N->getInstr() != NULL) {
+    //errs() << "adding Succ \n";
+    //this->getInstr()->print(errs());
+    //errs() << "To the Succs of ";
+    //N->getInstr()->print(errs());
+  //}
   N->Succs.push_back(P);
   if (P.getLatency() != 0) {
     this->setDepthDirty();

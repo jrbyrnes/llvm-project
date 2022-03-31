@@ -1,0 +1,22 @@
+diff --git a/llvm/lib/CodeGen/ScheduleDAGInstrs.cpp b/llvm/lib/CodeGen/ScheduleDAGInstrs.cpp
+index 5899da777fe9..03c6a0f6a223 100644                         
+--- a/llvm/lib/CodeGen/ScheduleDAGInstrs.cpp
++++ b/llvm/lib/CodeGen/ScheduleDAGInstrs.cpp
+@@ -61,6 +61,7 @@                                                 
+ #include <utility>              
+ #include <vector>
+  
++                                                                 
+ using namespace llvm;                                                                                                               
+                                                                  
+ #define DEBUG_TYPE "machine-scheduler"
+@@ -824,6 +825,9 @@ void ScheduleDAGInstrs::buildSchedGraph(AAResults *AA,
+         SlotIndex SlotIdx = LIS->getInstructionIndex(MI);
+         RegOpers.adjustLaneLiveness(*LIS, MRI, SlotIdx);  
+       }                                                          
++      errs() << "processing pressures for ";                 
++      MI.print(errs());                                          
++                                                                 
+       if (PDiffs != nullptr)
+         PDiffs->addInstruction(SU->NodeNum, RegOpers, MRI);
+  

@@ -29,6 +29,7 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include <algorithm>
+#include <stdio.h>
 
 using namespace llvm;
 
@@ -659,7 +660,8 @@ bool GCNSubtarget::useVGPRIndexMode() const {
 bool GCNSubtarget::useAA() const { return UseAA; }
 
 unsigned GCNSubtarget::getOccupancyWithNumSGPRs(unsigned SGPRs) const {
-  if (getGeneration() >= AMDGPUSubtarget::GFX10)
+  printf("getMaxWavesPerEu() %d, getGen >GFX10 %d", getMaxWavesPerEU(), 
+  getGeneration() >= AMDGPUSubtarget::GFX10if (getGeneration() >= AMDGPUSubtarget::GFX10)
     return getMaxWavesPerEU();
 
   if (getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS) {
@@ -691,18 +693,6 @@ unsigned GCNSubtarget::getOccupancyWithNumVGPRs(unsigned VGPRs) const {
     return MaxWaves;
   unsigned RoundedRegs = ((VGPRs + Granule - 1) / Granule) * Granule;
   return std::min(std::max(getTotalNumVGPRs() / RoundedRegs, 1u), MaxWaves);
-
-  /* custom mapping
-  if (VGPRs <= 28)
-    return 10;
-  if (VGPRs <= 26)
-    return 9;
-  if (VGPRs <= 38)
-    return 8;
-  if (VGPRs <= 84)
-    return 7;
-  return 6;
-  */
 }
 
 unsigned

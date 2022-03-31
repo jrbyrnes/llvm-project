@@ -257,6 +257,12 @@ bool getMUBUFHasSoffset(unsigned Opc) {
   return Info ? Info->has_soffset : false;
 }
 
+//bool getMUBUFIsBufferInv(unsigned Opc) {
+//  const MUBUFInfo *Info = getMUBUFOpcodeHelper(Opc);
+//  return Info ? Info->IsBufferInv : false;
+//}
+
+
 bool getSMEMIsBuffer(unsigned Opc) {
   const SMInfo *Info = getSMEMOpcodeHelper(Opc);
   return Info ? Info->IsBuffer : false;
