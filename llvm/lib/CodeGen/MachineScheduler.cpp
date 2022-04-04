@@ -555,6 +555,15 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
   for (MachineFunction::iterator MBB = MF->begin(), MBBEnd = MF->end();
        MBB != MBBEnd; ++MBB) {
 
+/*    errs() << "BB Live Ins: ";
+    for (auto
+         I = MBB->livein_begin(), E = MBB->livein_end(); I != E; ++I) {
+      errs() << printReg(I->PhysReg);
+      if (std::next(I) != E)
+        errs() << ", ";
+    }
+    errs() << '\n';
+*/
     Scheduler.startBlock(&*MBB);
 
 #ifndef NDEBUG
@@ -595,6 +604,8 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
       if (I == RegionEnd || I == std::prev(RegionEnd)) {
         // Close the current region. Bundle the terminator if needed.
         // This invalidates 'RegionEnd' and 'I'.
+	//errs() << "BB not candidate for scheduling";
+	//MBB->print(errs());
         Scheduler.exitRegion();
         continue;
       }

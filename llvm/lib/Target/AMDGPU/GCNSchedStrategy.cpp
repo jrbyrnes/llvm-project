@@ -13,6 +13,8 @@
 
 #include "GCNSchedStrategy.h"
 #include "SIMachineFunctionInfo.h"
+#include "OptSched/lib/Wrapper/OptimizingScheduler.cpp"
+#include "OptSched/lib/Wrapper/AMDGPU/GCNOptSched.cpp"
 
 #define DEBUG_TYPE "machine-scheduler"
 
@@ -304,6 +306,9 @@ GCNScheduleDAGMILive::GCNScheduleDAGMILive(MachineSchedContext *C,
   MFI(*MF.getInfo<SIMachineFunctionInfo>()),
   StartingOccupancy(MFI.getOccupancy()),
   MinOccupancy(StartingOccupancy), Stage(Collect), RegionIdx(0) {
+
+
+  localC = C;
 
   LLVM_DEBUG(dbgs() << "Starting occupancy is " << StartingOccupancy << ".\n");
 }
@@ -632,6 +637,9 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
                  dbgs() << " RegionInstrs: " << NumRegionInstrs << '\n');
 
       schedule();
+
+      auto OptScheduler = createOptSchedGCN(localC);
+      OptScheduler->exitRegion();
 
       exitRegion();
       ++RegionIdx;

@@ -128,6 +128,7 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   // Compute and cache live-ins and pressure for all regions in block.
   void computeBlockPressure(const MachineBasicBlock *MBB);
 
+  MachineSchedContext *localC;
 
 public:
   GCNScheduleDAGMILive(MachineSchedContext *C,
