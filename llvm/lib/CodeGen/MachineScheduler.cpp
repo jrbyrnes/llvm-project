@@ -69,6 +69,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "../Target/AMDGPU/OptSched/lib/Wrapper/AMDGPU/GCNOptSchedReg.h"
 
 using namespace llvm;
 
@@ -336,26 +337,28 @@ ScheduleDAGInstrs *MachineScheduler::createMachineScheduler() {
   MachineSchedRegistry::ScheduleDAGCtor Ctor;
 
   // Select the scheduler, or set the default.
-  Ctor = MachineSchedOpt;
-  if (Ctor != useDefaultMachineSched)
-    return Ctor(this);
+  //Ctor = MachineSchedOpt;
+  //if (Ctor != useDefaultMachineSched)
+  //  return Ctor(this);
 
   // Use OptSched by default
-  //MachineSchedRegistry *it = &DefaultSchedRegistry;
+  ScheduleDAGInstrs *Scheduler;
+  MachineSchedRegistry *it = &DefaultSchedRegistry;
 
-  //while (it->getName() != "gcn-optsched" && it->getNext() != nullptr) {
-  //  it = it->getNext();
-  //}
+  while (it->getName() != "gcn-optsched" && it->getNext() != nullptr) {
+    it = it->getNext();
+  }
 
-  //if (it->getName() == "gcn-optsched") {
-  //  Ctor = it->getCtor();
-  //  return Ctor(this);
-  //}
+  if (it->getName() == "gcn-optsched") {
+    errs() << "FOUNDGCNOPTSCHED\n";
+    Ctor = it->getCtor();
+    return Ctor(this);
+  }
 
   //llvm::report_fatal_error(llvm::StringRef("Didn't find gcn-optsched scheduler"), false);
 
   // Get the default scheduler set by the target for this function.
-  ScheduleDAGInstrs *Scheduler = PassConfig->createMachineScheduler(this);
+  Scheduler = PassConfig->createMachineScheduler(this);
   if (Scheduler)
     return Scheduler;
 
