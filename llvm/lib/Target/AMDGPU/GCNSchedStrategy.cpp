@@ -13,8 +13,7 @@
 
 #include "GCNSchedStrategy.h"
 #include "SIMachineFunctionInfo.h"
-#include "OptSched/lib/Wrapper/OptimizingScheduler.cpp"
-#include "OptSched/lib/Wrapper/AMDGPU/GCNOptSched.cpp"
+//#include "OptSched/lib/Wrapper/AMDGPU/GCNOptSchedReg.h"
 
 #define DEBUG_TYPE "machine-scheduler"
 
@@ -638,9 +637,6 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
 
       schedule();
 
-      auto OptScheduler = createOptSchedGCN(localC);
-      OptScheduler->exitRegion();
-
       exitRegion();
       ++RegionIdx;
     }
@@ -649,4 +645,33 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
     if (Stage == UnclusteredReschedule)
       SavedMutations.swap(Mutations);
   } while (Stage != LastStage);
+
+ /*
+  MachineBasicBlock *MBB = nullptr;
+  errs() << "created OptSched\n";
+  auto OptScheduler = llvm::opt_sched::createOptSchedGCN(localC);
+
+  for (auto Region : Regions) {
+    RegionBegin = Region.first;
+    RegionEnd = Region.second;
+
+    if (RegionBegin->getParent() != MBB) {
+      if (MBB) OptScheduler->finishBlock();
+      MBB = RegionBegin->getParent();
+      OptScheduler->startBlock(MBB);
+    }
+
+    unsigned NumRegionInstrs = std::distance(begin(), end());
+    OptScheduler->enterRegion(MBB, begin(), end(), NumRegionInstrs);
+
+    // Skip empty scheduling regions (0 or 1 schedulable instructions).
+    if (begin() == end() || begin() == std::prev(end())) {
+      OptScheduler->exitRegion();
+      continue;
+    }
+    OptScheduler->schedule();
+    OptScheduler->exitRegion();
+  }
+  OptScheduler->finishBlock();
+*/
 }

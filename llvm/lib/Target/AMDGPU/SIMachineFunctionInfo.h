@@ -922,9 +922,10 @@ public:
   }
 
   unsigned getMinAllowedOccupancy() const {
-    if (!isMemoryBound() && !needsWaveLimiter())
-      return Occupancy;
-    return (Occupancy < 4) ? Occupancy : 4;
+    //if (!isMemoryBound() && !needsWaveLimiter())
+    //  return Occupancy;
+    //return (Occupancy < 4) ? Occupancy : 4;
+    return 4;
   }
 
   void limitOccupancy(const MachineFunction &MF);

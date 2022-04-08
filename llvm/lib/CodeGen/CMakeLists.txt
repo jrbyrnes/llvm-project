@@ -219,3 +219,6 @@ add_subdirectory(SelectionDAG)
 add_subdirectory(AsmPrinter)
 add_subdirectory(MIRParser)
 add_subdirectory(GlobalISel)
+
+
+target_include_directories(LLVMCodeGen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Target/AMDGPU)

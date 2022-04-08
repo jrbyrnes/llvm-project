@@ -22,6 +22,7 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/MC/LaneBitmask.h"
 #include "llvm/Support/BranchProbability.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <cstdint>
 #include <functional>
@@ -1130,6 +1131,7 @@ inline IterT skipDebugInstructionsBackward(IterT It, IterT Begin,
   while (It != Begin &&
          (It->isDebugInstr() || (SkipPseudoOp && It->isPseudoProbe())))
     --It;
+
   return It;
 }
 
