@@ -1,5 +1,7 @@
 add_llvm_component_group(AMDGPU)
 
+set(CMAKE_CXX_COMPILER "/home/jeff/llvm-project/build/bin/clang++")
+
 set(LLVM_TARGET_DEFINITIONS AMDGPU.td)
 
 tablegen(LLVM AMDGPUGenAsmMatcher.inc -gen-asm-matcher)
@@ -183,6 +185,7 @@ add_subdirectory(Disassembler)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)
 add_subdirectory(Utils)
+
 add_subdirectory(OptSched)
 
 target_compile_options(LLVMAMDGPUCodeGen PRIVATE -Wno-suggest-override)
