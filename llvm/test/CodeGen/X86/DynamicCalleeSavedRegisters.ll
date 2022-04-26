@@ -7,7 +7,7 @@ declare x86_regcallcc i32 @callee(i32 %a0, i32 %b0, i32 %c0, i32 %d0, i32 %e0);
 ; One might think that the caller could assume that ESI value is the same before
 ; and after calling the callee.
 ; However, RegCall also says that a register that was used for
-; passing/returning argumnets, can be assumed to be modified by the callee.
+; passing/returning arguments, can be assumed to be modified by the callee.
 ; In other words, it is no longer a callee saved register.
 ; In this case we want to see that EDX/ECX values are saved and EDI/ESI are assumed
 ; to be modified by the callee.
@@ -27,9 +27,10 @@ define cc 11 i32 @caller(i32 %a0, i32 %b0, i32 %c0, i32 %d0, i32 %e0) nounwind {
 ; CHECK-NEXT:    movl %ebx, %edi
 ; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %ebp # 4-byte Reload
 ; CHECK-NEXT:    movl %ebp, %esi
-; CHECK-NEXT:    calll callee
-; CHECK-NEXT:    leal (%eax,%ebx), %esi
-; CHECK-NEXT:    addl %ebp, %esi
+; CHECK-NEXT:    calll callee@PLT
+; CHECK-NEXT:    addl %eax, %ebx
+; CHECK-NEXT:    addl %ebp, %ebx
+; CHECK-NEXT:    movl %ebx, %esi
 ; CHECK-NEXT:    addl $12, %esp
 ; CHECK-NEXT:    retl
   %b1 = call x86_regcallcc i32 @callee(i32 %a0, i32 %b0, i32 %c0, i32 %d0, i32 %e0)

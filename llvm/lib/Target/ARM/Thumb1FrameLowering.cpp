@@ -88,8 +88,10 @@ emitPrologueEpilogueSPUpdate(MachineBasicBlock &MBB,
                             0, MIFlags);
     }
     BuildMI(MBB, MBBI, dl, TII.get(ARM::tADDhirr), ARM::SP)
-      .addReg(ARM::SP).addReg(ScratchReg, RegState::Kill)
-      .add(predOps(ARMCC::AL));
+        .addReg(ARM::SP)
+        .addReg(ScratchReg, RegState::Kill)
+        .add(predOps(ARMCC::AL))
+        .setMIFlags(MIFlags);
     return;
   }
   // FIXME: This is assuming the heuristics in emitThumbRegPlusImmediate
@@ -127,7 +129,7 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
       // We need to keep the stack aligned properly.  To do this, we round the
       // amount of space needed for the outgoing arguments up to the next
       // alignment boundary.
-      Amount = alignTo(Amount, getStackAlignment());
+      Amount = alignTo(Amount, getStackAlign());
 
       // Replace the pseudo instruction with a new instruction...
       unsigned Opc = Old.getOpcode();
@@ -165,7 +167,7 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
   DebugLoc dl;
 
   Register FramePtr = RegInfo->getFrameRegister(MF);
-  unsigned BasePtr = RegInfo->getBaseRegister();
+  Register BasePtr = RegInfo->getBaseRegister();
   int CFAOffset = 0;
 
   // Thumb add/sub sp, imm8 instructions implicitly multiply the offset by 4.
@@ -180,9 +182,9 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
   if (ArgRegsSaveSize) {
     emitPrologueEpilogueSPUpdate(MBB, MBBI, TII, dl, *RegInfo, -ArgRegsSaveSize,
                                  ARM::NoRegister, MachineInstr::FrameSetup);
-    CFAOffset -= ArgRegsSaveSize;
-    unsigned CFIIndex = MF.addFrameInst(
-        MCCFIInstruction::createDefCfaOffset(nullptr, CFAOffset));
+    CFAOffset += ArgRegsSaveSize;
+    unsigned CFIIndex =
+        MF.addFrameInst(MCCFIInstruction::cfiDefCfaOffset(nullptr, CFAOffset));
     BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex)
         .setMIFlags(MachineInstr::FrameSetup);
@@ -193,9 +195,9 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
       emitPrologueEpilogueSPUpdate(MBB, MBBI, TII, dl, *RegInfo,
                                    -(NumBytes - ArgRegsSaveSize),
                                    ARM::NoRegister, MachineInstr::FrameSetup);
-      CFAOffset -= NumBytes - ArgRegsSaveSize;
+      CFAOffset += NumBytes - ArgRegsSaveSize;
       unsigned CFIIndex = MF.addFrameInst(
-          MCCFIInstruction::createDefCfaOffset(nullptr, CFAOffset));
+          MCCFIInstruction::cfiDefCfaOffset(nullptr, CFAOffset));
       BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex)
           .setMIFlags(MachineInstr::FrameSetup);
@@ -203,9 +205,9 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
     return;
   }
 
-  for (unsigned i = 0, e = CSI.size(); i != e; ++i) {
-    unsigned Reg = CSI[i].getReg();
-    int FI = CSI[i].getFrameIdx();
+  for (const CalleeSavedInfo &I : CSI) {
+    Register Reg = I.getReg();
+    int FI = I.getFrameIdx();
     switch (Reg) {
     case ARM::R8:
     case ARM::R9:
@@ -257,17 +259,16 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
   }
 
   if (adjustedGPRCS1Size) {
-    CFAOffset -= adjustedGPRCS1Size;
-    unsigned CFIIndex = MF.addFrameInst(
-        MCCFIInstruction::createDefCfaOffset(nullptr, CFAOffset));
+    CFAOffset += adjustedGPRCS1Size;
+    unsigned CFIIndex =
+        MF.addFrameInst(MCCFIInstruction::cfiDefCfaOffset(nullptr, CFAOffset));
     BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex)
         .setMIFlags(MachineInstr::FrameSetup);
   }
-  for (std::vector<CalleeSavedInfo>::const_iterator I = CSI.begin(),
-         E = CSI.end(); I != E; ++I) {
-    unsigned Reg = I->getReg();
-    int FI = I->getFrameIdx();
+  for (const CalleeSavedInfo &I : CSI) {
+    Register Reg = I.getReg();
+    int FI = I.getFrameIdx();
     switch (Reg) {
     case ARM::R8:
     case ARM::R9:
@@ -305,8 +306,8 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
         .setMIFlags(MachineInstr::FrameSetup)
         .add(predOps(ARMCC::AL));
     if(FramePtrOffsetInBlock) {
-      CFAOffset += FramePtrOffsetInBlock;
-      unsigned CFIIndex = MF.addFrameInst(MCCFIInstruction::createDefCfa(
+      CFAOffset -= FramePtrOffsetInBlock;
+      unsigned CFIIndex = MF.addFrameInst(MCCFIInstruction::cfiDefCfa(
           nullptr, MRI->getDwarfRegNum(FramePtr, true), CFAOffset));
       BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex)
@@ -347,7 +348,7 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
 
   // Emit call frame information for the callee-saved high registers.
   for (auto &I : CSI) {
-    unsigned Reg = I.getReg();
+    Register Reg = I.getReg();
     int FI = I.getFrameIdx();
     switch (Reg) {
     case ARM::R8:
@@ -375,7 +376,7 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
     // at this point in the prologue, so pick one.
     unsigned ScratchRegister = ARM::NoRegister;
     for (auto &I : CSI) {
-      unsigned Reg = I.getReg();
+      Register Reg = I.getReg();
       if (isARMLowRegister(Reg) && !(HasFP && Reg == FramePtr)) {
         ScratchRegister = Reg;
         break;
@@ -384,9 +385,9 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
     emitPrologueEpilogueSPUpdate(MBB, MBBI, TII, dl, *RegInfo, -NumBytes,
                                  ScratchRegister, MachineInstr::FrameSetup);
     if (!HasFP) {
-      CFAOffset -= NumBytes;
+      CFAOffset += NumBytes;
       unsigned CFIIndex = MF.addFrameInst(
-          MCCFIInstruction::createDefCfaOffset(nullptr, CFAOffset));
+          MCCFIInstruction::cfiDefCfaOffset(nullptr, CFAOffset));
       BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex)
           .setMIFlags(MachineInstr::FrameSetup);
@@ -401,8 +402,8 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
   AFI->setGPRCalleeSavedArea2Size(GPRCS2Size);
   AFI->setDPRCalleeSavedAreaSize(DPRCSSize);
 
-  if (RegInfo->needsStackRealignment(MF)) {
-    const unsigned NrBitsToZero = countTrailingZeros(MFI.getMaxAlignment());
+  if (RegInfo->hasStackRealignment(MF)) {
+    const unsigned NrBitsToZero = Log2(MFI.getMaxAlign());
     // Emit the following sequence, using R4 as a temporary, since we cannot use
     // SP as a source or destination register for the shifts:
     // mov  r4, sp
@@ -530,7 +531,7 @@ void Thumb1FrameLowering::emitEpilogue(MachineFunction &MF,
       unsigned ScratchRegister = ARM::NoRegister;
       bool HasFP = hasFP(MF);
       for (auto &I : MFI.getCalleeSavedInfo()) {
-        unsigned Reg = I.getReg();
+        Register Reg = I.getReg();
         if (isARMLowRegister(Reg) && !(HasFP && Reg == FramePtr)) {
           ScratchRegister = Reg;
           break;
@@ -580,10 +581,10 @@ bool Thumb1FrameLowering::needPopSpecialFixUp(const MachineFunction &MF) const {
 static void findTemporariesForLR(const BitVector &GPRsNoLRSP,
                                  const BitVector &PopFriendly,
                                  const LivePhysRegs &UsedRegs, unsigned &PopReg,
-                                 unsigned &TmpReg) {
+                                 unsigned &TmpReg, MachineRegisterInfo &MRI) {
   PopReg = TmpReg = 0;
   for (auto Reg : GPRsNoLRSP.set_bits()) {
-    if (!UsedRegs.contains(Reg)) {
+    if (UsedRegs.available(MRI, Reg)) {
       // Remember the first pop-friendly register and exit.
       if (PopFriendly.test(Reg)) {
         PopReg = Reg;
@@ -679,7 +680,7 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   // R7 may be used as a frame pointer, hence marked as not generally
   // allocatable, however there's no reason to not use it as a temporary for
   // restoring LR.
-  if (STI.useR7AsFramePointer())
+  if (STI.getFramePointerReg() == ARM::R7)
     PopFriendly.set(ARM::R7);
 
   assert(PopFriendly.any() && "No allocatable pop-friendly register?!");
@@ -691,7 +692,8 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   GPRsNoLRSP.reset(ARM::LR);
   GPRsNoLRSP.reset(ARM::SP);
   GPRsNoLRSP.reset(ARM::PC);
-  findTemporariesForLR(GPRsNoLRSP, PopFriendly, UsedRegs, PopReg, TemporaryReg);
+  findTemporariesForLR(GPRsNoLRSP, PopFriendly, UsedRegs, PopReg, TemporaryReg,
+                       MF.getRegInfo());
 
   // If we couldn't find a pop-friendly register, try restoring LR before
   // popping the other callee-saved registers, so we could use one of them as a
@@ -702,7 +704,8 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
     PrevMBBI--;
     if (PrevMBBI->getOpcode() == ARM::tPOP) {
       UsedRegs.stepBackward(*PrevMBBI);
-      findTemporariesForLR(GPRsNoLRSP, PopFriendly, UsedRegs, PopReg, TemporaryReg);
+      findTemporariesForLR(GPRsNoLRSP, PopFriendly, UsedRegs, PopReg,
+                           TemporaryReg, MF.getRegInfo());
       if (PopReg) {
         MBBI = PrevMBBI;
         UseLDRSP = true;
@@ -804,11 +807,9 @@ static const unsigned *findNextOrderedReg(const unsigned *CurrentReg,
   return CurrentReg;
 }
 
-bool Thumb1FrameLowering::
-spillCalleeSavedRegisters(MachineBasicBlock &MBB,
-                          MachineBasicBlock::iterator MI,
-                          const std::vector<CalleeSavedInfo> &CSI,
-                          const TargetRegisterInfo *TRI) const {
+bool Thumb1FrameLowering::spillCalleeSavedRegisters(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+    ArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
   if (CSI.empty())
     return false;
 
@@ -823,8 +824,8 @@ spillCalleeSavedRegisters(MachineBasicBlock &MBB,
   ARMRegSet CopyRegs;     // Registers which can be used after pushing
                           // LoRegs for saving HiRegs.
 
-  for (unsigned i = CSI.size(); i != 0; --i) {
-    unsigned Reg = CSI[i-1].getReg();
+  for (const CalleeSavedInfo &I : llvm::reverse(CSI)) {
+    Register Reg = I.getReg();
 
     if (ARM::tGPRRegClass.contains(Reg) || Reg == ARM::LR) {
       LoRegsToSave[Reg] = true;
@@ -927,11 +928,9 @@ spillCalleeSavedRegisters(MachineBasicBlock &MBB,
   return true;
 }
 
-bool Thumb1FrameLowering::
-restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
-                            MachineBasicBlock::iterator MI,
-                            std::vector<CalleeSavedInfo> &CSI,
-                            const TargetRegisterInfo *TRI) const {
+bool Thumb1FrameLowering::restoreCalleeSavedRegisters(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+    MutableArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
   if (CSI.empty())
     return false;
 
@@ -950,7 +949,7 @@ restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
   ARMRegSet CopyRegs;
 
   for (CalleeSavedInfo I : CSI) {
-    unsigned Reg = I.getReg();
+    Register Reg = I.getReg();
 
     if (ARM::tGPRRegClass.contains(Reg) || Reg == ARM::LR) {
       LoRegsToRestore[Reg] = true;
@@ -1022,9 +1021,8 @@ restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
       BuildMI(MF, DL, TII.get(ARM::tPOP)).add(predOps(ARMCC::AL));
 
   bool NeedsPop = false;
-  for (unsigned i = CSI.size(); i != 0; --i) {
-    CalleeSavedInfo &Info = CSI[i-1];
-    unsigned Reg = Info.getReg();
+  for (CalleeSavedInfo &Info : llvm::reverse(CSI)) {
+    Register Reg = Info.getReg();
 
     // High registers (excluding lr) have already been dealt with
     if (!(ARM::tGPRRegClass.contains(Reg) || Reg == ARM::LR))
@@ -1049,6 +1047,10 @@ restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
       if (!STI.hasV5TOps())
         continue;
 
+      // CMSE entry functions must return via BXNS, see emitEpilogue.
+      if (AFI->isCmseNSEntryFunction())
+        continue;
+
       // Pop LR into PC.
       Reg = ARM::PC;
       (*MIB).setDesc(TII.get(ARM::tPOP_RET));
@@ -1064,7 +1066,7 @@ restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
   if (NeedsPop)
     MBB.insert(MI, &*MIB);
   else
-    MF.DeleteMachineInstr(MIB);
+    MF.deleteMachineInstr(MIB);
 
   return true;
 }

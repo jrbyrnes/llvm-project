@@ -37,16 +37,23 @@
 // 3) Attempt to schedule the nodes in the specified order using the MII.
 //
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_LIB_CODEGEN_MACHINEPIPELINER_H
-#define LLVM_LIB_CODEGEN_MACHINEPIPELINER_H
+#ifndef LLVM_CODEGEN_MACHINEPIPELINER_H
+#define LLVM_CODEGEN_MACHINEPIPELINER_H
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/CodeGen/MachineDominators.h"
+#include "llvm/CodeGen/MachineOptimizationRemarkEmitter.h"
 #include "llvm/CodeGen/RegisterClassInfo.h"
 #include "llvm/CodeGen/ScheduleDAGInstrs.h"
+#include "llvm/CodeGen/ScheduleDAGMutation.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/InitializePasses.h"
+
+#include <deque>
 
 namespace llvm {
 
+class AAResults;
 class NodeSet;
 class SMSchedule;
 
@@ -57,6 +64,7 @@ extern cl::opt<bool> SwpEnableCopyToPhi;
 class MachinePipeliner : public MachineFunctionPass {
 public:
   MachineFunction *MF = nullptr;
+  MachineOptimizationRemarkEmitter *ORE = nullptr;
   const MachineLoopInfo *MLI = nullptr;
   const MachineDominatorTree *MDT = nullptr;
   const InstrItineraryData *InstrItins;
@@ -87,14 +95,7 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<AAResultsWrapperPass>();
-    AU.addPreserved<AAResultsWrapperPass>();
-    AU.addRequired<MachineLoopInfo>();
-    AU.addRequired<MachineDominatorTree>();
-    AU.addRequired<LiveIntervals>();
-    MachineFunctionPass::getAnalysisUsage(AU);
-  }
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
   void preprocessPhiNodes(MachineBasicBlock &B);
@@ -279,7 +280,7 @@ public:
   static bool classof(const ScheduleDAGInstrs *DAG) { return true; }
 
 private:
-  void addLoopCarriedDependences(AliasAnalysis *AA);
+  void addLoopCarriedDependences(AAResults *AA);
   void updatePhiDependences();
   void changeDependences();
   unsigned calculateResMII();
@@ -298,7 +299,7 @@ private:
   void checkValidNodeOrder(const NodeSetType &Circuits) const;
   bool schedulePipeline(SMSchedule &Schedule);
   bool computeDelta(MachineInstr &MI, unsigned &Delta);
-  MachineInstr *findDefInLoop(unsigned Reg);
+  MachineInstr *findDefInLoop(Register Reg);
   bool canUseLastOffsetValue(MachineInstr *MI, unsigned &BasePos,
                              unsigned &OffsetPos, unsigned &NewBase,
                              int64_t &NewOffset);
@@ -327,10 +328,22 @@ public:
   NodeSet() = default;
   NodeSet(iterator S, iterator E) : Nodes(S, E), HasRecurrence(true) {
     Latency = 0;
-    for (unsigned i = 0, e = Nodes.size(); i < e; ++i)
-      for (const SDep &Succ : Nodes[i]->Succs)
-        if (Nodes.count(Succ.getSUnit()))
-          Latency += Succ.getLatency();
+    for (unsigned i = 0, e = Nodes.size(); i < e; ++i) {
+      DenseMap<SUnit *, unsigned> SuccSUnitLatency;
+      for (const SDep &Succ : Nodes[i]->Succs) {
+        auto SuccSUnit = Succ.getSUnit();
+        if (!Nodes.count(SuccSUnit))
+          continue;
+        unsigned CurLatency = Succ.getLatency();
+        unsigned MaxLatency = 0;
+        if (SuccSUnitLatency.count(SuccSUnit))
+          MaxLatency = SuccSUnitLatency[SuccSUnit];
+        if (CurLatency > MaxLatency)
+          SuccSUnitLatency[SuccSUnit] = CurLatency;
+      }
+      for (auto SUnitLatency : SuccSUnitLatency)
+        Latency += SUnitLatency.second;
+    }
   }
 
   bool insert(SUnit *SU) { return Nodes.insert(SU); }
@@ -517,6 +530,9 @@ public:
   /// Set the initiation interval for this schedule.
   void setInitiationInterval(int ii) { InitiationInterval = ii; }
 
+  /// Return the initiation interval for this schedule.
+  int getInitiationInterval() const { return InitiationInterval; }
+
   /// Return the first cycle in the completed schedule.  This
   /// can be a negative value.
   int getFirstCycle() const { return FirstCycle; }
@@ -586,4 +602,4 @@ public:
 
 } // end namespace llvm
 
-#endif // LLVM_LIB_CODEGEN_MACHINEPIPELINER_H
+#endif // LLVM_CODEGEN_MACHINEPIPELINER_H

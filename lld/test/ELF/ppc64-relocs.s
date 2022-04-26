@@ -26,67 +26,19 @@ _start:
   ld 1, .L1@toc@l(2)
 
 # CHECK-LABEL: Disassembly of section .R_PPC64_TOC16_LO_DS:
-# CHECK: ld 1, -32768(2)
+# CHECK: ld 1, -32760(2)
 
 .section .R_PPC64_TOC16_LO,"ax",@progbits
   addi  1, 2, .L1@toc@l
 
 # CHECK-LABEL: Disassembly of section .R_PPC64_TOC16_LO:
-# CHECK: addi 1, 2, -32768
+# CHECK: addi 1, 2, -32760
 
 .section .R_PPC64_TOC16_HI,"ax",@progbits
   addis 1, 2, .L1@toc@h
 
 # CHECK-LABEL: Disassembly of section .R_PPC64_TOC16_HI:
 # CHECK: addis 1, 2, -1
-
-.section .R_PPC64_TOC16_HA,"ax",@progbits
-  addis 1, 2, .L1@toc@ha
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_TOC16_HA:
-# CHECK: addis 1, 2, 0
-
-.section .R_PPC64_ADDR16_LO,"ax",@progbits
-  li 1, .Lfoo@l
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_LO:
-# CHECK: li 1, 464
-
-.section .R_PPC64_ADDR16_HI,"ax",@progbits
-  li 1, .Lfoo@h
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_HI:
-# CHECK: li 1, 4097
-
-.section .R_PPC64_ADDR16_HA,"ax",@progbits
-  li 1, .Lfoo@ha
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_HA:
-# CHECK: li 1, 4097
-
-.section .R_PPC64_ADDR16_HIGHER,"ax",@progbits
-  li 1, .Lfoo@higher
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_HIGHER:
-# CHECK: li 1, 0
-
-.section .R_PPC64_ADDR16_HIGHERA,"ax",@progbits
-  li 1, .Lfoo@highera
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_HIGHERA:
-# CHECK: li 1, 0
-
-.section .R_PPC64_ADDR16_HIGHEST,"ax",@progbits
-  li 1, .Lfoo@highest
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_HIGHEST:
-# CHECK: li 1, 0
-
-.section .R_PPC64_ADDR16_HIGHESTA,"ax",@progbits
-  li 1, .Lfoo@highesta
-
-# CHECK-LABEL: Disassembly of section .R_PPC64_ADDR16_HIGHESTA:
-# CHECK: li 1, 0
 
 .section .R_PPC64_TOC,"a",@progbits
   .quad .TOC.@tocbase
@@ -95,7 +47,7 @@ _start:
 
 ## tocbase = .got+0x8000 = 0x10028208
 # DATALE-LABEL: section '.R_PPC64_TOC':
-# DATALE: 08820210 00000000
+# DATALE-NEXT:    e8810210 00000000
 
 # DATABE-LABEL: section '.R_PPC64_TOC':
-# DATABE: 00000000 10028208
+# DATABE-NEXT:    00000000 100281e8

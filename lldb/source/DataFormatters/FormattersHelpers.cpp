@@ -1,5 +1,4 @@
-//===-- FormattersHelpers.cpp -------------------------------------*- C++
-//-*-===//
+//===-- FormattersHelpers.cpp ---------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -11,7 +10,7 @@
 
 
 #include "lldb/DataFormatters/FormattersHelpers.h"
-
+#include "lldb/Core/Module.h"
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
@@ -132,14 +131,28 @@ size_t lldb_private::formatters::ExtractIndexFromString(const char *item_name) {
   return idx;
 }
 
-lldb::addr_t
+Address
 lldb_private::formatters::GetArrayAddressOrPointerValue(ValueObject &valobj) {
   lldb::addr_t data_addr = LLDB_INVALID_ADDRESS;
+  AddressType type;
 
   if (valobj.IsPointerType())
-    data_addr = valobj.GetValueAsUnsigned(0);
+    data_addr = valobj.GetPointerValue(&type);
   else if (valobj.IsArrayType())
-    data_addr = valobj.GetAddressOf();
+    data_addr = valobj.GetAddressOf(/*scalar_is_load_address=*/true, &type);
+  if (data_addr != LLDB_INVALID_ADDRESS && type == eAddressTypeFile)
+    return Address(data_addr, valobj.GetModule()->GetSectionList());
 
   return data_addr;
+}
+
+lldb::ValueObjectSP
+lldb_private::formatters::GetValueOfLibCXXCompressedPair(ValueObject &pair) {
+  ValueObjectSP value =
+      pair.GetChildMemberWithName(ConstString("__value_"), true);
+  if (!value) {
+    // pre-r300140 member name
+    value = pair.GetChildMemberWithName(ConstString("__first_"), true);
+  }
+  return value;
 }

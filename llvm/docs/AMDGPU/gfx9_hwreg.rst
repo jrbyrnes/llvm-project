@@ -5,10 +5,10 @@
     *                                                *
     **************************************************
 
-.. _amdgpu_synid9_hwreg:
+.. _amdgpu_synid_gfx9_hwreg:
 
 hwreg
-===========================
+=====
 
 Bits of a hardware register being accessed.
 
@@ -52,6 +52,10 @@ Defined register *names* include:
     HW_REG_LDS_ALLOC    Per-wave LDS allocation.
     HW_REG_IB_STS       Counters of outstanding instructions.
     HW_REG_SH_MEM_BASES Memory aperture.
+    HW_REG_TBA_LO       tba_lo register.
+    HW_REG_TBA_HI       tba_hi register.
+    HW_REG_TMA_LO       tma_lo register.
+    HW_REG_TMA_HI       tma_hi register.
     =================== ==========================================
 
 Examples:
@@ -71,4 +75,3 @@ Examples:
     s_getreg_b32 s2, hwreg(15)
     s_getreg_b32 s2, hwreg(51, 1, 31)
     s_getreg_b32 s2, hwreg(HW_REG_LDS_ALLOC, 0, 1)
-

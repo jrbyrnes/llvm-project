@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Support/Debug.h"
 
 using namespace llvm;
@@ -271,6 +272,11 @@ bool PPCBranchCoalescing::canCoalesceBranch(CoalescingCandidateInfo &Cand) {
     return false;
   }
 
+  if (Cand.BranchBlock->mayHaveInlineAsmBr()) {
+    LLVM_DEBUG(dbgs() << "Inline Asm Br - skip\n");
+    return false;
+  }
+
   // For now only consider triangles (i.e, BranchTargetBlock is set,
   // FalseMBB is null, and BranchTargetBlock is a successor to BranchBlock)
   if (!Cand.BranchTargetBlock || FalseMBB ||
@@ -285,7 +291,7 @@ bool PPCBranchCoalescing::canCoalesceBranch(CoalescingCandidateInfo &Cand) {
     return false;
   }
 
-  // Sanity check - the block must be able to fall through
+  // The block must be able to fall through.
   assert(Cand.BranchBlock->canFallThrough() &&
          "Expecting the block to fall through!");
 
@@ -745,9 +751,8 @@ bool PPCBranchCoalescing::runOnMachineFunction(MachineFunction &MF) {
       if (!canCoalesceBranch(Cand2))
         break;
 
-      // Sanity check
       // The branch-taken block of the second candidate should post-dominate the
-      // first candidate
+      // first candidate.
       assert(MPDT->dominates(Cand2.BranchTargetBlock, Cand1.BranchBlock) &&
              "Branch-taken block should post-dominate first candidate");
 

@@ -15,7 +15,6 @@
 #include "ARMCallLowering.h"
 #include "ARMLegalizerInfo.h"
 #include "ARMRegisterBankInfo.h"
-#include "ARMSubtarget.h"
 #include "ARMFrameLowering.h"
 #include "ARMInstrInfo.h"
 #include "ARMSubtarget.h"
@@ -35,6 +34,7 @@
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ARMTargetParser.h"
 #include "llvm/Support/TargetParser.h"
 #include "llvm/Target/TargetOptions.h"
 
@@ -52,25 +52,25 @@ UseFusedMulOps("arm-use-mulops",
 
 enum ITMode {
   DefaultIT,
-  RestrictedIT,
-  NoRestrictedIT
+  RestrictedIT
 };
 
 static cl::opt<ITMode>
 IT(cl::desc("IT block support"), cl::Hidden, cl::init(DefaultIT),
    cl::ZeroOrMore,
    cl::values(clEnumValN(DefaultIT, "arm-default-it",
-                         "Generate IT block based on arch"),
+                         "Generate any type of IT block"),
               clEnumValN(RestrictedIT, "arm-restrict-it",
-                         "Disallow deprecated IT based on ARMv8"),
-              clEnumValN(NoRestrictedIT, "arm-no-restrict-it",
-                         "Allow IT blocks based on ARMv7")));
+                         "Disallow complex IT blocks")));
 
 /// ForceFastISel - Use the fast-isel, even for subtargets where it is not
 /// currently supported (for testing only).
 static cl::opt<bool>
 ForceFastISel("arm-force-fast-isel",
                cl::init(false), cl::Hidden);
+
+static cl::opt<bool> EnableSubRegLiveness("arm-enable-subreg-liveness",
+                                          cl::init(false), cl::Hidden);
 
 /// initializeSubtargetDependencies - Initializes using a CPU and feature string
 /// so that we can use initializer lists for subtarget initialization.
@@ -94,9 +94,9 @@ ARMSubtarget::ARMSubtarget(const Triple &TT, const std::string &CPU,
                            const std::string &FS,
                            const ARMBaseTargetMachine &TM, bool IsLittle,
                            bool MinSize)
-    : ARMGenSubtargetInfo(TT, CPU, FS), UseMulOps(UseFusedMulOps),
-      CPUString(CPU), OptMinSize(MinSize), IsLittle(IsLittle),
-      TargetTriple(TT), Options(TM.Options), TM(TM),
+    : ARMGenSubtargetInfo(TT, CPU, /*TuneCPU*/ CPU, FS),
+      UseMulOps(UseFusedMulOps), CPUString(CPU), OptMinSize(MinSize),
+      IsLittle(IsLittle), TargetTriple(TT), Options(TM.Options), TM(TM),
       FrameLowering(initializeFrameLowering(CPU, FS)),
       // At this point initializeSubtargetDependencies has been called so
       // we can query directly.
@@ -180,9 +180,9 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     if (!ArchFS.empty())
       ArchFS = (Twine(ArchFS) + "," + FS).str();
     else
-      ArchFS = FS;
+      ArchFS = std::string(FS);
   }
-  ParseSubtargetFeatures(CPUString, ArchFS);
+  ParseSubtargetFeatures(CPUString, /*TuneCPU*/ CPUString, ArchFS);
 
   // FIXME: This used enable V6T2 support implicitly for Thumb2 mode.
   // Assert this for now to make the change obvious.
@@ -205,9 +205,9 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     NoARM = true;
 
   if (isAAPCS_ABI())
-    stackAlignment = 8;
+    stackAlignment = Align(8);
   if (isTargetNaCl() || isAAPCS16_ABI())
-    stackAlignment = 16;
+    stackAlignment = Align(16);
 
   // FIXME: Completely disable sibcall for Thumb1 since ThumbRegisterInfo::
   // emitEpilogue is not ready for them. Thumb tail calls also use t2B, as
@@ -227,20 +227,17 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   // registers are the 4 used for parameters.  We don't currently do this
   // case.
 
-  SupportsTailCall = !isThumb() || hasV8MBaselineOps();
+  SupportsTailCall = !isThumb1Only() || hasV8MBaselineOps();
 
   if (isTargetMachO() && isTargetIOS() && getTargetTriple().isOSVersionLT(5, 0))
     SupportsTailCall = false;
 
   switch (IT) {
   case DefaultIT:
-    RestrictIT = hasV8Ops();
+    RestrictIT = false;
     break;
   case RestrictedIT:
     RestrictIT = true;
-    break;
-  case NoRestrictedIT:
-    RestrictIT = false;
     break;
   }
 
@@ -248,7 +245,7 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   const FeatureBitset &Bits = getFeatureBits();
   if ((Bits[ARM::ProcA5] || Bits[ARM::ProcA8]) && // Where this matters
       (Options.UnsafeFPMath || isTargetDarwin()))
-    UseNEONForSinglePrecisionFP = true;
+    HasNEONForFP = true;
 
   if (isRWPI())
     ReserveR9 = true;
@@ -289,12 +286,19 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   case CortexA73:
   case CortexA75:
   case CortexA76:
+  case CortexA77:
+  case CortexA78:
+  case CortexA78C:
+  case CortexA710:
   case CortexR4:
   case CortexR4F:
   case CortexR5:
   case CortexR7:
   case CortexM3:
+  case CortexM7:
   case CortexR52:
+  case CortexX1:
+  case CortexX1C:
     break;
   case Exynos:
     LdStMultipleTiming = SingleIssuePlusExtras;
@@ -308,6 +312,8 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     PreISelOperandLatencyAdjustment = 1;
     break;
   case NeoverseN1:
+  case NeoverseN2:
+  case NeoverseV1:
     break;
   case Swift:
     MaxInterleaveFactor = 2;
@@ -379,15 +385,31 @@ bool ARMSubtarget::enableMachineScheduler() const {
   return useMachineScheduler();
 }
 
+bool ARMSubtarget::enableSubRegLiveness() const {
+  if (EnableSubRegLiveness.getNumOccurrences())
+    return EnableSubRegLiveness;
+  // Enable SubRegLiveness for MVE to better optimize s subregs for mqpr regs
+  // and q subregs for qqqqpr regs.
+  return hasMVEIntegerOps();
+}
+
 // This overrides the PostRAScheduler bit in the SchedModel for any CPU.
 bool ARMSubtarget::enablePostRAScheduler() const {
+  if (enableMachineScheduler())
+    return false;
   if (disablePostRAScheduler())
     return false;
-  // Don't reschedule potential IT blocks.
+  // Thumb1 cores will generally not benefit from post-ra scheduling
   return !isThumb1Only();
 }
 
-bool ARMSubtarget::enableAtomicExpand() const { return hasAnyDataBarrier(); }
+bool ARMSubtarget::enablePostRAMachineScheduler() const {
+  if (!enableMachineScheduler())
+    return false;
+  if (disablePostRAScheduler())
+    return false;
+  return !isThumb1Only();
+}
 
 bool ARMSubtarget::useStride4VFPs() const {
   // For general targets, the prologue can grow when VFPs are allocated with

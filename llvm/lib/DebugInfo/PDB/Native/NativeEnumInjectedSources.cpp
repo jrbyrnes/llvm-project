@@ -8,17 +8,19 @@
 
 #include "llvm/DebugInfo/PDB/Native/NativeEnumInjectedSources.h"
 
-#include "llvm/DebugInfo/PDB/Native/InfoStream.h"
+#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
+#include "llvm/DebugInfo/PDB/Native/HashTable.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PDBStringTable.h"
+#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 
 namespace llvm {
 namespace pdb {
 
 namespace {
 
-Expected<std::string> readStreamData(BinaryStream &Stream, uint32_t Limit) {
-  uint32_t Offset = 0, DataLength = std::min(Limit, Stream.getLength());
+Expected<std::string> readStreamData(BinaryStream &Stream, uint64_t Limit) {
+  uint64_t Offset = 0, DataLength = std::min(Limit, Stream.getLength());
   std::string Result;
   Result.reserve(DataLength);
   while (Offset < DataLength) {
@@ -46,30 +48,31 @@ public:
   uint64_t getCodeByteSize() const override { return Entry.FileSize; }
 
   std::string getFileName() const override {
-    auto Name = Strings.getStringForID(Entry.FileNI);
-    assert(Name && "InjectedSourceStream should have rejected this");
-    return *Name;
+    StringRef Ret = cantFail(Strings.getStringForID(Entry.FileNI),
+                             "InjectedSourceStream should have rejected this");
+    return std::string(Ret);
   }
 
   std::string getObjectFileName() const override {
-    auto ObjName = Strings.getStringForID(Entry.ObjNI);
-    assert(ObjName && "InjectedSourceStream should have rejected this");
-    return *ObjName;
+    StringRef Ret = cantFail(Strings.getStringForID(Entry.ObjNI),
+                             "InjectedSourceStream should have rejected this");
+    return std::string(Ret);
   }
 
   std::string getVirtualFileName() const override {
-    auto VName = Strings.getStringForID(Entry.VFileNI);
-    assert(VName && "InjectedSourceStream should have rejected this");
-    return *VName;
+    StringRef Ret = cantFail(Strings.getStringForID(Entry.VFileNI),
+                             "InjectedSourceStream should have rejected this");
+    return std::string(Ret);
   }
 
   uint32_t getCompression() const override { return Entry.Compression; }
 
   std::string getCode() const override {
     // Get name of stream storing the data.
-    auto VName = Strings.getStringForID(Entry.VFileNI);
-    assert(VName && "InjectedSourceStream should have rejected this");
-    std::string StreamName = ("/src/files/" + *VName).str();
+    StringRef VName =
+        cantFail(Strings.getStringForID(Entry.VFileNI),
+                 "InjectedSourceStream should have rejected this");
+    std::string StreamName = ("/src/files/" + VName).str();
 
     // Find stream with that name and read its data.
     // FIXME: Consider validating (or even loading) all this in

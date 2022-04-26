@@ -1,8 +1,8 @@
 ; RUN: opt < %s -S -loop-unroll -unroll-runtime -unroll-count=2 -unroll-runtime-epilog=true | FileCheck %s -check-prefix=EPILOG
 ; RUN: opt < %s -S -loop-unroll -unroll-runtime -unroll-count=2 -unroll-runtime-epilog=false | FileCheck %s -check-prefix=PROLOG
 
-; RUN: opt < %s -S -passes='require<opt-remark-emit>,unroll' -unroll-runtime -unroll-count=2 -unroll-runtime-epilog=true | FileCheck %s -check-prefix=EPILOG
-; RUN: opt < %s -S -passes='require<opt-remark-emit>,unroll' -unroll-runtime -unroll-count=2 -unroll-runtime-epilog=false | FileCheck %s -check-prefix=PROLOG
+; RUN: opt < %s -S -passes='require<opt-remark-emit>,loop-unroll' -unroll-runtime -unroll-count=2 -unroll-runtime-epilog=true | FileCheck %s -check-prefix=EPILOG
+; RUN: opt < %s -S -passes='require<opt-remark-emit>,loop-unroll' -unroll-runtime -unroll-count=2 -unroll-runtime-epilog=false | FileCheck %s -check-prefix=PROLOG
 
 ; This tests that setting the unroll count works
 
@@ -15,9 +15,9 @@
 ; EPILOG: for.body.epil.preheader:
 ; EPILOG:   br label %for.body.epil, !dbg [[PH_LOC]]
 ; EPILOG: for.body.epil:
-; EPILOG:   br label %for.end.loopexit.epilog-lcssa, !dbg [[PH_LOC]]
+; EPILOG:   br label %for.end.loopexit, !dbg [[EXIT_LOC:![0-9]+]]
 ; EPILOG: for.end.loopexit:
-; EPILOG:   br label %for.end, !dbg [[EXIT_LOC:![0-9]+]]
+; EPILOG:   br label %for.end, !dbg [[EXIT_LOC]]
 
 ; EPILOG-DAG: [[PH_LOC]] = !DILocation(line: 102, column: 1, scope: !{{.*}})
 ; EPILOG-DAG: [[EXIT_LOC]] = !DILocation(line: 103, column: 1, scope: !{{.*}})

@@ -1,11 +1,15 @@
-; RUN: llc -march=bpfel -filetype=asm -o - %s | FileCheck %s
+; RUN: opt -O2 %s | llvm-dis > %t1
+; RUN: llc -filetype=asm -o - %t1 | FileCheck -check-prefixes=CHECK,CHECK-ALU64 %s
+; RUN: llc -mattr=+alu32 -filetype=asm -o - %t1 | FileCheck -check-prefixes=CHECK,CHECK-ALU32 %s
 ;
 ; Source Code:
 ;   #define _(x) (__builtin_preserve_access_index(x))
 ;   struct s {int a; int b;};
 ;   int test(struct s *arg) { return *(const int *)_(&arg->b); }
 ; Compiler flag to generate IR:
-;   clang -target bpf -S -O2 -g -emit-llvm test.c
+;   clang -target bpf -S -O2 -g -emit-llvm -Xclang -disable-llvm-passes test.c
+
+target triple = "bpf"
 
 %struct.s = type { i32, i32 }
 
@@ -13,15 +17,14 @@
 define dso_local i32 @test(%struct.s* readonly %arg) local_unnamed_addr #0 !dbg !11 {
 entry:
   call void @llvm.dbg.value(metadata %struct.s* %arg, metadata !20, metadata !DIExpression()), !dbg !21
-  %0 = tail call i32* @llvm.preserve.struct.access.index.p0i32.p0s_struct.ss(%struct.s* %arg, i32 1, i32 1), !dbg !22, !llvm.preserve.access.index !15
+  %0 = tail call i32* @llvm.preserve.struct.access.index.p0i32.p0s_struct.ss(%struct.s* elementtype(%struct.s) %arg, i32 1, i32 1), !dbg !22, !llvm.preserve.access.index !15
   %1 = load i32, i32* %0, align 4, !dbg !23, !tbaa !24
   ret i32 %1, !dbg !28
 }
 
 ; CHECK-LABEL: test
-; CHECK:       r2 = 4
-; CHECK:       r1 += r2
-; CHECK:       r0 = *(u32 *)(r1 + 0)
+; CHECK-ALU64: r0 = *(u32 *)(r1 + 4)
+; CHECK-ALU32: w0 = *(u32 *)(r1 + 4)
 ; CHECK:       exit
 ;
 ; CHECK:       .long   1                       # BTF_KIND_STRUCT(id = 2)

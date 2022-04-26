@@ -1,4 +1,3 @@
-; RUN: opt < %s -pgo-instr-gen -instrprof -do-counter-promotion=true -speculative-counter-promotion-max-exiting=3 -S | FileCheck --check-prefix=PROMO %s
 ; RUN: opt < %s --passes=pgo-instr-gen,instrprof -do-counter-promotion=true -speculative-counter-promotion-max-exiting=3 -S | FileCheck --check-prefix=PROMO %s
 
 @g = common local_unnamed_addr global i32 0, align 4
@@ -69,7 +68,7 @@ bb15_0:                                             ; preds = %bb11
 ; PROMO-NEXT:  %pgocount{{.*}} = load {{.*}} @__profc_foo{{.*}} 4)
 ; PROMO-NEXT: add 
 ; PROMO-NEXT: store {{.*}}@__profc_foo{{.*}}4)
-; PROMO-NOT: @__profc_foo
+; PROMO-NOT: @__profc_foo{{.*}})
 
 
 bb15:                                             ; preds = %bb14, %bb4

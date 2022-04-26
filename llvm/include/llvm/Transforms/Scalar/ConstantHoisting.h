@@ -14,7 +14,7 @@
 // cost. If the constant can be folded into the instruction (the cost is
 // TCC_Free) or the cost is just a simple operation (TCC_BASIC), then we don't
 // consider it expensive and leave it alone. This is the default behavior and
-// the default implementation of getIntImmCost will always return TCC_Free.
+// the default implementation of getIntImmCostInst will always return TCC_Free.
 //
 // If the cost is more than TCC_BASIC, then the integer constant can't be folded
 // into the instruction and it might be beneficial to hoist the constant.
@@ -40,7 +40,6 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/PassManager.h"
 #include <algorithm>
@@ -198,7 +197,6 @@ private:
   // constant GEP base.
   bool emitBaseConstants(GlobalVariable *BaseGV);
   void deleteDeadCastInst() const;
-  bool optimizeConstants(Function &Fn);
 };
 
 } // end namespace llvm

@@ -34,10 +34,12 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
+#include "clang/StaticAnalyzer/Core/CheckerRegistryData.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExplodedGraph.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ExprEngine.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/MemRegion.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/SMTConv.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SVals.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SymbolManager.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -51,6 +53,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Casting.h"
@@ -185,6 +188,9 @@ public:
   PathPieces &getMutablePieces() { return PD->getMutablePieces(); }
 
   bool shouldAddPathEdges() const { return Consumer->shouldAddPathEdges(); }
+  bool shouldAddControlNotes() const {
+    return Consumer->shouldAddControlNotes();
+  }
   bool shouldGenerateDiagnostics() const {
     return Consumer->shouldGenerateDiagnostics();
   }
@@ -531,10 +537,10 @@ static void removeEdgesToDefaultInitializers(PathPieces &Pieces) {
     if (auto *CF = dyn_cast<PathDiagnosticControlFlowPiece>(I->get())) {
       const Stmt *Start = CF->getStartLocation().asStmt();
       const Stmt *End = CF->getEndLocation().asStmt();
-      if (Start && isa<CXXDefaultInitExpr>(Start)) {
+      if (isa_and_nonnull<CXXDefaultInitExpr>(Start)) {
         I = Pieces.erase(I);
         continue;
-      } else if (End && isa<CXXDefaultInitExpr>(End)) {
+      } else if (isa_and_nonnull<CXXDefaultInitExpr>(End)) {
         PathPieces::iterator Next = std::next(I);
         if (Next != E) {
           if (auto *NextCF =
@@ -1229,8 +1235,11 @@ void PathDiagnosticBuilder::generatePathDiagnosticsForNode(
 
   } else if (auto BE = P.getAs<BlockEdge>()) {
 
-    if (!C.shouldAddPathEdges()) {
+    if (C.shouldAddControlNotes()) {
       generateMinimalDiagForBlockEdge(C, *BE);
+    }
+
+    if (!C.shouldAddPathEdges()) {
       return;
     }
 
@@ -1251,12 +1260,14 @@ void PathDiagnosticBuilder::generatePathDiagnosticsForNode(
       // do-while statements are explicitly excluded here
 
       auto p = std::make_shared<PathDiagnosticEventPiece>(
-          L, "Looping back to the head "
-          "of the loop");
+          L, "Looping back to the head of the loop");
       p->setPrunable(true);
 
       addEdgeToPath(C.getActivePath(), PrevLoc, p->getLocation());
-      C.getActivePath().push_front(std::move(p));
+      // We might've added a very similar control node already
+      if (!C.shouldAddControlNotes()) {
+        C.getActivePath().push_front(std::move(p));
+      }
 
       if (const auto *CS = dyn_cast_or_null<CompoundStmt>(Body)) {
         addEdgeToPath(C.getActivePath(), PrevLoc,
@@ -1297,10 +1308,13 @@ void PathDiagnosticBuilder::generatePathDiagnosticsForNode(
           auto PE = std::make_shared<PathDiagnosticEventPiece>(L, str);
           PE->setPrunable(true);
           addEdgeToPath(C.getActivePath(), PrevLoc, PE->getLocation());
-          C.getActivePath().push_front(std::move(PE));
+
+          // We might've added a very similar control node already
+          if (!C.shouldAddControlNotes()) {
+            C.getActivePath().push_front(std::move(PE));
+          }
         }
-      } else if (isa<BreakStmt>(Term) || isa<ContinueStmt>(Term) ||
-          isa<GotoStmt>(Term)) {
+      } else if (isa<BreakStmt, ContinueStmt, GotoStmt>(Term)) {
         PathDiagnosticLocation L(Term, SM, C.getCurrLocationContext());
         addEdgeToPath(C.getActivePath(), PrevLoc, L);
       }
@@ -1339,9 +1353,7 @@ static const Stmt *getStmtParent(const Stmt *S, const ParentMap &PM) {
     if (!S)
       break;
 
-    if (isa<FullExpr>(S) ||
-        isa<CXXBindTemporaryExpr>(S) ||
-        isa<SubstNonTypeTemplateParmExpr>(S))
+    if (isa<FullExpr, CXXBindTemporaryExpr, SubstNonTypeTemplateParmExpr>(S))
       continue;
 
     break;
@@ -1443,7 +1455,7 @@ static void addContextEdges(PathPieces &pieces, const LocationContext *LC) {
         break;
 
       // If the source is in the same context, we're already good.
-      if (llvm::find(SrcContexts, DstContext) != SrcContexts.end())
+      if (llvm::is_contained(SrcContexts, DstContext))
         break;
 
       // Update the subexpression node to point to the context edge.
@@ -1537,9 +1549,8 @@ static void simplifySimpleBranches(PathPieces &pieces) {
 
     // We only perform this transformation for specific branch kinds.
     // We don't want to do this for do..while, for example.
-    if (!(isa<ForStmt>(s1Start) || isa<WhileStmt>(s1Start) ||
-          isa<IfStmt>(s1Start) || isa<ObjCForCollectionStmt>(s1Start) ||
-          isa<CXXForRangeStmt>(s1Start)))
+    if (!isa<ForStmt, WhileStmt, IfStmt, ObjCForCollectionStmt,
+             CXXForRangeStmt>(s1Start))
       continue;
 
     // Is s1End the branch condition?
@@ -1567,9 +1578,8 @@ static Optional<size_t> getLengthOnSingleLine(const SourceManager &SM,
   if (FID != SM.getFileID(ExpansionRange.getEnd()))
     return None;
 
-  bool Invalid;
-  const llvm::MemoryBuffer *Buffer = SM.getBuffer(FID, &Invalid);
-  if (Invalid)
+  Optional<MemoryBufferRef> Buffer = SM.getBufferOrNone(FID);
+  if (!Buffer)
     return None;
 
   unsigned BeginOffset = SM.getFileOffset(ExpansionRange.getBegin());
@@ -1986,14 +1996,6 @@ PathDiagnosticBuilder::generate(const PathDiagnosticConsumer *PDC) const {
 
   const SourceManager &SM = getSourceManager();
   const AnalyzerOptions &Opts = getAnalyzerOptions();
-  StringRef ErrorTag = ErrorNode->getLocation().getTag()->getTagDescription();
-
-  // See whether we need to silence the checker/package.
-  // FIXME: This will not work if the report was emitted with an incorrect tag.
-  for (const std::string &CheckerOrPackage : Opts.SilencedCheckersAndPackages) {
-    if (ErrorTag.startswith(CheckerOrPackage))
-      return nullptr;
-  }
 
   if (!PDC->shouldGenerateDiagnostics())
     return generateEmptyDiagnosticForReport(R, getSourceManager());
@@ -2105,6 +2107,53 @@ void BuiltinBug::anchor() {}
 // Methods for BugReport and subclasses.
 //===----------------------------------------------------------------------===//
 
+LLVM_ATTRIBUTE_USED static bool
+isDependency(const CheckerRegistryData &Registry, StringRef CheckerName) {
+  for (const std::pair<StringRef, StringRef> &Pair : Registry.Dependencies) {
+    if (Pair.second == CheckerName)
+      return true;
+  }
+  return false;
+}
+
+LLVM_ATTRIBUTE_USED static bool isHidden(const CheckerRegistryData &Registry,
+                                         StringRef CheckerName) {
+  for (const CheckerInfo &Checker : Registry.Checkers) {
+    if (Checker.FullName == CheckerName)
+      return Checker.IsHidden;
+  }
+  llvm_unreachable(
+      "Checker name not found in CheckerRegistry -- did you retrieve it "
+      "correctly from CheckerManager::getCurrentCheckerName?");
+}
+
+PathSensitiveBugReport::PathSensitiveBugReport(
+    const BugType &bt, StringRef shortDesc, StringRef desc,
+    const ExplodedNode *errorNode, PathDiagnosticLocation LocationToUnique,
+    const Decl *DeclToUnique)
+    : BugReport(Kind::PathSensitive, bt, shortDesc, desc), ErrorNode(errorNode),
+      ErrorNodeRange(getStmt() ? getStmt()->getSourceRange() : SourceRange()),
+      UniqueingLocation(LocationToUnique), UniqueingDecl(DeclToUnique) {
+  assert(!isDependency(ErrorNode->getState()
+                           ->getAnalysisManager()
+                           .getCheckerManager()
+                           ->getCheckerRegistryData(),
+                       bt.getCheckerName()) &&
+         "Some checkers depend on this one! We don't allow dependency "
+         "checkers to emit warnings, because checkers should depend on "
+         "*modeling*, not *diagnostics*.");
+
+  assert(
+      (bt.getCheckerName().startswith("debug") ||
+       !isHidden(ErrorNode->getState()
+                     ->getAnalysisManager()
+                     .getCheckerManager()
+                     ->getCheckerRegistryData(),
+                 bt.getCheckerName())) &&
+          "Hidden checkers musn't emit diagnostics as they are by definition "
+          "non-user facing!");
+}
+
 void PathSensitiveBugReport::addVisitor(
     std::unique_ptr<BugReporterVisitor> visitor) {
   if (!visitor)
@@ -2144,8 +2193,8 @@ void BasicBugReport::Profile(llvm::FoldingSetNodeID& hash) const {
   for (SourceRange range : Ranges) {
     if (!range.isValid())
       continue;
-    hash.AddInteger(range.getBegin().getRawEncoding());
-    hash.AddInteger(range.getEnd().getRawEncoding());
+    hash.Add(range.getBegin());
+    hash.Add(range.getEnd());
   }
 }
 
@@ -2167,8 +2216,8 @@ void PathSensitiveBugReport::Profile(llvm::FoldingSetNodeID &hash) const {
   for (SourceRange range : Ranges) {
     if (!range.isValid())
       continue;
-    hash.AddInteger(range.getBegin().getRawEncoding());
-    hash.AddInteger(range.getEnd().getRawEncoding());
+    hash.Add(range.getBegin());
+    hash.Add(range.getEnd());
   }
 }
 
@@ -2193,12 +2242,12 @@ static void insertToInterestingnessMap(
       return;
     case bugreporter::TrackingKind::Condition:
       return;
-  }
+    }
 
-  llvm_unreachable(
-      "BugReport::markInteresting currently can only handle 2 different "
-      "tracking kinds! Please define what tracking kind should this entitiy"
-      "have, if it was already marked as interesting with a different kind!");
+    llvm_unreachable(
+        "BugReport::markInteresting currently can only handle 2 different "
+        "tracking kinds! Please define what tracking kind should this entitiy"
+        "have, if it was already marked as interesting with a different kind!");
 }
 
 void PathSensitiveBugReport::markInteresting(SymbolRef sym,
@@ -2208,8 +2257,22 @@ void PathSensitiveBugReport::markInteresting(SymbolRef sym,
 
   insertToInterestingnessMap(InterestingSymbols, sym, TKind);
 
+  // FIXME: No tests exist for this code and it is questionable:
+  // How to handle multiple metadata for the same region?
   if (const auto *meta = dyn_cast<SymbolMetadata>(sym))
     markInteresting(meta->getRegion(), TKind);
+}
+
+void PathSensitiveBugReport::markNotInteresting(SymbolRef sym) {
+  if (!sym)
+    return;
+  InterestingSymbols.erase(sym);
+
+  // The metadata part of markInteresting is not reversed here.
+  // Just making the same region not interesting is incorrect
+  // in specific cases.
+  if (const auto *meta = dyn_cast<SymbolMetadata>(sym))
+    markNotInteresting(meta->getRegion());
 }
 
 void PathSensitiveBugReport::markInteresting(const MemRegion *R,
@@ -2222,6 +2285,17 @@ void PathSensitiveBugReport::markInteresting(const MemRegion *R,
 
   if (const auto *SR = dyn_cast<SymbolicRegion>(R))
     markInteresting(SR->getSymbol(), TKind);
+}
+
+void PathSensitiveBugReport::markNotInteresting(const MemRegion *R) {
+  if (!R)
+    return;
+
+  R = R->getBaseRegion();
+  InterestingRegions.erase(R);
+
+  if (const auto *SR = dyn_cast<SymbolicRegion>(R))
+    markNotInteresting(SR->getSymbol());
 }
 
 void PathSensitiveBugReport::markInteresting(SVal V,
@@ -2389,6 +2463,7 @@ ProgramStateManager &PathSensitiveBugReporter::getStateManager() const {
   return Eng.getStateManager();
 }
 
+BugReporter::BugReporter(BugReporterData &d) : D(d) {}
 BugReporter::~BugReporter() {
   // Make sure reports are flushed.
   assert(StrBugTypes.empty() &&
@@ -2409,7 +2484,7 @@ void BugReporter::FlushReports() {
   // EmitBasicReport.
   // FIXME: There are leaks from checkers that assume that the BugTypes they
   // create will be destroyed by the BugReporter.
-  llvm::DeleteContainerSeconds(StrBugTypes);
+  StrBugTypes.clear();
 }
 
 //===----------------------------------------------------------------------===//
@@ -2566,7 +2641,8 @@ BugPathInfo *BugPathGetter::getNextBugPath() {
     // Create the equivalent node in the new graph with the same state
     // and location.
     ExplodedNode *NewN = GNew->createUncachedNode(
-        OrigN->getLocation(), OrigN->getState(), OrigN->isSink());
+        OrigN->getLocation(), OrigN->getState(),
+        OrigN->getID(), OrigN->isSink());
 
     // Link up the new node with the previous node.
     if (Succ)
@@ -2687,8 +2763,8 @@ static void CompactMacroExpandedPieces(PathPieces &path,
 }
 
 /// Generate notes from all visitors.
-/// Notes associated with {@code ErrorNode} are generated using
-/// {@code getEndPath}, and the rest are generated with {@code VisitNode}.
+/// Notes associated with @c ErrorNode are generated using
+/// @c getEndPath, and the rest are generated with @c VisitNode.
 static std::unique_ptr<VisitorsDiagnosticsTy>
 generateVisitorsDiagnostics(PathSensitiveBugReport *R,
                             const ExplodedNode *ErrorNode,
@@ -2698,7 +2774,7 @@ generateVisitorsDiagnostics(PathSensitiveBugReport *R,
   PathSensitiveBugReport::VisitorList visitors;
 
   // Run visitors on all nodes starting from the node *before* the last one.
-  // The last node is reserved for notes generated with {@code getEndPath}.
+  // The last node is reserved for notes generated with @c getEndPath.
   const ExplodedNode *NextNode = ErrorNode->getFirstPred();
   while (NextNode) {
 
@@ -2760,12 +2836,12 @@ Optional<PathDiagnosticBuilder> PathDiagnosticBuilder::findValidReport(
 
     // Register refutation visitors first, if they mark the bug invalid no
     // further analysis is required
-    R->addVisitor(std::make_unique<LikelyFalsePositiveSuppressionBRVisitor>());
+    R->addVisitor<LikelyFalsePositiveSuppressionBRVisitor>();
 
     // Register additional node visitors.
-    R->addVisitor(std::make_unique<NilReceiverBRVisitor>());
-    R->addVisitor(std::make_unique<ConditionBRVisitor>());
-    R->addVisitor(std::make_unique<TagVisitor>());
+    R->addVisitor<NilReceiverBRVisitor>();
+    R->addVisitor<ConditionBRVisitor>();
+    R->addVisitor<TagVisitor>();
 
     BugReporterContext BRC(Reporter);
 
@@ -2778,9 +2854,9 @@ Optional<PathDiagnosticBuilder> PathDiagnosticBuilder::findValidReport(
         // If crosscheck is enabled, remove all visitors, add the refutation
         // visitor and check again
         R->clearVisitors();
-        R->addVisitor(std::make_unique<FalsePositiveRefutationBRVisitor>());
+        R->addVisitor<FalsePositiveRefutationBRVisitor>();
 
-        // We don't overrite the notes inserted by other visitors because the
+        // We don't overwrite the notes inserted by other visitors because the
         // refutation manager does not add any new note to the path
         generateVisitorsDiagnostics(R, BugPath->ErrorNode, BRC);
       }
@@ -2990,6 +3066,14 @@ void BugReporter::FlushReport(BugReportEquivClass& EQ) {
   if (!report)
     return;
 
+  // See whether we need to silence the checker/package.
+  for (const std::string &CheckerOrPackage :
+       getAnalyzerOptions().SilencedCheckersAndPackages) {
+    if (report->getBugType().getCheckerName().startswith(
+            CheckerOrPackage))
+      return;
+  }
+
   ArrayRef<PathDiagnosticConsumer*> Consumers = getPathDiagnosticConsumers();
   std::unique_ptr<DiagnosticForConsumerMapTy> Diagnostics =
       generateDiagnosticForConsumerMap(report, Consumers, bugReports);
@@ -3105,7 +3189,7 @@ findExecutedLines(const SourceManager &SM, const ExplodedNode *N) {
         P = N->getParentMap().getParent(RS);
       }
 
-      if (P && (isa<SwitchCase>(P) || isa<LabelStmt>(P)))
+      if (isa_and_nonnull<SwitchCase, LabelStmt>(P))
         populateExecutedLinesWithStmt(P, SM, *ExecutedLines);
     }
 
@@ -3261,8 +3345,8 @@ BugType *BugReporter::getBugTypeForName(CheckerNameRef CheckName,
   SmallString<136> fullDesc;
   llvm::raw_svector_ostream(fullDesc) << CheckName.getName() << ":" << name
                                       << ":" << category;
-  BugType *&BT = StrBugTypes[fullDesc];
+  std::unique_ptr<BugType> &BT = StrBugTypes[fullDesc];
   if (!BT)
-    BT = new BugType(CheckName, name, category);
-  return BT;
+    BT = std::make_unique<BugType>(CheckName, name, category);
+  return BT.get();
 }

@@ -12,9 +12,11 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 #include <assert.h>
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace lld {
 
@@ -27,6 +29,8 @@ struct ScopedTimer {
 
   void stop();
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
+
   Timer *t = nullptr;
 };
 
@@ -34,23 +38,20 @@ class Timer {
 public:
   Timer(llvm::StringRef name, Timer &parent);
 
-  static Timer &root();
+  // Creates the root timer.
+  explicit Timer(llvm::StringRef name);
 
-  void start();
-  void stop();
+  void addToTotal(std::chrono::nanoseconds time) { total += time.count(); }
   void print();
 
   double millis() const;
 
 private:
-  explicit Timer(llvm::StringRef name);
   void print(int depth, double totalDuration, bool recurse = true) const;
 
-  std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
-  std::chrono::nanoseconds total;
+  std::atomic<std::chrono::nanoseconds::rep> total;
   std::vector<Timer *> children;
   std::string name;
-  Timer *parent;
 };
 
 } // namespace lld

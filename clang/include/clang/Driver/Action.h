@@ -59,6 +59,7 @@ public:
     PreprocessJobClass,
     PrecompileJobClass,
     HeaderModulePrecompileJobClass,
+    ExtractAPIJobClass,
     AnalyzeJobClass,
     MigrateJobClass,
     CompileJobClass,
@@ -73,9 +74,11 @@ public:
     OffloadBundlingJobClass,
     OffloadUnbundlingJobClass,
     OffloadWrapperJobClass,
+    LinkerWrapperJobClass,
+    StaticLibJobClass,
 
     JobClassFirst = PreprocessJobClass,
-    JobClassLast = OffloadWrapperJobClass
+    JobClassLast = StaticLibJobClass
   };
 
   // The offloading kind determines if this action is binded to a particular
@@ -187,6 +190,11 @@ public:
   /// dependences.
   void propagateHostOffloadInfo(unsigned OKinds, const char *OArch);
 
+  void setHostOffloadInfo(unsigned OKinds, const char *OArch) {
+    ActiveOffloadKindMask |= OKinds;
+    OffloadingArch = OArch;
+  }
+
   /// Set the offload info of this action to be the same as the provided action,
   /// and propagate it to its dependences.
   void propagateOffloadInfo(const Action *A);
@@ -213,13 +221,17 @@ public:
 
 class InputAction : public Action {
   const llvm::opt::Arg &Input;
-
+  std::string Id;
   virtual void anchor();
 
 public:
-  InputAction(const llvm::opt::Arg &Input, types::ID Type);
+  InputAction(const llvm::opt::Arg &Input, types::ID Type,
+              StringRef Id = StringRef());
 
   const llvm::opt::Arg &getInputArg() const { return Input; }
+
+  void setId(StringRef _Id) { Id = _Id.str(); }
+  StringRef getId() const { return Id; }
 
   static bool classof(const Action *A) {
     return A->getKind() == InputClass;
@@ -432,6 +444,19 @@ public:
   const char *getModuleName() const { return ModuleName; }
 };
 
+class ExtractAPIJobAction : public JobAction {
+  void anchor() override;
+
+public:
+  ExtractAPIJobAction(Action *Input, types::ID OutputType);
+
+  static bool classof(const Action *A) {
+    return A->getKind() == ExtractAPIJobClass;
+  }
+
+  void addHeaderInput(Action *Input) { getInputs().push_back(Input); }
+};
+
 class AnalyzeJobAction : public JobAction {
   void anchor() override;
 
@@ -634,6 +659,28 @@ public:
 
   static bool classof(const Action *A) {
     return A->getKind() == OffloadWrapperJobClass;
+  }
+};
+
+class LinkerWrapperJobAction : public JobAction {
+  void anchor() override;
+
+public:
+  LinkerWrapperJobAction(ActionList &Inputs, types::ID Type);
+
+  static bool classof(const Action *A) {
+    return A->getKind() == LinkerWrapperJobClass;
+  }
+};
+
+class StaticLibJobAction : public JobAction {
+  void anchor() override;
+
+public:
+  StaticLibJobAction(ActionList &Inputs, types::ID Type);
+
+  static bool classof(const Action *A) {
+    return A->getKind() == StaticLibJobClass;
   }
 };
 

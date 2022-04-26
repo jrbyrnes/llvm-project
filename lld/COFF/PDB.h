@@ -10,6 +10,7 @@
 #define LLD_COFF_PDB_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace llvm {
@@ -19,19 +20,19 @@ union DebugInfo;
 }
 
 namespace lld {
-namespace coff {
-class OutputSection;
-class SectionChunk;
-class SymbolTable;
+class Timer;
 
-void createPDB(SymbolTable *symtab,
-               llvm::ArrayRef<OutputSection *> outputSections,
-               llvm::ArrayRef<uint8_t> sectionTable,
+namespace coff {
+class SectionChunk;
+class COFFLinkerContext;
+
+void createPDB(COFFLinkerContext &ctx, llvm::ArrayRef<uint8_t> sectionTable,
                llvm::codeview::DebugInfo *buildId);
 
-std::pair<llvm::StringRef, uint32_t> getFileLineCodeView(const SectionChunk *c,
-                                                         uint32_t addr);
-}
-}
+llvm::Optional<std::pair<llvm::StringRef, uint32_t>>
+getFileLineCodeView(const SectionChunk *c, uint32_t addr);
+
+} // namespace coff
+} // namespace lld
 
 #endif

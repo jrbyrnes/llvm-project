@@ -12,20 +12,19 @@
 
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 
-#include "SymbolizableObjectFile.h"
-
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
 #include "llvm/DebugInfo/PDB/PDBContext.h"
+#include "llvm/DebugInfo/Symbolize/DIFetcher.h"
+#include "llvm/DebugInfo/Symbolize/SymbolizableObjectFile.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/MachOUniversal.h"
 #include "llvm/Support/CRC.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/Compression.h"
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
@@ -35,25 +34,32 @@
 #include <cassert>
 #include <cstring>
 
-#if defined(_MSC_VER)
-#include <Windows.h>
-
-// This must be included after windows.h.
-#include <DbgHelp.h>
-#pragma comment(lib, "dbghelp.lib")
-
-// Windows.h conflicts with our COFF header definitions.
-#ifdef IMAGE_FILE_MACHINE_I386
-#undef IMAGE_FILE_MACHINE_I386
-#endif
-#endif
-
 namespace llvm {
+namespace codeview {
+union DebugInfo;
+}
+namespace object {
+template <class ELFT> class ELFFile;
+}
 namespace symbolize {
 
+LLVMSymbolizer::LLVMSymbolizer() = default;
+
+LLVMSymbolizer::LLVMSymbolizer(const Options &Opts) : Opts(Opts) {}
+
+LLVMSymbolizer::~LLVMSymbolizer() = default;
+
+template <typename T>
 Expected<DILineInfo>
-LLVMSymbolizer::symbolizeCodeCommon(SymbolizableModule *Info,
+LLVMSymbolizer::symbolizeCodeCommon(const T &ModuleSpecifier,
                                     object::SectionedAddress ModuleOffset) {
+
+  auto InfoOrErr = getOrCreateModuleInfo(ModuleSpecifier);
+  if (!InfoOrErr)
+    return InfoOrErr.takeError();
+
+  SymbolizableModule *Info = *InfoOrErr;
+
   // A null module means an error has already been reported. Return an empty
   // result.
   if (!Info)
@@ -64,8 +70,9 @@ LLVMSymbolizer::symbolizeCodeCommon(SymbolizableModule *Info,
   if (Opts.RelativeAddresses)
     ModuleOffset.Address += Info->getModulePreferredBase();
 
-  DILineInfo LineInfo = Info->symbolizeCode(ModuleOffset, Opts.PrintFunctions,
-                                            Opts.UseSymbolTable);
+  DILineInfo LineInfo = Info->symbolizeCode(
+      ModuleOffset, DILineInfoSpecifier(Opts.PathStyle, Opts.PrintFunctions),
+      Opts.UseSymbolTable);
   if (Opts.Demangle)
     LineInfo.FunctionName = DemangleName(LineInfo.FunctionName, Info);
   return LineInfo;
@@ -74,37 +81,29 @@ LLVMSymbolizer::symbolizeCodeCommon(SymbolizableModule *Info,
 Expected<DILineInfo>
 LLVMSymbolizer::symbolizeCode(const ObjectFile &Obj,
                               object::SectionedAddress ModuleOffset) {
-  StringRef ModuleName = Obj.getFileName();
-  auto I = Modules.find(ModuleName);
-  if (I != Modules.end())
-    return symbolizeCodeCommon(I->second.get(), ModuleOffset);
-
-  std::unique_ptr<DIContext> Context =
-        DWARFContext::create(Obj, nullptr, DWARFContext::defaultErrorHandler);
-  Expected<SymbolizableModule *> InfoOrErr =
-                     createModuleInfo(&Obj, std::move(Context), ModuleName);
-  if (!InfoOrErr)
-    return InfoOrErr.takeError();
-  return symbolizeCodeCommon(*InfoOrErr, ModuleOffset);
+  return symbolizeCodeCommon(Obj, ModuleOffset);
 }
 
 Expected<DILineInfo>
 LLVMSymbolizer::symbolizeCode(const std::string &ModuleName,
                               object::SectionedAddress ModuleOffset) {
-  Expected<SymbolizableModule *> InfoOrErr = getOrCreateModuleInfo(ModuleName);
-  if (!InfoOrErr)
-    return InfoOrErr.takeError();
-  return symbolizeCodeCommon(*InfoOrErr, ModuleOffset);
+  return symbolizeCodeCommon(ModuleName, ModuleOffset);
 }
 
-Expected<DIInliningInfo>
-LLVMSymbolizer::symbolizeInlinedCode(const std::string &ModuleName,
-                                     object::SectionedAddress ModuleOffset) {
-  SymbolizableModule *Info;
-  if (auto InfoOrErr = getOrCreateModuleInfo(ModuleName))
-    Info = InfoOrErr.get();
-  else
+Expected<DILineInfo>
+LLVMSymbolizer::symbolizeCode(ArrayRef<uint8_t> BuildID,
+                              object::SectionedAddress ModuleOffset) {
+  return symbolizeCodeCommon(BuildID, ModuleOffset);
+}
+
+template <typename T>
+Expected<DIInliningInfo> LLVMSymbolizer::symbolizeInlinedCodeCommon(
+    const T &ModuleSpecifier, object::SectionedAddress ModuleOffset) {
+  auto InfoOrErr = getOrCreateModuleInfo(ModuleSpecifier);
+  if (!InfoOrErr)
     return InfoOrErr.takeError();
+
+  SymbolizableModule *Info = *InfoOrErr;
 
   // A null module means an error has already been reported. Return an empty
   // result.
@@ -117,7 +116,8 @@ LLVMSymbolizer::symbolizeInlinedCode(const std::string &ModuleName,
     ModuleOffset.Address += Info->getModulePreferredBase();
 
   DIInliningInfo InlinedContext = Info->symbolizeInlinedCode(
-      ModuleOffset, Opts.PrintFunctions, Opts.UseSymbolTable);
+      ModuleOffset, DILineInfoSpecifier(Opts.PathStyle, Opts.PrintFunctions),
+      Opts.UseSymbolTable);
   if (Opts.Demangle) {
     for (int i = 0, n = InlinedContext.getNumberOfFrames(); i < n; i++) {
       auto *Frame = InlinedContext.getMutableFrame(i);
@@ -127,15 +127,34 @@ LLVMSymbolizer::symbolizeInlinedCode(const std::string &ModuleName,
   return InlinedContext;
 }
 
+Expected<DIInliningInfo>
+LLVMSymbolizer::symbolizeInlinedCode(const ObjectFile &Obj,
+                                     object::SectionedAddress ModuleOffset) {
+  return symbolizeInlinedCodeCommon(Obj, ModuleOffset);
+}
+
+Expected<DIInliningInfo>
+LLVMSymbolizer::symbolizeInlinedCode(const std::string &ModuleName,
+                                     object::SectionedAddress ModuleOffset) {
+  return symbolizeInlinedCodeCommon(ModuleName, ModuleOffset);
+}
+
+Expected<DIInliningInfo>
+LLVMSymbolizer::symbolizeInlinedCode(ArrayRef<uint8_t> BuildID,
+                                     object::SectionedAddress ModuleOffset) {
+  return symbolizeInlinedCodeCommon(BuildID, ModuleOffset);
+}
+
+template <typename T>
 Expected<DIGlobal>
-LLVMSymbolizer::symbolizeData(const std::string &ModuleName,
-                              object::SectionedAddress ModuleOffset) {
-  SymbolizableModule *Info;
-  if (auto InfoOrErr = getOrCreateModuleInfo(ModuleName))
-    Info = InfoOrErr.get();
-  else
+LLVMSymbolizer::symbolizeDataCommon(const T &ModuleSpecifier,
+                                    object::SectionedAddress ModuleOffset) {
+
+  auto InfoOrErr = getOrCreateModuleInfo(ModuleSpecifier);
+  if (!InfoOrErr)
     return InfoOrErr.takeError();
 
+  SymbolizableModule *Info = *InfoOrErr;
   // A null module means an error has already been reported. Return an empty
   // result.
   if (!Info)
@@ -153,15 +172,33 @@ LLVMSymbolizer::symbolizeData(const std::string &ModuleName,
   return Global;
 }
 
+Expected<DIGlobal>
+LLVMSymbolizer::symbolizeData(const ObjectFile &Obj,
+                              object::SectionedAddress ModuleOffset) {
+  return symbolizeDataCommon(Obj, ModuleOffset);
+}
+
+Expected<DIGlobal>
+LLVMSymbolizer::symbolizeData(const std::string &ModuleName,
+                              object::SectionedAddress ModuleOffset) {
+  return symbolizeDataCommon(ModuleName, ModuleOffset);
+}
+
+Expected<DIGlobal>
+LLVMSymbolizer::symbolizeData(ArrayRef<uint8_t> BuildID,
+                              object::SectionedAddress ModuleOffset) {
+  return symbolizeDataCommon(BuildID, ModuleOffset);
+}
+
+template <typename T>
 Expected<std::vector<DILocal>>
-LLVMSymbolizer::symbolizeFrame(const std::string &ModuleName,
-                               object::SectionedAddress ModuleOffset) {
-  SymbolizableModule *Info;
-  if (auto InfoOrErr = getOrCreateModuleInfo(ModuleName))
-    Info = InfoOrErr.get();
-  else
+LLVMSymbolizer::symbolizeFrameCommon(const T &ModuleSpecifier,
+                                     object::SectionedAddress ModuleOffset) {
+  auto InfoOrErr = getOrCreateModuleInfo(ModuleSpecifier);
+  if (!InfoOrErr)
     return InfoOrErr.takeError();
 
+  SymbolizableModule *Info = *InfoOrErr;
   // A null module means an error has already been reported. Return an empty
   // result.
   if (!Info)
@@ -176,11 +213,32 @@ LLVMSymbolizer::symbolizeFrame(const std::string &ModuleName,
   return Info->symbolizeFrame(ModuleOffset);
 }
 
+Expected<std::vector<DILocal>>
+LLVMSymbolizer::symbolizeFrame(const ObjectFile &Obj,
+                               object::SectionedAddress ModuleOffset) {
+  return symbolizeFrameCommon(Obj, ModuleOffset);
+}
+
+Expected<std::vector<DILocal>>
+LLVMSymbolizer::symbolizeFrame(const std::string &ModuleName,
+                               object::SectionedAddress ModuleOffset) {
+  return symbolizeFrameCommon(ModuleName, ModuleOffset);
+}
+
+Expected<std::vector<DILocal>>
+LLVMSymbolizer::symbolizeFrame(ArrayRef<uint8_t> BuildID,
+                               object::SectionedAddress ModuleOffset) {
+  return symbolizeFrameCommon(BuildID, ModuleOffset);
+}
+
 void LLVMSymbolizer::flush() {
   ObjectForUBPathAndArch.clear();
+  LRUBinaries.clear();
+  CacheSize = 0;
   BinaryForPath.clear();
   ObjectPairForPathArch.clear();
   Modules.clear();
+  BuildIDPaths.clear();
 }
 
 namespace {
@@ -189,15 +247,15 @@ namespace {
 // /path/to/foo.dSYM/Contents/Resources/DWARF/foo.
 // For Path="/path/to/bar.dSYM" and Basename="foo" assume that debug info is in
 // /path/to/bar.dSYM/Contents/Resources/DWARF/foo.
-std::string getDarwinDWARFResourceForPath(
-    const std::string &Path, const std::string &Basename) {
+std::string getDarwinDWARFResourceForPath(const std::string &Path,
+                                          const std::string &Basename) {
   SmallString<16> ResourceName = StringRef(Path);
   if (sys::path::extension(Path) != ".dSYM") {
     ResourceName += ".dSYM";
   }
   sys::path::append(ResourceName, "Contents", "Resources", "DWARF");
   sys::path::append(ResourceName, Basename);
-  return ResourceName.str();
+  return std::string(ResourceName.str());
 }
 
 bool checkFileCRC(StringRef Path, uint32_t CRCHash) {
@@ -208,61 +266,13 @@ bool checkFileCRC(StringRef Path, uint32_t CRCHash) {
   return CRCHash == llvm::crc32(arrayRefFromStringRef(MB.get()->getBuffer()));
 }
 
-bool findDebugBinary(const std::string &OrigPath,
-                     const std::string &DebuglinkName, uint32_t CRCHash,
-                     const std::string &FallbackDebugPath,
-                     std::string &Result) {
-  SmallString<16> OrigDir(OrigPath);
-  llvm::sys::path::remove_filename(OrigDir);
-  SmallString<16> DebugPath = OrigDir;
-  // Try relative/path/to/original_binary/debuglink_name
-  llvm::sys::path::append(DebugPath, DebuglinkName);
-  if (checkFileCRC(DebugPath, CRCHash)) {
-    Result = DebugPath.str();
-    return true;
-  }
-  // Try relative/path/to/original_binary/.debug/debuglink_name
-  DebugPath = OrigDir;
-  llvm::sys::path::append(DebugPath, ".debug", DebuglinkName);
-  if (checkFileCRC(DebugPath, CRCHash)) {
-    Result = DebugPath.str();
-    return true;
-  }
-  // Make the path absolute so that lookups will go to
-  // "/usr/lib/debug/full/path/to/debug", not
-  // "/usr/lib/debug/to/debug"
-  llvm::sys::fs::make_absolute(OrigDir);
-  if (!FallbackDebugPath.empty()) {
-    // Try <FallbackDebugPath>/absolute/path/to/original_binary/debuglink_name
-    DebugPath = FallbackDebugPath;
-  } else {
-#if defined(__NetBSD__)
-    // Try /usr/libdata/debug/absolute/path/to/original_binary/debuglink_name
-    DebugPath = "/usr/libdata/debug";
-#else
-    // Try /usr/lib/debug/absolute/path/to/original_binary/debuglink_name
-    DebugPath = "/usr/lib/debug";
-#endif
-  }
-  llvm::sys::path::append(DebugPath, llvm::sys::path::relative_path(OrigDir),
-                          DebuglinkName);
-  if (checkFileCRC(DebugPath, CRCHash)) {
-    Result = DebugPath.str();
-    return true;
-  }
-  return false;
-}
-
 bool getGNUDebuglinkContents(const ObjectFile *Obj, std::string &DebugName,
                              uint32_t &CRCHash) {
   if (!Obj)
     return false;
   for (const SectionRef &Section : Obj->sections()) {
     StringRef Name;
-    if (Expected<StringRef> NameOrErr = Section.getName())
-      Name = *NameOrErr;
-    else
-      consumeError(NameOrErr.takeError());
+    consumeError(Section.getName().moveInto(Name));
 
     Name = Name.substr(Name.find_first_not_of("._"));
     if (Name == "gnu_debuglink") {
@@ -297,17 +307,55 @@ bool darwinDsymMatchesBinary(const MachOObjectFile *DbgObj,
   return !memcmp(dbg_uuid.data(), bin_uuid.data(), dbg_uuid.size());
 }
 
+template <typename ELFT>
+Optional<ArrayRef<uint8_t>> getBuildID(const ELFFile<ELFT> &Obj) {
+  auto PhdrsOrErr = Obj.program_headers();
+  if (!PhdrsOrErr) {
+    consumeError(PhdrsOrErr.takeError());
+    return {};
+  }
+  for (const auto &P : *PhdrsOrErr) {
+    if (P.p_type != ELF::PT_NOTE)
+      continue;
+    Error Err = Error::success();
+    for (auto N : Obj.notes(P, Err))
+      if (N.getType() == ELF::NT_GNU_BUILD_ID &&
+          N.getName() == ELF::ELF_NOTE_GNU)
+        return N.getDesc();
+    consumeError(std::move(Err));
+  }
+  return {};
+}
+
+Optional<ArrayRef<uint8_t>> getBuildID(const ELFObjectFileBase *Obj) {
+  Optional<ArrayRef<uint8_t>> BuildID;
+  if (auto *O = dyn_cast<ELFObjectFile<ELF32LE>>(Obj))
+    BuildID = getBuildID(O->getELFFile());
+  else if (auto *O = dyn_cast<ELFObjectFile<ELF32BE>>(Obj))
+    BuildID = getBuildID(O->getELFFile());
+  else if (auto *O = dyn_cast<ELFObjectFile<ELF64LE>>(Obj))
+    BuildID = getBuildID(O->getELFFile());
+  else if (auto *O = dyn_cast<ELFObjectFile<ELF64BE>>(Obj))
+    BuildID = getBuildID(O->getELFFile());
+  else
+    llvm_unreachable("unsupported file format");
+  return BuildID;
+}
+
 } // end anonymous namespace
 
 ObjectFile *LLVMSymbolizer::lookUpDsymFile(const std::string &ExePath,
-    const MachOObjectFile *MachExeObj, const std::string &ArchName) {
+                                           const MachOObjectFile *MachExeObj,
+                                           const std::string &ArchName) {
   // On Darwin we may find DWARF in separate object file in
   // resource directory.
   std::vector<std::string> DsymPaths;
   StringRef Filename = sys::path::filename(ExePath);
-  DsymPaths.push_back(getDarwinDWARFResourceForPath(ExePath, Filename));
+  DsymPaths.push_back(
+      getDarwinDWARFResourceForPath(ExePath, std::string(Filename)));
   for (const auto &Path : Opts.DsymHints) {
-    DsymPaths.push_back(getDarwinDWARFResourceForPath(Path, Filename));
+    DsymPaths.push_back(
+        getDarwinDWARFResourceForPath(Path, std::string(Filename)));
   }
   for (const auto &Path : DsymPaths) {
     auto DbgObjOrErr = getOrCreateObject(Path, ArchName);
@@ -336,8 +384,7 @@ ObjectFile *LLVMSymbolizer::lookUpDebuglinkObject(const std::string &Path,
   std::string DebugBinaryPath;
   if (!getGNUDebuglinkContents(Obj, DebuglinkName, CRCHash))
     return nullptr;
-  if (!findDebugBinary(Path, DebuglinkName, CRCHash, Opts.FallbackDebugPath,
-                       DebugBinaryPath))
+  if (!findDebugBinary(Path, DebuglinkName, CRCHash, DebugBinaryPath))
     return nullptr;
   auto DbgObjOrErr = getOrCreateObject(DebugBinaryPath, ArchName);
   if (!DbgObjOrErr) {
@@ -348,12 +395,116 @@ ObjectFile *LLVMSymbolizer::lookUpDebuglinkObject(const std::string &Path,
   return DbgObjOrErr.get();
 }
 
+ObjectFile *LLVMSymbolizer::lookUpBuildIDObject(const std::string &Path,
+                                                const ELFObjectFileBase *Obj,
+                                                const std::string &ArchName) {
+  auto BuildID = getBuildID(Obj);
+  if (!BuildID)
+    return nullptr;
+  if (BuildID->size() < 2)
+    return nullptr;
+  std::string DebugBinaryPath;
+  if (!getOrFindDebugBinary(*BuildID, DebugBinaryPath))
+    return nullptr;
+  auto DbgObjOrErr = getOrCreateObject(DebugBinaryPath, ArchName);
+  if (!DbgObjOrErr) {
+    consumeError(DbgObjOrErr.takeError());
+    return nullptr;
+  }
+  return DbgObjOrErr.get();
+}
+
+bool LLVMSymbolizer::findDebugBinary(const std::string &OrigPath,
+                                     const std::string &DebuglinkName,
+                                     uint32_t CRCHash, std::string &Result) {
+  SmallString<16> OrigDir(OrigPath);
+  llvm::sys::path::remove_filename(OrigDir);
+  SmallString<16> DebugPath = OrigDir;
+  // Try relative/path/to/original_binary/debuglink_name
+  llvm::sys::path::append(DebugPath, DebuglinkName);
+  if (checkFileCRC(DebugPath, CRCHash)) {
+    Result = std::string(DebugPath.str());
+    return true;
+  }
+  // Try relative/path/to/original_binary/.debug/debuglink_name
+  DebugPath = OrigDir;
+  llvm::sys::path::append(DebugPath, ".debug", DebuglinkName);
+  if (checkFileCRC(DebugPath, CRCHash)) {
+    Result = std::string(DebugPath.str());
+    return true;
+  }
+  // Make the path absolute so that lookups will go to
+  // "/usr/lib/debug/full/path/to/debug", not
+  // "/usr/lib/debug/to/debug"
+  llvm::sys::fs::make_absolute(OrigDir);
+  if (!Opts.FallbackDebugPath.empty()) {
+    // Try <FallbackDebugPath>/absolute/path/to/original_binary/debuglink_name
+    DebugPath = Opts.FallbackDebugPath;
+  } else {
+#if defined(__NetBSD__)
+    // Try /usr/libdata/debug/absolute/path/to/original_binary/debuglink_name
+    DebugPath = "/usr/libdata/debug";
+#else
+    // Try /usr/lib/debug/absolute/path/to/original_binary/debuglink_name
+    DebugPath = "/usr/lib/debug";
+#endif
+  }
+  llvm::sys::path::append(DebugPath, llvm::sys::path::relative_path(OrigDir),
+                          DebuglinkName);
+  if (checkFileCRC(DebugPath, CRCHash)) {
+    Result = std::string(DebugPath.str());
+    return true;
+  }
+  return false;
+}
+
+static StringRef getBuildIDStr(ArrayRef<uint8_t> BuildID) {
+  return StringRef(reinterpret_cast<const char *>(BuildID.data()),
+                   BuildID.size());
+}
+
+bool LLVMSymbolizer::getOrFindDebugBinary(const ArrayRef<uint8_t> BuildID,
+                                          std::string &Result) {
+  StringRef BuildIDStr = getBuildIDStr(BuildID);
+  auto I = BuildIDPaths.find(BuildIDStr);
+  if (I != BuildIDPaths.end()) {
+    Result = I->second;
+    return true;
+  }
+  auto recordPath = [&](StringRef Path) {
+    Result = Path.str();
+    auto InsertResult = BuildIDPaths.insert({BuildIDStr, Result});
+    assert(InsertResult.second);
+    (void)InsertResult;
+  };
+
+  Optional<std::string> Path;
+  Path = LocalDIFetcher(Opts.DebugFileDirectory).fetchBuildID(BuildID);
+  if (Path) {
+    recordPath(*Path);
+    return true;
+  }
+
+  // Try caller-provided debug info fetchers.
+  for (const std::unique_ptr<DIFetcher> &Fetcher : DIFetchers) {
+    Path = Fetcher->fetchBuildID(BuildID);
+    if (Path) {
+      recordPath(*Path);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 Expected<LLVMSymbolizer::ObjectPair>
 LLVMSymbolizer::getOrCreateObjectPair(const std::string &Path,
                                       const std::string &ArchName) {
   auto I = ObjectPairForPathArch.find(std::make_pair(Path, ArchName));
-  if (I != ObjectPairForPathArch.end())
+  if (I != ObjectPairForPathArch.end()) {
+    recordAccess(BinaryForPath.find(Path)->second);
     return I->second;
+  }
 
   auto ObjOrErr = getOrCreateObject(Path, ArchName);
   if (!ObjOrErr) {
@@ -368,12 +519,19 @@ LLVMSymbolizer::getOrCreateObjectPair(const std::string &Path,
 
   if (auto MachObj = dyn_cast<const MachOObjectFile>(Obj))
     DbgObj = lookUpDsymFile(Path, MachObj, ArchName);
+  else if (auto ELFObj = dyn_cast<const ELFObjectFileBase>(Obj))
+    DbgObj = lookUpBuildIDObject(Path, ELFObj, ArchName);
   if (!DbgObj)
     DbgObj = lookUpDebuglinkObject(Path, Obj, ArchName);
   if (!DbgObj)
     DbgObj = Obj;
   ObjectPair Res = std::make_pair(Obj, DbgObj);
-  ObjectPairForPathArch.emplace(std::make_pair(Path, ArchName), Res);
+  std::string DbgObjPath = DbgObj->getFileName().str();
+  auto Pair =
+      ObjectPairForPathArch.emplace(std::make_pair(Path, ArchName), Res);
+  BinaryForPath.find(DbgObjPath)->second.pushEvictor([this, I = Pair.first]() {
+    ObjectPairForPathArch.erase(I);
+  });
   return Res;
 }
 
@@ -383,13 +541,19 @@ LLVMSymbolizer::getOrCreateObject(const std::string &Path,
   Binary *Bin;
   auto Pair = BinaryForPath.emplace(Path, OwningBinary<Binary>());
   if (!Pair.second) {
-    Bin = Pair.first->second.getBinary();
+    Bin = Pair.first->second->getBinary();
+    recordAccess(Pair.first->second);
   } else {
     Expected<OwningBinary<Binary>> BinOrErr = createBinary(Path);
     if (!BinOrErr)
       return BinOrErr.takeError();
-    Pair.first->second = std::move(BinOrErr.get());
-    Bin = Pair.first->second.getBinary();
+
+    CachedBinary &CachedBin = Pair.first->second;
+    CachedBin = std::move(BinOrErr.get());
+    CachedBin.pushEvictor([this, I = Pair.first]() { BinaryForPath.erase(I); });
+    LRUBinaries.push_back(CachedBin);
+    CacheSize += CachedBin.size();
+    Bin = CachedBin->getBinary();
   }
 
   if (!Bin)
@@ -408,8 +572,10 @@ LLVMSymbolizer::getOrCreateObject(const std::string &Path,
       return ObjOrErr.takeError();
     }
     ObjectFile *Res = ObjOrErr->get();
-    ObjectForUBPathAndArch.emplace(std::make_pair(Path, ArchName),
-                                   std::move(ObjOrErr.get()));
+    auto Pair = ObjectForUBPathAndArch.emplace(std::make_pair(Path, ArchName),
+                                               std::move(ObjOrErr.get()));
+    BinaryForPath.find(Path)->second.pushEvictor(
+        [this, Iter = Pair.first]() { ObjectForUBPathAndArch.erase(Iter); });
     return Res;
   }
   if (Bin->isObject()) {
@@ -427,20 +593,16 @@ LLVMSymbolizer::createModuleInfo(const ObjectFile *Obj,
   std::unique_ptr<SymbolizableModule> SymMod;
   if (InfoOrErr)
     SymMod = std::move(*InfoOrErr);
-  auto InsertResult =
-      Modules.insert(std::make_pair(ModuleName, std::move(SymMod)));
+  auto InsertResult = Modules.insert(
+      std::make_pair(std::string(ModuleName), std::move(SymMod)));
   assert(InsertResult.second);
-  if (std::error_code EC = InfoOrErr.getError())
-    return errorCodeToError(EC);
+  if (!InfoOrErr)
+    return InfoOrErr.takeError();
   return InsertResult.first->second.get();
 }
 
 Expected<SymbolizableModule *>
 LLVMSymbolizer::getOrCreateModuleInfo(const std::string &ModuleName) {
-  auto I = Modules.find(ModuleName);
-  if (I != Modules.end())
-    return I->second.get();
-
   std::string BinaryName = ModuleName;
   std::string ArchName = Opts.DefaultArch;
   size_t ColonPos = ModuleName.find_last_of(':');
@@ -452,6 +614,13 @@ LLVMSymbolizer::getOrCreateModuleInfo(const std::string &ModuleName) {
       ArchName = ArchStr;
     }
   }
+
+  auto I = Modules.find(ModuleName);
+  if (I != Modules.end()) {
+    recordAccess(BinaryForPath.find(BinaryName)->second);
+    return I->second.get();
+  }
+
   auto ObjectsOrErr = getOrCreateObjectPair(BinaryName, ArchName);
   if (!ObjectsOrErr) {
     // Failed to find valid object file.
@@ -470,8 +639,11 @@ LLVMSymbolizer::getOrCreateModuleInfo(const std::string &ModuleName) {
     if (!EC && DebugInfo != nullptr && !PDBFileName.empty()) {
       using namespace pdb;
       std::unique_ptr<IPDBSession> Session;
-      if (auto Err = loadDataForEXE(PDB_ReaderType::DIA,
-                                    Objects.first->getFileName(), Session)) {
+
+      PDB_ReaderType ReaderType =
+          Opts.UseDIA ? PDB_ReaderType::DIA : PDB_ReaderType::Native;
+      if (auto Err = loadDataForEXE(ReaderType, Objects.first->getFileName(),
+                                    Session)) {
         Modules.emplace(ModuleName, std::unique_ptr<SymbolizableModule>());
         // Return along the PDB filename to provide more context
         return createFileError(PDBFileName, std::move(Err));
@@ -480,10 +652,41 @@ LLVMSymbolizer::getOrCreateModuleInfo(const std::string &ModuleName) {
     }
   }
   if (!Context)
-    Context =
-        DWARFContext::create(*Objects.second, nullptr,
-                             DWARFContext::defaultErrorHandler, Opts.DWPName);
-  return createModuleInfo(Objects.first, std::move(Context), ModuleName);
+    Context = DWARFContext::create(
+        *Objects.second, DWARFContext::ProcessDebugRelocations::Process,
+        nullptr, Opts.DWPName);
+  auto ModuleOrErr =
+      createModuleInfo(Objects.first, std::move(Context), ModuleName);
+  if (ModuleOrErr) {
+    auto I = Modules.find(ModuleName);
+    BinaryForPath.find(BinaryName)->second.pushEvictor([this, I]() {
+      Modules.erase(I);
+    });
+  }
+  return ModuleOrErr;
+}
+
+Expected<SymbolizableModule *>
+LLVMSymbolizer::getOrCreateModuleInfo(const ObjectFile &Obj) {
+  StringRef ObjName = Obj.getFileName();
+  auto I = Modules.find(ObjName);
+  if (I != Modules.end())
+    return I->second.get();
+
+  std::unique_ptr<DIContext> Context = DWARFContext::create(Obj);
+  // FIXME: handle COFF object with PDB info to use PDBContext
+  return createModuleInfo(&Obj, std::move(Context), ObjName);
+}
+
+Expected<SymbolizableModule *>
+LLVMSymbolizer::getOrCreateModuleInfo(ArrayRef<uint8_t> BuildID) {
+  std::string Path;
+  if (!getOrFindDebugBinary(BuildID, Path)) {
+    return createStringError(errc::no_such_file_or_directory,
+                             Twine("could not find build ID '") +
+                                 toHex(BuildID) + "'");
+  }
+  return getOrCreateModuleInfo(Path);
 }
 
 namespace {
@@ -504,10 +707,8 @@ StringRef demanglePE32ExternCFunc(StringRef SymbolName) {
   if (Front != '?') {
     size_t AtPos = SymbolName.rfind('@');
     if (AtPos != StringRef::npos &&
-        std::all_of(SymbolName.begin() + AtPos + 1, SymbolName.end(),
-                    [](char C) { return C >= '0' && C <= '9'; })) {
+        all_of(drop_begin(SymbolName, AtPos + 1), isDigit))
       SymbolName = SymbolName.substr(0, AtPos);
-    }
   }
 
   // Remove any ending '@' for vectorcall.
@@ -522,36 +723,57 @@ StringRef demanglePE32ExternCFunc(StringRef SymbolName) {
 std::string
 LLVMSymbolizer::DemangleName(const std::string &Name,
                              const SymbolizableModule *DbiModuleDescriptor) {
-  // We can spoil names of symbols with C linkage, so use an heuristic
-  // approach to check if the name should be demangled.
-  if (Name.substr(0, 2) == "_Z") {
+  std::string Result;
+  if (nonMicrosoftDemangle(Name.c_str(), Result))
+    return Result;
+
+  if (!Name.empty() && Name.front() == '?') {
+    // Only do MSVC C++ demangling on symbols starting with '?'.
     int status = 0;
-    char *DemangledName = itaniumDemangle(Name.c_str(), nullptr, nullptr, &status);
+    char *DemangledName = microsoftDemangle(
+        Name.c_str(), nullptr, nullptr, nullptr, &status,
+        MSDemangleFlags(MSDF_NoAccessSpecifier | MSDF_NoCallingConvention |
+                        MSDF_NoMemberType | MSDF_NoReturnType));
     if (status != 0)
       return Name;
-    std::string Result = DemangledName;
+    Result = DemangledName;
     free(DemangledName);
     return Result;
   }
 
-#if defined(_MSC_VER)
-  if (!Name.empty() && Name.front() == '?') {
-    // Only do MSVC C++ demangling on symbols starting with '?'.
-    char DemangledName[1024] = {0};
-    DWORD result = ::UnDecorateSymbolName(
-        Name.c_str(), DemangledName, 1023,
-        UNDNAME_NO_ACCESS_SPECIFIERS |       // Strip public, private, protected
-            UNDNAME_NO_ALLOCATION_LANGUAGE | // Strip __thiscall, __stdcall, etc
-            UNDNAME_NO_THROW_SIGNATURES |    // Strip throw() specifications
-            UNDNAME_NO_MEMBER_TYPE | // Strip virtual, static, etc specifiers
-            UNDNAME_NO_MS_KEYWORDS | // Strip all MS extension keywords
-            UNDNAME_NO_FUNCTION_RETURNS); // Strip function return types
-    return (result == 0) ? Name : std::string(DemangledName);
-  }
-#endif
   if (DbiModuleDescriptor && DbiModuleDescriptor->isWin32Module())
     return std::string(demanglePE32ExternCFunc(Name));
   return Name;
+}
+
+void LLVMSymbolizer::recordAccess(CachedBinary &Bin) {
+  if (Bin->getBinary())
+    LRUBinaries.splice(LRUBinaries.end(), LRUBinaries, Bin.getIterator());
+}
+
+void LLVMSymbolizer::pruneCache() {
+  // Evict the LRU binary until the max cache size is reached or there's <= 1
+  // item in the cache. The MRU binary is always kept to avoid thrashing if it's
+  // larger than the cache size.
+  while (CacheSize > Opts.MaxCacheSize && !LRUBinaries.empty() &&
+         std::next(LRUBinaries.begin()) != LRUBinaries.end()) {
+    CachedBinary &Bin = LRUBinaries.front();
+    CacheSize -= Bin.size();
+    LRUBinaries.pop_front();
+    Bin.evict();
+  }
+}
+
+void CachedBinary::pushEvictor(std::function<void()> NewEvictor) {
+  if (Evictor) {
+    this->Evictor = [OldEvictor = std::move(this->Evictor),
+                     NewEvictor = std::move(NewEvictor)]() {
+      NewEvictor();
+      OldEvictor();
+    };
+  } else {
+    this->Evictor = std::move(NewEvictor);
+  }
 }
 
 } // namespace symbolize

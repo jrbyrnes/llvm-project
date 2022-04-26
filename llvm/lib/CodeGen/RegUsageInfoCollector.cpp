@@ -17,16 +17,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/Statistic.h"
-#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
-#include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegisterUsageInfo.h"
+#include "llvm/CodeGen/TargetFrameLowering.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/CodeGen/TargetFrameLowering.h"
 
 using namespace llvm;
 
@@ -56,7 +55,7 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 
-  // Call determineCalleeSaves and then also set the bits for subregs and
+  // Call getCalleeSaves and then also set the bits for subregs and
   // fully saved superregs.
   static void computeCalleeSavedRegs(BitVector &SavedRegs, MachineFunction &MF);
 
@@ -199,7 +198,7 @@ computeCalleeSavedRegs(BitVector &SavedRegs, MachineFunction &MF) {
 
   // Target will return the set of registers that it saves/restores as needed.
   SavedRegs.clear();
-  TFI.determineCalleeSaves(MF, SavedRegs);
+  TFI.getCalleeSaves(MF, SavedRegs);
   if (SavedRegs.none())
     return;
 

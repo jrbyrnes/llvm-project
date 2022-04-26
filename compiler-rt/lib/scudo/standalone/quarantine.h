@@ -59,16 +59,12 @@ struct QuarantineBatch {
   void shuffle(u32 State) { ::scudo::shuffle(Batch, Count, &State); }
 };
 
-COMPILER_CHECK(sizeof(QuarantineBatch) <= (1U << 13)); // 8Kb.
+static_assert(sizeof(QuarantineBatch) <= (1U << 13), ""); // 8Kb.
 
 // Per-thread cache of memory blocks.
 template <typename Callback> class QuarantineCache {
 public:
-  void initLinkerInitialized() {}
-  void init() {
-    memset(this, 0, sizeof(*this));
-    initLinkerInitialized();
-  }
+  void init() { DCHECK_EQ(atomic_load_relaxed(&Size), 0U); }
 
   // Total memory used, including internal accounting.
   uptr getSize() const { return atomic_load_relaxed(&Size); }
@@ -160,8 +156,8 @@ public:
   }
 
 private:
-  IntrusiveList<QuarantineBatch> List;
-  atomic_uptr Size;
+  SinglyLinkedList<QuarantineBatch> List;
+  atomic_uptr Size = {};
 
   void addToSize(uptr add) { atomic_store_relaxed(&Size, getSize() + add); }
   void subFromSize(uptr sub) { atomic_store_relaxed(&Size, getSize() - sub); }
@@ -174,8 +170,13 @@ private:
 template <typename Callback, typename Node> class GlobalQuarantine {
 public:
   typedef QuarantineCache<Callback> CacheT;
+  using ThisT = GlobalQuarantine<Callback, Node>;
 
-  void initLinkerInitialized(uptr Size, uptr CacheSize) {
+  void init(uptr Size, uptr CacheSize) {
+    DCHECK(isAligned(reinterpret_cast<uptr>(this), alignof(ThisT)));
+    DCHECK_EQ(atomic_load_relaxed(&MaxSize), 0U);
+    DCHECK_EQ(atomic_load_relaxed(&MinSize), 0U);
+    DCHECK_EQ(atomic_load_relaxed(&MaxCacheSize), 0U);
     // Thread local quarantine size can be zero only when global quarantine size
     // is zero (it allows us to perform just one atomic read per put() call).
     CHECK((Size == 0 && CacheSize == 0) || CacheSize != 0);
@@ -184,11 +185,7 @@ public:
     atomic_store_relaxed(&MinSize, Size / 10 * 9); // 90% of max size.
     atomic_store_relaxed(&MaxCacheSize, CacheSize);
 
-    Cache.initLinkerInitialized();
-  }
-  void init(uptr Size, uptr CacheSize) {
-    memset(this, 0, sizeof(*this));
-    initLinkerInitialized(Size, CacheSize);
+    Cache.init();
   }
 
   uptr getMaxSize() const { return atomic_load_relaxed(&MaxSize); }
@@ -205,7 +202,7 @@ public:
       ScopedLock L(CacheMutex);
       Cache.transfer(C);
     }
-    if (Cache.getSize() > getMaxSize() && RecyleMutex.tryLock())
+    if (Cache.getSize() > getMaxSize() && RecycleMutex.tryLock())
       recycle(atomic_load_relaxed(&MinSize), Cb);
   }
 
@@ -214,7 +211,7 @@ public:
       ScopedLock L(CacheMutex);
       Cache.transfer(C);
     }
-    RecyleMutex.lock();
+    RecycleMutex.lock();
     recycle(0, Cb);
   }
 
@@ -225,14 +222,25 @@ public:
                 getMaxSize() >> 10, getCacheSize() >> 10);
   }
 
+  void disable() {
+    // RecycleMutex must be locked 1st since we grab CacheMutex within recycle.
+    RecycleMutex.lock();
+    CacheMutex.lock();
+  }
+
+  void enable() {
+    CacheMutex.unlock();
+    RecycleMutex.unlock();
+  }
+
 private:
   // Read-only data.
   alignas(SCUDO_CACHE_LINE_SIZE) HybridMutex CacheMutex;
   CacheT Cache;
-  alignas(SCUDO_CACHE_LINE_SIZE) HybridMutex RecyleMutex;
-  atomic_uptr MinSize;
-  atomic_uptr MaxSize;
-  alignas(SCUDO_CACHE_LINE_SIZE) atomic_uptr MaxCacheSize;
+  alignas(SCUDO_CACHE_LINE_SIZE) HybridMutex RecycleMutex;
+  atomic_uptr MinSize = {};
+  atomic_uptr MaxSize = {};
+  alignas(SCUDO_CACHE_LINE_SIZE) atomic_uptr MaxCacheSize = {};
 
   void NOINLINE recycle(uptr MinSize, Callback Cb) {
     CacheT Tmp;
@@ -261,7 +269,7 @@ private:
       while (Cache.getSize() > MinSize)
         Tmp.enqueueBatch(Cache.dequeueBatch());
     }
-    RecyleMutex.unlock();
+    RecycleMutex.unlock();
     doRecycle(&Tmp, Cb);
   }
 

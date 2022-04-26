@@ -1,4 +1,3 @@
-// -*- C++ -*-
 //===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -9,22 +8,41 @@
 
 // Test that we can include each header in two TU's and link them together.
 
-// RUN: %cxx -c %s -o %t.first.o %flags %compile_flags
-// RUN: %cxx -c %s -o %t.second.o -DWITH_MAIN %flags %compile_flags
-// RUN: %cxx -o %t.exe %t.first.o %t.second.o %flags %link_flags
-// RUN: %run
+// RUN: %{cxx} -c %s -o %t.first.o %{flags} %{compile_flags}
+// RUN: %{cxx} -c %s -o %t.second.o -DWITH_MAIN %{flags} %{compile_flags}
+// RUN: %{cxx} -o %t.exe %t.first.o %t.second.o %{flags} %{link_flags}
+// RUN: %{run}
+
+// The system-provided <uchar.h> seems to be broken on AIX
+// XFAIL: LIBCXX-AIX-FIXME
 
 // Prevent <ext/hash_map> from generating deprecated warnings for this test.
 #if defined(__DEPRECATED)
-#undef __DEPRECATED
+#    undef __DEPRECATED
 #endif
 
-// Top level headers
+/*
+BEGIN-SCRIPT
+
+for header in public_headers:
+  print("{}#{}include <{}>{}".format(
+    '#if ' + header_restrictions[header] + '\n' if header in header_restrictions else '',
+    3 * ' ' if header in header_restrictions else '',
+    header,
+    '\n#endif' if header in header_restrictions else ''
+  ))
+
+END-SCRIPT
+*/
+
+// DO NOT MANUALLY EDIT ANYTHING BETWEEN THE MARKERS BELOW
+// GENERATED-MARKER
 #include <algorithm>
 #include <any>
 #include <array>
-#ifndef _LIBCPP_HAS_NO_THREADS
 #include <atomic>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <barrier>
 #endif
 #include <bit>
 #include <bitset>
@@ -39,13 +57,19 @@
 #include <cinttypes>
 #include <ciso646>
 #include <climits>
-#include <clocale>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <clocale>
+#endif
 #include <cmath>
-#include <codecvt>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <codecvt>
+#endif
 #include <compare>
 #include <complex>
 #include <complex.h>
+#include <concepts>
 #include <condition_variable>
+#include <coroutine>
 #include <csetjmp>
 #include <csignal>
 #include <cstdarg>
@@ -58,56 +82,92 @@
 #include <ctgmath>
 #include <ctime>
 #include <ctype.h>
-#include <cwchar>
-#include <cwctype>
+#include <cuchar>
+#if !defined(_LIBCPP_HAS_NO_WIDE_CHARACTERS)
+#   include <cwchar>
+#endif
+#if !defined(_LIBCPP_HAS_NO_WIDE_CHARACTERS)
+#   include <cwctype>
+#endif
 #include <deque>
 #include <errno.h>
 #include <exception>
 #include <execution>
 #include <fenv.h>
-#include <filesystem>
+#if !defined(_LIBCPP_HAS_NO_FILESYSTEM_LIBRARY)
+#   include <filesystem>
+#endif
 #include <float.h>
+#include <format>
 #include <forward_list>
-#include <fstream>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <fstream>
+#endif
 #include <functional>
-#ifndef _LIBCPP_HAS_NO_THREADS
-#include <future>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <future>
 #endif
 #include <initializer_list>
 #include <inttypes.h>
-#include <iomanip>
-#include <ios>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <iomanip>
+#endif
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <ios>
+#endif
 #include <iosfwd>
-#include <iostream>
-#include <istream>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <iostream>
+#endif
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <istream>
+#endif
 #include <iterator>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <latch>
+#endif
 #include <limits>
 #include <limits.h>
 #include <list>
-#include <locale>
-#include <locale.h>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <locale>
+#endif
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <locale.h>
+#endif
 #include <map>
 #include <math.h>
 #include <memory>
-#ifndef _LIBCPP_HAS_NO_THREADS
-#include <mutex>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <mutex>
 #endif
 #include <new>
+#include <numbers>
 #include <numeric>
 #include <optional>
-#include <ostream>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <ostream>
+#endif
 #include <queue>
 #include <random>
+#include <ranges>
 #include <ratio>
-#include <regex>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <regex>
+#endif
 #include <scoped_allocator>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <semaphore>
+#endif
 #include <set>
 #include <setjmp.h>
-#ifndef _LIBCPP_HAS_NO_THREADS
-#include <shared_mutex>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <shared_mutex>
 #endif
 #include <span>
-#include <sstream>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <sstream>
+#endif
 #include <stack>
 #include <stdbool.h>
 #include <stddef.h>
@@ -115,20 +175,25 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <streambuf>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <streambuf>
+#endif
 #include <string>
 #include <string.h>
 #include <string_view>
-#include <strstream>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION)
+#   include <strstream>
+#endif
 #include <system_error>
 #include <tgmath.h>
-#ifndef _LIBCPP_HAS_NO_THREADS
-#include <thread>
+#if !defined(_LIBCPP_HAS_NO_THREADS)
+#   include <thread>
 #endif
 #include <tuple>
+#include <type_traits>
 #include <typeindex>
 #include <typeinfo>
-#include <type_traits>
+#include <uchar.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -136,38 +201,58 @@
 #include <variant>
 #include <vector>
 #include <version>
-#include <wchar.h>
-#include <wctype.h>
-
-// experimental headers
-#if __cplusplus >= 201103L
-#include <experimental/algorithm>
-#if defined(__cpp_coroutines)
-#include <experimental/coroutine>
+#if !defined(_LIBCPP_HAS_NO_WIDE_CHARACTERS)
+#   include <wchar.h>
 #endif
-#include <experimental/deque>
-#include <experimental/filesystem>
-#include <experimental/forward_list>
+#if !defined(_LIBCPP_HAS_NO_WIDE_CHARACTERS)
+#   include <wctype.h>
+#endif
+#include <experimental/algorithm>
+#if !defined(_LIBCPP_HAS_NO_EXPERIMENTAL_COROUTINES)
+#   include <experimental/coroutine>
+#endif
+#if __cplusplus >= 201103L
+#   include <experimental/deque>
+#endif
+#if __cplusplus >= 201103L
+#   include <experimental/forward_list>
+#endif
 #include <experimental/functional>
 #include <experimental/iterator>
-#include <experimental/list>
-#include <experimental/map>
-#include <experimental/memory_resource>
+#if __cplusplus >= 201103L
+#   include <experimental/list>
+#endif
+#if __cplusplus >= 201103L
+#   include <experimental/map>
+#endif
+#if __cplusplus >= 201103L
+#   include <experimental/memory_resource>
+#endif
 #include <experimental/propagate_const>
-#include <experimental/regex>
+#if !defined(_LIBCPP_HAS_NO_LOCALIZATION) && __cplusplus >= 201103L
+#   include <experimental/regex>
+#endif
+#if __cplusplus >= 201103L
+#   include <experimental/set>
+#endif
 #include <experimental/simd>
-#include <experimental/set>
-#include <experimental/string>
+#if __cplusplus >= 201103L
+#   include <experimental/string>
+#endif
 #include <experimental/type_traits>
-#include <experimental/unordered_map>
-#include <experimental/unordered_set>
+#if __cplusplus >= 201103L
+#   include <experimental/unordered_map>
+#endif
+#if __cplusplus >= 201103L
+#   include <experimental/unordered_set>
+#endif
 #include <experimental/utility>
-#include <experimental/vector>
-#endif // __cplusplus >= 201103L
-
-// extended headers
+#if __cplusplus >= 201103L
+#   include <experimental/vector>
+#endif
 #include <ext/hash_map>
 #include <ext/hash_set>
+// GENERATED-MARKER
 
 #if defined(WITH_MAIN)
 int main(int, char**) { return 0; }

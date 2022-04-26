@@ -1,4 +1,4 @@
-//===-- FileTest.cpp --------------------------------------------*- C++ -*-===//
+//===-- FileTest.cpp ------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -46,7 +46,7 @@ TEST(File, GetStreamFromDescriptor) {
   llvm::FileRemover remover(name);
   ASSERT_GE(fd, 0);
 
-  NativeFile file(fd, File::eOpenOptionWrite, true);
+  NativeFile file(fd, File::eOpenOptionWriteOnly, true);
   ASSERT_TRUE(file.IsValid());
 
   FILE *stream = file.GetStream();

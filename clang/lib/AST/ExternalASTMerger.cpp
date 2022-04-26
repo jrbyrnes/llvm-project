@@ -64,24 +64,24 @@ LookupSameContext(Source<TranslationUnitDecl *> SourceTU, const DeclContext *DC,
   Source<DeclarationName> SourceName = *SourceNameOrErr;
   DeclContext::lookup_result SearchResult =
       SourceParentDC.get()->lookup(SourceName.get());
-  size_t SearchResultSize = SearchResult.size();
-  if (SearchResultSize == 0 || SearchResultSize > 1) {
-    // There are two cases here.  First, we might not find the name.
-    // We might also find multiple copies, in which case we have no
-    // guarantee that the one we wanted is the one we pick.  (E.g.,
-    // if we have two specializations of the same template it is
-    // very hard to determine which is the one you want.)
-    //
-    // The Origins map fixes this problem by allowing the origin to be
-    // explicitly recorded, so we trigger that recording by returning
-    // nothing (rather than a possibly-inaccurate guess) here.
-    return nullptr;
-  } else {
-    NamedDecl *SearchResultDecl = SearchResult[0];
+
+  // There are two cases here. First, we might not find the name.
+  // We might also find multiple copies, in which case we have no
+  // guarantee that the one we wanted is the one we pick.  (E.g.,
+  // if we have two specializations of the same template it is
+  // very hard to determine which is the one you want.)
+  //
+  // The Origins map fixes this problem by allowing the origin to be
+  // explicitly recorded, so we trigger that recording by returning
+  // nothing (rather than a possibly-inaccurate guess) here.
+  if (SearchResult.isSingleResult()) {
+    NamedDecl *SearchResultDecl = SearchResult.front();
     if (isa<DeclContext>(SearchResultDecl) &&
         SearchResultDecl->getKind() == DC->getDeclKind())
       return cast<DeclContext>(SearchResultDecl)->getPrimaryContext();
     return nullptr; // This type of lookup is unsupported
+  } else {
+    return nullptr;
   }
 }
 
@@ -425,16 +425,14 @@ void ExternalASTMerger::RemoveSources(llvm::ArrayRef<ImporterSource> Sources) {
       logs() << "(ExternalASTMerger*)" << (void *)this
              << " removing source (ASTContext*)" << (void *)&S.getASTContext()
              << "\n";
-  Importers.erase(
-      std::remove_if(Importers.begin(), Importers.end(),
-                     [&Sources](std::unique_ptr<ASTImporter> &Importer) -> bool {
-                       for (const ImporterSource &S : Sources) {
-                         if (&Importer->getFromContext() == &S.getASTContext())
-                           return true;
-                       }
-                       return false;
-                     }),
-      Importers.end());
+  llvm::erase_if(Importers,
+                 [&Sources](std::unique_ptr<ASTImporter> &Importer) -> bool {
+                   for (const ImporterSource &S : Sources) {
+                     if (&Importer->getFromContext() == &S.getASTContext())
+                       return true;
+                   }
+                   return false;
+                 });
   for (OriginMap::iterator OI = Origins.begin(), OE = Origins.end(); OI != OE; ) {
     std::pair<const DeclContext *, DCOrigin> Origin = *OI;
     bool Erase = false;
@@ -510,9 +508,7 @@ bool ExternalASTMerger::FindExternalVisibleDeclsByName(const DeclContext *DC,
     Decl *LookupRes = C.first.get();
     ASTImporter *Importer = C.second;
     auto NDOrErr = Importer->Import(LookupRes);
-    assert(NDOrErr);
-    (void)static_cast<bool>(NDOrErr);
-    NamedDecl *ND = cast_or_null<NamedDecl>(*NDOrErr);
+    NamedDecl *ND = cast<NamedDecl>(llvm::cantFail(std::move(NDOrErr)));
     assert(ND);
     // If we don't import specialization, they are not available via lookup
     // because the lookup result is imported TemplateDecl and it does not

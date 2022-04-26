@@ -70,4 +70,4 @@ COMMANDS
 BUGS
 ----
 
-To report bugs, please visit <http://llvm.org/bugs/>.
+To report bugs, please visit <https://github.com/llvm/llvm-project/issues/>.

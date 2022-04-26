@@ -12,20 +12,22 @@
 //===----------------------------------------------------------------------===//
 
 #include "msan.h"
+
 #include "msan_chained_origin_depot.h"
 #include "msan_origin.h"
+#include "msan_poisoning.h"
 #include "msan_report.h"
 #include "msan_thread.h"
-#include "msan_poisoning.h"
 #include "sanitizer_common/sanitizer_atomic.h"
 #include "sanitizer_common/sanitizer_common.h"
-#include "sanitizer_common/sanitizer_flags.h"
 #include "sanitizer_common/sanitizer_flag_parser.h"
+#include "sanitizer_common/sanitizer_flags.h"
+#include "sanitizer_common/sanitizer_interface_internal.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_procmaps.h"
+#include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_symbolizer.h"
-#include "sanitizer_common/sanitizer_stackdepot.h"
 #include "ubsan/ubsan_flags.h"
 #include "ubsan/ubsan_init.h"
 
@@ -67,8 +69,6 @@ THREADLOCAL u64 __msan_va_arg_overflow_size_tls;
 SANITIZER_INTERFACE_ATTRIBUTE
 THREADLOCAL u32 __msan_origin_tls;
 
-static THREADLOCAL int is_in_symbolizer;
-
 extern "C" SANITIZER_WEAK_ATTRIBUTE const int __msan_track_origins;
 
 int __msan_get_track_origins() {
@@ -79,15 +79,19 @@ extern "C" SANITIZER_WEAK_ATTRIBUTE const int __msan_keep_going;
 
 namespace __msan {
 
-void EnterSymbolizer() { ++is_in_symbolizer; }
-void ExitSymbolizer()  { --is_in_symbolizer; }
-bool IsInSymbolizer() { return is_in_symbolizer; }
+static THREADLOCAL int is_in_symbolizer_or_unwinder;
+static void EnterSymbolizerOrUnwider() { ++is_in_symbolizer_or_unwinder; }
+static void ExitSymbolizerOrUnwider() { --is_in_symbolizer_or_unwinder; }
+bool IsInSymbolizerOrUnwider() { return is_in_symbolizer_or_unwinder; }
+
+struct UnwinderScope {
+  UnwinderScope() { EnterSymbolizerOrUnwider(); }
+  ~UnwinderScope() { ExitSymbolizerOrUnwider(); }
+};
 
 static Flags msan_flags;
 
-Flags *flags() {
-  return &msan_flags;
-}
+Flags *flags() { return &msan_flags; }
 
 int msan_inited = 0;
 bool msan_init_is_running;
@@ -109,7 +113,7 @@ void Flags::SetDefaults() {
 
 // keep_going is an old name for halt_on_error,
 // and it has inverse meaning.
-class FlagHandlerKeepGoing : public FlagHandlerBase {
+class FlagHandlerKeepGoing final : public FlagHandlerBase {
   bool *halt_on_error_;
 
  public:
@@ -121,6 +125,10 @@ class FlagHandlerKeepGoing : public FlagHandlerBase {
     if (!h.Parse(value)) return false;
     *halt_on_error_ = !tmp;
     return true;
+  }
+  bool Format(char *buffer, uptr size) final {
+    const char *keep_going_str = (*halt_on_error_) ? "false" : "true";
+    return FormatString(buffer, size, keep_going_str);
   }
 };
 
@@ -147,7 +155,6 @@ static void InitializeFlags() {
     // FIXME: test and enable.
     cf.check_printf = false;
     cf.intercept_tls_get_addr = true;
-    cf.exitcode = 77;
     OverrideCommonFlags(cf);
   }
 
@@ -168,10 +175,9 @@ static void InitializeFlags() {
 #endif
 
   // Override from user-specified string.
-  if (__msan_default_options)
-    parser.ParseString(__msan_default_options());
+  parser.ParseString(__msan_default_options());
 #if MSAN_CONTAINS_UBSAN
-  const char *ubsan_default_options = __ubsan::MaybeCallUbsanDefaultOptions();
+  const char *ubsan_default_options = __ubsan_default_options();
   ubsan_parser.ParseString(ubsan_default_options);
 #endif
 
@@ -297,7 +303,7 @@ u32 ChainOrigin(u32 id, StackTrace *stack) {
   return chained.raw_id();
 }
 
-} // namespace __msan
+}  // namespace __msan
 
 void __sanitizer::BufferedStackTrace::UnwindImpl(
     uptr pc, uptr bp, void *context, bool request_fast, u32 max_depth) {
@@ -305,8 +311,9 @@ void __sanitizer::BufferedStackTrace::UnwindImpl(
   MsanThread *t = GetCurrentThread();
   if (!t || !StackTrace::WillUseFastUnwind(request_fast)) {
     // Block reports from our interceptors during _Unwind_Backtrace.
-    SymbolizerScope sym_scope;
-    return Unwind(max_depth, pc, bp, context, 0, 0, false);
+    UnwinderScope sym_scope;
+    return Unwind(max_depth, pc, bp, context, t ? t->stack_top() : 0,
+                  t ? t->stack_bottom() : 0, false);
   }
   if (StackTrace::WillUseFastUnwind(request_fast))
     Unwind(max_depth, pc, bp, nullptr, t->stack_top(), t->stack_bottom(), true);
@@ -376,6 +383,28 @@ void __msan_warning_noreturn() {
   Die();
 }
 
+void __msan_warning_with_origin(u32 origin) {
+  GET_CALLER_PC_BP_SP;
+  (void)sp;
+  PrintWarningWithOrigin(pc, bp, origin);
+  if (__msan::flags()->halt_on_error) {
+    if (__msan::flags()->print_stats)
+      ReportStats();
+    Printf("Exiting\n");
+    Die();
+  }
+}
+
+void __msan_warning_with_origin_noreturn(u32 origin) {
+  GET_CALLER_PC_BP_SP;
+  (void)sp;
+  PrintWarningWithOrigin(pc, bp, origin);
+  if (__msan::flags()->print_stats)
+    ReportStats();
+  Printf("Exiting\n");
+  Die();
+}
+
 static void OnStackUnwind(const SignalContext &sig, const void *,
                           BufferedStackTrace *stack) {
   stack->Unwind(StackTrace::GetNextInstructionPc(sig.pc), sig.bp, sig.context,
@@ -386,12 +415,9 @@ static void MsanOnDeadlySignal(int signo, void *siginfo, void *context) {
   HandleDeadlySignal(siginfo, context, GetTid(), &OnStackUnwind, nullptr);
 }
 
-static void MsanCheckFailed(const char *file, int line, const char *cond,
-                            u64 v1, u64 v2) {
-  Report("MemorySanitizer CHECK failed: %s:%d \"%s\" (0x%zx, 0x%zx)\n", file,
-         line, cond, (uptr)v1, (uptr)v2);
-  PRINT_CURRENT_STACK_CHECK();
-  Die();
+static void CheckUnwind() {
+  GET_FATAL_STACK_TRACE_PC_BP(StackTrace::GetCurrentPc(), GET_CURRENT_FRAME());
+  stack.Print();
 }
 
 void __msan_init() {
@@ -406,7 +432,7 @@ void __msan_init() {
   InitializeFlags();
 
   // Install tool-specific callbacks in sanitizer_common.
-  SetCheckFailedCallback(MsanCheckFailed);
+  SetCheckUnwindCallback(CheckUnwind);
 
   __sanitizer_set_report_path(common_flags()->log_path);
 
@@ -438,7 +464,8 @@ void __msan_init() {
     Die();
   }
 
-  Symbolizer::GetOrInit()->AddHooks(EnterSymbolizer, ExitSymbolizer);
+  Symbolizer::GetOrInit()->AddHooks(EnterSymbolizerOrUnwider,
+                                    ExitSymbolizerOrUnwider);
 
   InitializeCoverage(common_flags()->coverage, common_flags()->coverage_dir);
 
@@ -448,7 +475,7 @@ void __msan_init() {
 
   MsanThread *main_thread = MsanThread::Create(nullptr, nullptr);
   SetCurrentThread(main_thread);
-  main_thread->ThreadStart();
+  main_thread->Init();
 
 #if MSAN_CONTAINS_UBSAN
   __ubsan::InitAsPlugin();
@@ -493,6 +520,7 @@ void __msan_dump_shadow(const void *x, uptr size) {
   }
 
   unsigned char *s = (unsigned char*)MEM_TO_SHADOW(x);
+  Printf("%p[%p]  ", (void *)s, x);
   for (uptr i = 0; i < size; i++)
     Printf("%x%x ", s[i] >> 4, s[i] & 0xf);
   Printf("\n");
@@ -501,6 +529,9 @@ void __msan_dump_shadow(const void *x, uptr size) {
 sptr __msan_test_shadow(const void *x, uptr size) {
   if (!MEM_IS_APP(x)) return -1;
   unsigned char *s = (unsigned char *)MEM_TO_SHADOW((uptr)x);
+  if (__sanitizer::mem_is_zero((const char *)s, size))
+    return -1;
+  // Slow path: loop through again to find the location.
   for (uptr i = 0; i < size; ++i)
     if (s[i])
       return i;
@@ -579,7 +610,7 @@ void __msan_set_alloca_origin4(void *a, uptr size, char *descr, uptr pc) {
     id = Origin::CreateStackOrigin(idx).raw_id();
     *id_ptr = id;
     if (print)
-      Printf("First time: idx=%d id=%d %s %p \n", idx, id, descr + 4, pc);
+      Printf("First time: idx=%d id=%d %s 0x%zx \n", idx, id, descr + 4, pc);
   }
   if (print)
     Printf("__msan_set_alloca_origin: descr=%s id=%x\n", descr + 4, id);
@@ -613,34 +644,41 @@ u32 __msan_get_umr_origin() {
 }
 
 u16 __sanitizer_unaligned_load16(const uu16 *p) {
-  *(uu16 *)&__msan_retval_tls[0] = *(uu16 *)MEM_TO_SHADOW((uptr)p);
+  internal_memcpy(&__msan_retval_tls[0], (void *)MEM_TO_SHADOW((uptr)p),
+                  sizeof(uu16));
   if (__msan_get_track_origins())
     __msan_retval_origin_tls = GetOriginIfPoisoned((uptr)p, sizeof(*p));
   return *p;
 }
 u32 __sanitizer_unaligned_load32(const uu32 *p) {
-  *(uu32 *)&__msan_retval_tls[0] = *(uu32 *)MEM_TO_SHADOW((uptr)p);
+  internal_memcpy(&__msan_retval_tls[0], (void *)MEM_TO_SHADOW((uptr)p),
+                  sizeof(uu32));
   if (__msan_get_track_origins())
     __msan_retval_origin_tls = GetOriginIfPoisoned((uptr)p, sizeof(*p));
   return *p;
 }
 u64 __sanitizer_unaligned_load64(const uu64 *p) {
-  __msan_retval_tls[0] = *(uu64 *)MEM_TO_SHADOW((uptr)p);
+  internal_memcpy(&__msan_retval_tls[0], (void *)MEM_TO_SHADOW((uptr)p),
+                  sizeof(uu64));
   if (__msan_get_track_origins())
     __msan_retval_origin_tls = GetOriginIfPoisoned((uptr)p, sizeof(*p));
   return *p;
 }
 void __sanitizer_unaligned_store16(uu16 *p, u16 x) {
-  u16 s = *(uu16 *)&__msan_param_tls[1];
-  *(uu16 *)MEM_TO_SHADOW((uptr)p) = s;
+  static_assert(sizeof(uu16) == sizeof(u16), "incompatible types");
+  u16 s;
+  internal_memcpy(&s, &__msan_param_tls[1], sizeof(uu16));
+  internal_memcpy((void *)MEM_TO_SHADOW((uptr)p), &s, sizeof(uu16));
   if (s && __msan_get_track_origins())
     if (uu32 o = __msan_param_origin_tls[2])
       SetOriginIfPoisoned((uptr)p, (uptr)&s, sizeof(s), o);
   *p = x;
 }
 void __sanitizer_unaligned_store32(uu32 *p, u32 x) {
-  u32 s = *(uu32 *)&__msan_param_tls[1];
-  *(uu32 *)MEM_TO_SHADOW((uptr)p) = s;
+  static_assert(sizeof(uu32) == sizeof(u32), "incompatible types");
+  u32 s;
+  internal_memcpy(&s, &__msan_param_tls[1], sizeof(uu32));
+  internal_memcpy((void *)MEM_TO_SHADOW((uptr)p), &s, sizeof(uu32));
   if (s && __msan_get_track_origins())
     if (uu32 o = __msan_param_origin_tls[2])
       SetOriginIfPoisoned((uptr)p, (uptr)&s, sizeof(s), o);
@@ -659,12 +697,40 @@ void __msan_set_death_callback(void (*callback)(void)) {
   SetUserDieCallback(callback);
 }
 
-#if !SANITIZER_SUPPORTS_WEAK_HOOKS
-extern "C" {
-SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
-const char* __msan_default_options() { return ""; }
-}  // extern "C"
-#endif
+void __msan_start_switch_fiber(const void *bottom, uptr size) {
+  MsanThread *t = GetCurrentThread();
+  if (!t) {
+    VReport(1, "__msan_start_switch_fiber called from unknown thread\n");
+    return;
+  }
+  t->StartSwitchFiber((uptr)bottom, size);
+}
+
+void __msan_finish_switch_fiber(const void **bottom_old, uptr *size_old) {
+  MsanThread *t = GetCurrentThread();
+  if (!t) {
+    VReport(1, "__msan_finish_switch_fiber called from unknown thread\n");
+    return;
+  }
+  t->FinishSwitchFiber((uptr *)bottom_old, (uptr *)size_old);
+
+  internal_memset(__msan_param_tls, 0, sizeof(__msan_param_tls));
+  internal_memset(__msan_retval_tls, 0, sizeof(__msan_retval_tls));
+  internal_memset(__msan_va_arg_tls, 0, sizeof(__msan_va_arg_tls));
+
+  if (__msan_get_track_origins()) {
+    internal_memset(__msan_param_origin_tls, 0,
+                    sizeof(__msan_param_origin_tls));
+    internal_memset(&__msan_retval_origin_tls, 0,
+                    sizeof(__msan_retval_origin_tls));
+    internal_memset(__msan_va_arg_origin_tls, 0,
+                    sizeof(__msan_va_arg_origin_tls));
+  }
+}
+
+SANITIZER_INTERFACE_WEAK_DEF(const char *, __msan_default_options, void) {
+  return "";
+}
 
 extern "C" {
 SANITIZER_INTERFACE_ATTRIBUTE

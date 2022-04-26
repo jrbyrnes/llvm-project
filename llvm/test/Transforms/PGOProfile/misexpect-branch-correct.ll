@@ -1,13 +1,13 @@
+; Test misexpect checks do not issue diagnostics when profiling weights and
+; branch weights added by llvm.expect agree
+
 ; RUN: llvm-profdata merge %S/Inputs/misexpect-branch-correct.proftext -o %t.profdata
 
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pgo-warn-misexpect -pass-remarks=misexpect 2>&1 | FileCheck %s
-
-; New PM
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -pass-remarks=misexpect -S  2>&1 | FileCheck %s
 
 ; CHECK-NOT: warning: {{.*}}
 ; CHECK-NOT: remark: {{.*}}
-; CHECK: !{!"misexpect", i64 1, i64 2000, i64 1}
+; CHECK: !{!"branch_weights", i32 0, i32 200000}
 
 
 ; ModuleID = 'misexpect-branch-correct.c'

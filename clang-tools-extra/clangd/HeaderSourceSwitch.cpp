@@ -8,16 +8,17 @@
 
 #include "HeaderSourceSwitch.h"
 #include "AST.h"
-#include "Logger.h"
+#include "SourceCode.h"
 #include "index/SymbolCollector.h"
+#include "support/Logger.h"
+#include "support/Path.h"
 #include "clang/AST/Decl.h"
 
 namespace clang {
 namespace clangd {
 
 llvm::Optional<Path> getCorrespondingHeaderOrSource(
-    const Path &OriginalFile,
-    llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS) {
+    PathRef OriginalFile, llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS) {
   llvm::StringRef SourceExtensions[] = {".cpp", ".c", ".cc", ".cxx",
                                         ".c++", ".m", ".mm"};
   llvm::StringRef HeaderExtensions[] = {".h", ".hh", ".hpp", ".hxx", ".inc"};
@@ -25,15 +26,15 @@ llvm::Optional<Path> getCorrespondingHeaderOrSource(
   llvm::StringRef PathExt = llvm::sys::path::extension(OriginalFile);
 
   // Lookup in a list of known extensions.
-  auto SourceIter =
+  auto *SourceIter =
       llvm::find_if(SourceExtensions, [&PathExt](PathRef SourceExt) {
-        return SourceExt.equals_lower(PathExt);
+        return SourceExt.equals_insensitive(PathExt);
       });
   bool IsSource = SourceIter != std::end(SourceExtensions);
 
-  auto HeaderIter =
+  auto *HeaderIter =
       llvm::find_if(HeaderExtensions, [&PathExt](PathRef HeaderExt) {
-        return HeaderExt.equals_lower(PathExt);
+        return HeaderExt.equals_insensitive(PathExt);
       });
   bool IsHeader = HeaderIter != std::end(HeaderExtensions);
 
@@ -50,25 +51,23 @@ llvm::Optional<Path> getCorrespondingHeaderOrSource(
     NewExts = SourceExtensions;
 
   // Storage for the new path.
-  llvm::SmallString<128> NewPath = llvm::StringRef(OriginalFile);
+  llvm::SmallString<128> NewPath = OriginalFile;
 
   // Loop through switched extension candidates.
   for (llvm::StringRef NewExt : NewExts) {
     llvm::sys::path::replace_extension(NewPath, NewExt);
     if (VFS->exists(NewPath))
-      return NewPath.str().str(); // First str() to convert from SmallString to
-                                  // StringRef, second to convert from StringRef
-                                  // to std::string
+      return Path(NewPath);
 
     // Also check NewExt in upper-case, just in case.
     llvm::sys::path::replace_extension(NewPath, NewExt.upper());
     if (VFS->exists(NewPath))
-      return NewPath.str().str();
+      return Path(NewPath);
   }
   return None;
 }
 
-llvm::Optional<Path> getCorrespondingHeaderOrSource(const Path &OriginalFile,
+llvm::Optional<Path> getCorrespondingHeaderOrSource(PathRef OriginalFile,
                                                     ParsedAST &AST,
                                                     const SymbolIndex *Index) {
   if (!Index) {
@@ -79,12 +78,12 @@ llvm::Optional<Path> getCorrespondingHeaderOrSource(const Path &OriginalFile,
   // Find all symbols present in the original file.
   for (const auto *D : getIndexableLocalDecls(AST)) {
     if (auto ID = getSymbolID(D))
-      Request.IDs.insert(*ID);
+      Request.IDs.insert(ID);
   }
   llvm::StringMap<int> Candidates; // Target path => score.
   auto AwardTarget = [&](const char *TargetURI) {
     if (auto TargetPath = URI::resolve(TargetURI, OriginalFile)) {
-      if (*TargetPath != OriginalFile) // exclude the original file.
+      if (!pathEqual(*TargetPath, OriginalFile)) // exclude the original file.
         ++Candidates[*TargetPath];
     } else {
       elog("Failed to resolve URI {0}: {1}", TargetURI, TargetPath.takeError());
@@ -96,7 +95,7 @@ llvm::Optional<Path> getCorrespondingHeaderOrSource(const Path &OriginalFile,
   //
   // For each symbol in the original file, we get its target location (decl or
   // def) from the index, then award that target file.
-  bool IsHeader = AST.getASTContext().getLangOpts().IsHeaderFile;
+  bool IsHeader = isHeaderFile(OriginalFile, AST.getLangOpts());
   Index->lookup(Request, [&](const Symbol &Sym) {
     if (IsHeader)
       AwardTarget(Sym.Definition.FileURI);

@@ -6,20 +6,24 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_File_h_
-#define liblldb_File_h_
+#ifndef LLDB_HOST_FILE_H
+#define LLDB_HOST_FILE_H
 
 #include "lldb/Host/PosixApi.h"
+#include "lldb/Host/Terminal.h"
 #include "lldb/Utility/IOObject.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/lldb-private.h"
+#include "llvm/ADT/BitmaskEnum.h"
 
+#include <cstdarg>
+#include <cstdio>
 #include <mutex>
-#include <stdarg.h>
-#include <stdio.h>
 #include <sys/types.h>
 
 namespace lldb_private {
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
 /// \class File File.h "lldb/Host/File.h"
 /// An abstract base class for files.
@@ -35,29 +39,39 @@ public:
 
   // NB this enum is used in the lldb platform gdb-remote packet
   // vFile:open: and existing values cannot be modified.
-  enum OpenOptions {
-    eOpenOptionRead = (1u << 0),  // Open file for reading
-    eOpenOptionWrite = (1u << 1), // Open file for writing
+  //
+  // The first set of values is defined by gdb headers and can be found
+  // in the documentation at:
+  // * https://sourceware.org/gdb/onlinedocs/gdb/Open-Flags.html#Open-Flags
+  //
+  // The second half are LLDB extensions and use the highest uint32_t bits
+  // to avoid risk of collisions with future gdb remote protocol changes.
+  enum OpenOptions : uint32_t {
+    eOpenOptionReadOnly = 0x0,  // Open file for reading (only)
+    eOpenOptionWriteOnly = 0x1, // Open file for writing (only)
+    eOpenOptionReadWrite = 0x2, // Open file for both reading and writing
     eOpenOptionAppend =
-        (1u << 2), // Don't truncate file when opening, append to end of file
-    eOpenOptionTruncate = (1u << 3),    // Truncate file when opening
-    eOpenOptionNonBlocking = (1u << 4), // File reads
-    eOpenOptionCanCreate = (1u << 5),   // Create file if doesn't already exist
+        0x8, // Don't truncate file when opening, append to end of file
+    eOpenOptionCanCreate = 0x200, // Create file if doesn't already exist
+    eOpenOptionTruncate = 0x400,  // Truncate file when opening
     eOpenOptionCanCreateNewOnly =
-        (1u << 6), // Can create file only if it doesn't already exist
-    eOpenOptionDontFollowSymlinks = (1u << 7),
+        0x800, // Can create file only if it doesn't already exist
+
+    eOpenOptionNonBlocking = (1u << 28), // File reads
+    eOpenOptionDontFollowSymlinks = (1u << 29),
     eOpenOptionCloseOnExec =
-        (1u << 8) // Close the file when executing a new process
+        (1u << 30), // Close the file when executing a new process
+    eOpenOptionInvalid = (1u << 31), // Used as invalid value
+    LLVM_MARK_AS_BITMASK_ENUM(/* largest_value= */ eOpenOptionInvalid)
   };
 
-  static mode_t ConvertOpenOptionsForPOSIXOpen(uint32_t open_options);
-  static uint32_t GetOptionsFromMode(llvm::StringRef mode);
+  static mode_t ConvertOpenOptionsForPOSIXOpen(OpenOptions open_options);
+  static llvm::Expected<OpenOptions> GetOptionsFromMode(llvm::StringRef mode);
   static bool DescriptorIsValid(int descriptor) { return descriptor >= 0; };
+  static llvm::Expected<const char *>
+  GetStreamOpenModeFromOptions(OpenOptions options);
 
-  File()
-      : IOObject(eFDTypeFile), m_is_interactive(eLazyBoolCalculate),
-        m_is_real_terminal(eLazyBoolCalculate),
-        m_supports_colors(eLazyBoolCalculate){};
+  File() : IOObject(eFDTypeFile){};
 
   /// Read bytes from a file from the current file position into buf.
   ///
@@ -65,9 +79,7 @@ public:
   /// that takes an "off_t &offset" to ensure correct operation in multi-
   /// threaded environments.
   ///
-  /// \param[out] buf
-  ///
-  /// \param[in,out] num_bytes.
+  /// \param[in,out] num_bytes
   ///    Pass in the size of buf.  Read will pass out the number
   ///    of bytes read.   Zero bytes read with no error indicates
   ///    EOF.
@@ -81,8 +93,6 @@ public:
   /// NOTE: This function is NOT thread safe. Use the write function
   /// that takes an "off_t &offset" to ensure correct operation in multi-
   /// threaded environments.
-  ///
-  /// \param[in] buf
   ///
   /// \param[in,out] num_bytes
   ///    Pass in the size of buf.  Write will pass out the number
@@ -124,20 +134,6 @@ public:
   /// \return
   ///     ENOTSUP, success, or another error.
   virtual Status GetFileSpec(FileSpec &file_spec) const;
-
-  /// DEPRECATED! Extract the underlying FILE* and reset this File without closing it.
-  ///
-  /// This is only here to support legacy SB interfaces that need to convert scripting
-  /// language objects into FILE* streams.   That conversion is inherently sketchy and
-  /// doing so may cause the stream to be leaked.
-  ///
-  /// After calling this the File will be reset to its original state.  It will be
-  /// invalid and it will not hold on to any resources.
-  ///
-  /// \return
-  ///     The underlying FILE* stream from this File, if one exists and can be extracted,
-  ///     nullptr otherwise.
-  virtual FILE *TakeStreamAndClear();
 
   /// Get underlying OS file descriptor for this file, or kInvalidDescriptor.
   /// If the descriptor is valid, then it may be used directly for I/O
@@ -308,6 +304,25 @@ public:
   ///     format string \a format.
   virtual size_t PrintfVarArg(const char *format, va_list args);
 
+  /// Return the OpenOptions for this file.
+  ///
+  /// Some options like eOpenOptionDontFollowSymlinks only make
+  /// sense when a file is being opened (or not at all)
+  /// and may not be preserved for this method.  But any valid
+  /// File should return either eOpenOptionReadOnly, eOpenOptionWriteOnly
+  /// or eOpenOptionReadWrite here.
+  ///
+  /// \return
+  ///    OpenOptions flags for this file, or an error.
+  virtual llvm::Expected<OpenOptions> GetOptions() const;
+
+  llvm::Expected<const char *> GetOpenMode() const {
+    auto opts = GetOptions();
+    if (!opts)
+      return opts.takeError();
+    return GetStreamOpenModeFromOptions(opts.get());
+  }
+
   /// Get the permissions for a this file.
   ///
   /// \return
@@ -343,28 +358,31 @@ public:
 
   bool operator!() const { return !IsValid(); };
 
+  static char ID;
+  virtual bool isA(const void *classID) const { return classID == &ID; }
+  static bool classof(const File *file) { return file->isA(&ID); }
+
 protected:
-  LazyBool m_is_interactive;
-  LazyBool m_is_real_terminal;
-  LazyBool m_supports_colors;
+  LazyBool m_is_interactive = eLazyBoolCalculate;
+  LazyBool m_is_real_terminal = eLazyBoolCalculate;
+  LazyBool m_supports_colors = eLazyBoolCalculate;
 
   void CalculateInteractiveAndTerminal();
 
 private:
-  DISALLOW_COPY_AND_ASSIGN(File);
+  File(const File &) = delete;
+  const File &operator=(const File &) = delete;
 };
 
 class NativeFile : public File {
 public:
-  NativeFile()
-      : m_descriptor(kInvalidDescriptor), m_own_descriptor(false),
-        m_stream(kInvalidStream), m_options(0), m_own_stream(false) {}
+  NativeFile() : m_descriptor(kInvalidDescriptor), m_stream(kInvalidStream) {}
 
   NativeFile(FILE *fh, bool transfer_ownership)
       : m_descriptor(kInvalidDescriptor), m_own_descriptor(false), m_stream(fh),
-        m_options(0), m_own_stream(transfer_ownership) {}
+        m_options(), m_own_stream(transfer_ownership) {}
 
-  NativeFile(int fd, uint32_t options, bool transfer_ownership)
+  NativeFile(int fd, OpenOptions options, bool transfer_ownership)
       : m_descriptor(fd), m_own_descriptor(transfer_ownership),
         m_stream(kInvalidStream), m_options(options), m_own_stream(false) {}
 
@@ -379,7 +397,6 @@ public:
   Status Close() override;
   WaitableHandle GetWaitableHandle() override;
   Status GetFileSpec(FileSpec &file_spec) const override;
-  FILE *TakeStreamAndClear() override;
   int GetDescriptor() const override;
   FILE *GetStream() override;
   off_t SeekFromStart(off_t offset, Status *error_ptr = nullptr) override;
@@ -390,6 +407,13 @@ public:
   Status Flush() override;
   Status Sync() override;
   size_t PrintfVarArg(const char *format, va_list args) override;
+  llvm::Expected<OpenOptions> GetOptions() const override;
+
+  static char ID;
+  virtual bool isA(const void *classID) const override {
+    return classID == &ID || File::isA(classID);
+  }
+  static bool classof(const File *file) { return file->isA(&ID); }
 
 protected:
   bool DescriptorIsValid() const {
@@ -399,16 +423,56 @@ protected:
 
   // Member variables
   int m_descriptor;
-  bool m_own_descriptor;
+  bool m_own_descriptor = false;
   FILE *m_stream;
-  uint32_t m_options;
-  bool m_own_stream;
+  OpenOptions m_options{};
+  bool m_own_stream = false;
   std::mutex offset_access_mutex;
 
 private:
-  DISALLOW_COPY_AND_ASSIGN(NativeFile);
+  NativeFile(const NativeFile &) = delete;
+  const NativeFile &operator=(const NativeFile &) = delete;
+};
+
+class SerialPort : public NativeFile {
+public:
+  struct Options {
+    llvm::Optional<unsigned int> BaudRate = llvm::None;
+    llvm::Optional<Terminal::Parity> Parity = llvm::None;
+    llvm::Optional<Terminal::ParityCheck> ParityCheck = llvm::None;
+    llvm::Optional<unsigned int> StopBits = llvm::None;
+  };
+
+  // Obtain Options corresponding to the passed URL query string
+  // (i.e. the part after '?').
+  static llvm::Expected<Options> OptionsFromURL(llvm::StringRef urlqs);
+
+  static llvm::Expected<std::unique_ptr<SerialPort>>
+  Create(int fd, OpenOptions options, Options serial_options,
+         bool transfer_ownership);
+
+  bool IsValid() const override {
+    return NativeFile::IsValid() && m_is_interactive == eLazyBoolYes;
+  }
+
+  Status Close() override;
+
+  static char ID;
+  virtual bool isA(const void *classID) const override {
+    return classID == &ID || File::isA(classID);
+  }
+  static bool classof(const File *file) { return file->isA(&ID); }
+
+private:
+  SerialPort(int fd, OpenOptions options, Options serial_options,
+             bool transfer_ownership);
+
+  SerialPort(const SerialPort &) = delete;
+  const SerialPort &operator=(const SerialPort &) = delete;
+
+  TerminalState m_state;
 };
 
 } // namespace lldb_private
 
-#endif // liblldb_File_h_
+#endif // LLDB_HOST_FILE_H

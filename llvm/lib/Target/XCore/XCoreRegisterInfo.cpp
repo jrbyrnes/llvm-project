@@ -97,7 +97,7 @@ static void InsertFPConstInst(MachineBasicBlock::iterator II,
   MachineInstr &MI = *II;
   MachineBasicBlock &MBB = *MI.getParent();
   DebugLoc dl = MI.getDebugLoc();
-  unsigned ScratchOffset = RS->scavengeRegister(&XCore::GRRegsRegClass, II, 0);
+  Register ScratchOffset = RS->scavengeRegister(&XCore::GRRegsRegClass, II, 0);
   RS->setRegUsed(ScratchOffset);
   TII.loadImmediate(MBB, II, ScratchOffset, Offset);
 
@@ -174,7 +174,7 @@ static void InsertSPConstInst(MachineBasicBlock::iterator II,
   } else
     ScratchBase = Reg;
   BuildMI(MBB, II, dl, TII.get(XCore::LDAWSP_ru6), ScratchBase).addImm(0);
-  unsigned ScratchOffset = RS->scavengeRegister(&XCore::GRRegsRegClass, II, 0);
+  Register ScratchOffset = RS->scavengeRegister(&XCore::GRRegsRegClass, II, 0);
   RS->setRegUsed(ScratchOffset);
   TII.loadImmediate(MBB, II, ScratchOffset, Offset);
 
@@ -203,7 +203,7 @@ static void InsertSPConstInst(MachineBasicBlock::iterator II,
 }
 
 bool XCoreRegisterInfo::needsFrameMoves(const MachineFunction &MF) {
-  return MF.getMMI().hasDebugInfo() || MF.getFunction().needsUnwindTableEntry();
+  return MF.needsFrameMoves();
 }
 
 const MCPhysReg *
@@ -242,11 +242,6 @@ BitVector XCoreRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
 bool
 XCoreRegisterInfo::requiresRegisterScavenging(const MachineFunction &MF) const {
-  return true;
-}
-
-bool
-XCoreRegisterInfo::trackLivenessAfterRegAlloc(const MachineFunction &MF) const {
   return true;
 }
 

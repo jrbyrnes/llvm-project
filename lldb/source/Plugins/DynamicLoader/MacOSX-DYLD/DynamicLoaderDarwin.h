@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_DynamicLoaderDarwin_h_
-#define liblldb_DynamicLoaderDarwin_h_
+#ifndef LLDB_SOURCE_PLUGINS_DYNAMICLOADER_MACOSX_DYLD_DYNAMICLOADERDARWIN_H
+#define LLDB_SOURCE_PLUGINS_DYNAMICLOADER_MACOSX_DYLD_DYNAMICLOADERDARWIN_H
 
 #include <map>
 #include <mutex>
@@ -41,7 +41,7 @@ public:
   lldb::ThreadPlanSP GetStepThroughTrampolinePlan(lldb_private::Thread &thread,
                                                   bool stop_others) override;
 
-  size_t FindEquivalentSymbols(
+  void FindEquivalentSymbols(
       lldb_private::Symbol *original_symbol,
       lldb_private::ModuleList &module_list,
       lldb_private::SymbolContextList &equivalent_symbols) override;
@@ -73,19 +73,17 @@ protected:
 
   class Segment {
   public:
-    Segment()
-        : name(), vmaddr(LLDB_INVALID_ADDRESS), vmsize(0), fileoff(0),
-          filesize(0), maxprot(0), initprot(0), nsects(0), flags(0) {}
+    Segment() : name() {}
 
     lldb_private::ConstString name;
-    lldb::addr_t vmaddr;
-    lldb::addr_t vmsize;
-    lldb::addr_t fileoff;
-    lldb::addr_t filesize;
-    uint32_t maxprot;
-    uint32_t initprot;
-    uint32_t nsects;
-    uint32_t flags;
+    lldb::addr_t vmaddr = LLDB_INVALID_ADDRESS;
+    lldb::addr_t vmsize = 0;
+    lldb::addr_t fileoff = 0;
+    lldb::addr_t filesize = 0;
+    uint32_t maxprot = 0;
+    uint32_t initprot = 0;
+    uint32_t nsects = 0;
+    uint32_t flags = 0;
 
     bool operator==(const Segment &rhs) const {
       return name == rhs.name && vmaddr == rhs.vmaddr && vmsize == rhs.vmsize;
@@ -238,9 +236,10 @@ protected:
   mutable std::recursive_mutex m_mutex;
 
 private:
-  DISALLOW_COPY_AND_ASSIGN(DynamicLoaderDarwin);
+  DynamicLoaderDarwin(const DynamicLoaderDarwin &) = delete;
+  const DynamicLoaderDarwin &operator=(const DynamicLoaderDarwin &) = delete;
 };
 
 } // namespace lldb_private
 
-#endif // liblldb_DynamicLoaderDarwin_h_
+#endif // LLDB_SOURCE_PLUGINS_DYNAMICLOADER_MACOSX_DYLD_DYNAMICLOADERDARWIN_H

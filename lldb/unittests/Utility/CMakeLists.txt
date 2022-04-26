@@ -6,6 +6,8 @@ add_lldb_unittest(UtilityTests
   BroadcasterTest.cpp
   ConstStringTest.cpp
   CompletionRequestTest.cpp
+  DataBufferTest.cpp
+  DataEncoderTest.cpp
   DataExtractorTest.cpp
   EnvironmentTest.cpp
   EventTest.cpp
@@ -21,25 +23,29 @@ add_lldb_unittest(UtilityTests
   RangeTest.cpp
   RegisterValueTest.cpp
   RegularExpressionTest.cpp
-  ReproducerInstrumentationTest.cpp
   ReproducerTest.cpp
   ScalarTest.cpp
+  SharedClusterTest.cpp
   StateTest.cpp
   StatusTest.cpp
   StreamTeeTest.cpp
   StreamTest.cpp
+  StringExtractorGDBRemoteTest.cpp
   StringExtractorTest.cpp
   StringLexerTest.cpp
   StringListTest.cpp
   StructuredDataTest.cpp
+  SubsystemRAIITest.cpp
   TildeExpressionResolverTest.cpp
   TimeoutTest.cpp
   TimerTest.cpp
+  TraceGDBRemotePacketsTest.cpp
   UriParserTest.cpp
   UserIDResolverTest.cpp
   UUIDTest.cpp
   VASprintfTest.cpp
   VMRangeTest.cpp
+  XcodeSDKTest.cpp
 
   LINK_LIBS
       lldbUtility

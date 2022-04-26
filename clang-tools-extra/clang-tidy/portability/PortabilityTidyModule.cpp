@@ -9,7 +9,9 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "RestrictSystemIncludesCheck.h"
 #include "SIMDIntrinsicsCheck.h"
+#include "StdAllocatorConstCheck.h"
 
 namespace clang {
 namespace tidy {
@@ -18,8 +20,12 @@ namespace portability {
 class PortabilityModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
+    CheckFactories.registerCheck<RestrictSystemIncludesCheck>(
+        "portability-restrict-system-includes");
     CheckFactories.registerCheck<SIMDIntrinsicsCheck>(
         "portability-simd-intrinsics");
+    CheckFactories.registerCheck<StdAllocatorConstCheck>(
+        "portability-std-allocator-const");
   }
 };
 

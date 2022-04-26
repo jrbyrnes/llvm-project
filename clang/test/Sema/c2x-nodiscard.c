@@ -3,7 +3,7 @@
 struct [[nodiscard]] S1 { // ok
   int i;
 };
-struct [[nodiscard nodiscard]] S2 { // expected-error {{attribute 'nodiscard' cannot appear multiple times in an attribute specifier}}
+struct [[nodiscard, nodiscard]] S2 { // ok
   int i;
 };
 struct [[nodiscard("Wrong")]] S3 { // FIXME: may need an extension warning.
@@ -25,7 +25,7 @@ struct S4 get_s(void);
 enum [[nodiscard]] E2 { Two };
 enum E2 get_e(void);
 
-[[nodiscard]] int get_i();
+[[nodiscard]] int get_i(void);
 
 void f2(void) {
   get_s(); // expected-warning {{ignoring return value of function declared with 'nodiscard' attribute}}

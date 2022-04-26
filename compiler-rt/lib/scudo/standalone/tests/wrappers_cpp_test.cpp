@@ -6,23 +6,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "gtest/gtest.h"
+#include "memtag.h"
+#include "tests/scudo_unit_test.h"
 
+#include <atomic>
 #include <condition_variable>
+#include <fstream>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 void operator delete(void *, size_t) noexcept;
 void operator delete[](void *, size_t) noexcept;
 
 // Note that every Cxx allocation function in the test binary will be fulfilled
 // by Scudo. See the comment in the C counterpart of this file.
-
-extern "C" __attribute__((visibility("default"))) const char *
-__scudo_default_options() {
-  return "quarantine_size_kb=256:thread_local_quarantine_size_kb=128:"
-         "quarantine_max_chunk_size=512:dealloc_type_mismatch=true";
-}
 
 template <typename T> static void testCxxNew() {
   T *P = new T;
@@ -69,7 +68,11 @@ public:
   Color C = Color::Red;
 };
 
-TEST(ScudoWrappersCppTest, New) {
+TEST(ScudoWrappersCppDeathTest, New) {
+  if (getenv("SKIP_TYPE_MISMATCH")) {
+    printf("Skipped type mismatch tests.\n");
+    return;
+  }
   testCxxNew<bool>();
   testCxxNew<uint8_t>();
   testCxxNew<uint16_t>();
@@ -83,7 +86,7 @@ TEST(ScudoWrappersCppTest, New) {
 
 static std::mutex Mutex;
 static std::condition_variable Cv;
-static bool Ready = false;
+static bool Ready;
 
 static void stressNew() {
   std::vector<uintptr_t *> V;
@@ -107,6 +110,14 @@ static void stressNew() {
 }
 
 TEST(ScudoWrappersCppTest, ThreadedNew) {
+  // TODO: Investigate why libc sometimes crashes with tag missmatch in
+  // __pthread_clockjoin_ex.
+  std::unique_ptr<scudo::ScopedDisableMemoryTagChecks> NoTags;
+  if (!SCUDO_ANDROID && scudo::archSupportsMemoryTagging() &&
+      scudo::systemSupportsMemoryTagging())
+    NoTags = std::make_unique<scudo::ScopedDisableMemoryTagChecks>();
+
+  Ready = false;
   std::thread Threads[32];
   for (size_t I = 0U; I < sizeof(Threads) / sizeof(Threads[0]); I++)
     Threads[I] = std::thread(stressNew);
@@ -118,3 +129,71 @@ TEST(ScudoWrappersCppTest, ThreadedNew) {
   for (auto &T : Threads)
     T.join();
 }
+
+#if !SCUDO_FUCHSIA
+TEST(ScudoWrappersCppTest, AllocAfterFork) {
+  // This test can fail flakily when ran as a part of large number of
+  // other tests if the maxmimum number of mappings allowed is low.
+  // We tried to reduce the number of iterations of the loops with
+  // moderate success, so we will now skip this test under those
+  // circumstances.
+  if (SCUDO_LINUX) {
+    long MaxMapCount = 0;
+    // If the file can't be accessed, we proceed with the test.
+    std::ifstream Stream("/proc/sys/vm/max_map_count");
+    if (Stream.good()) {
+      Stream >> MaxMapCount;
+      if (MaxMapCount < 200000)
+        return;
+    }
+  }
+
+  std::atomic_bool Stop;
+
+  // Create threads that simply allocate and free different sizes.
+  std::vector<std::thread *> Threads;
+  for (size_t N = 0; N < 5; N++) {
+    std::thread *T = new std::thread([&Stop] {
+      while (!Stop) {
+        for (size_t SizeLog = 3; SizeLog <= 20; SizeLog++) {
+          char *P = new char[1UL << SizeLog];
+          EXPECT_NE(P, nullptr);
+          // Make sure this value is not optimized away.
+          asm volatile("" : : "r,m"(P) : "memory");
+          delete[] P;
+        }
+      }
+    });
+    Threads.push_back(T);
+  }
+
+  // Create a thread to fork and allocate.
+  for (size_t N = 0; N < 50; N++) {
+    pid_t Pid;
+    if ((Pid = fork()) == 0) {
+      for (size_t SizeLog = 3; SizeLog <= 20; SizeLog++) {
+        char *P = new char[1UL << SizeLog];
+        EXPECT_NE(P, nullptr);
+        // Make sure this value is not optimized away.
+        asm volatile("" : : "r,m"(P) : "memory");
+        // Make sure we can touch all of the allocation.
+        memset(P, 0x32, 1U << SizeLog);
+        // EXPECT_LE(1U << SizeLog, malloc_usable_size(ptr));
+        delete[] P;
+      }
+      _exit(10);
+    }
+    EXPECT_NE(-1, Pid);
+    int Status;
+    EXPECT_EQ(Pid, waitpid(Pid, &Status, 0));
+    EXPECT_FALSE(WIFSIGNALED(Status));
+    EXPECT_EQ(10, WEXITSTATUS(Status));
+  }
+
+  printf("Waiting for threads to complete\n");
+  Stop = true;
+  for (auto Thread : Threads)
+    Thread->join();
+  Threads.clear();
+}
+#endif

@@ -1,4 +1,3 @@
-; RUN: opt < %s -pgo-icall-prom -S -icp-total-percent-threshold=10 | FileCheck %s
 ; RUN: opt < %s -passes=pgo-icall-prom -S -icp-total-percent-threshold=10 | FileCheck %s
 
 ; PR42413: Previously the call promotion code did not correctly update the byval
@@ -19,7 +18,7 @@ entry:
   ret i32 %v
 }
 
-define i32 @func5(%struct.Foo.1* byval %p) {
+define i32 @func5(%struct.Foo.1* byval(%struct.Foo.1) %p) {
 entry:
   %gep = getelementptr inbounds %struct.Foo.1, %struct.Foo.1* %p, i32 0, i32 0
   %v = load i32, i32* %gep

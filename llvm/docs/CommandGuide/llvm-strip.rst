@@ -39,7 +39,7 @@ multiple file formats.
 
  Remove most local symbols from the output. Different file formats may limit
  this to a subset of the local symbols. For example, file and section symbols in
- ELF objects will not be discarded.
+ ELF objects will not be discarded. Additionally, remove all debug sections.
 
 .. option::  --enable-deterministic-archives, -D
 
@@ -59,6 +59,15 @@ multiple file formats.
  Write output to <file>. Multiple input files cannot be used in combination
  with -o.
 
+.. option:: --only-keep-debug
+
+ Produce a debug file as the output that only preserves contents of sections
+ useful for debugging purposes.
+
+ For ELF objects, this removes the contents of `SHF_ALLOC` sections that are not
+ `SHT_NOTE` by making them `SHT_NOBITS` and shrinking the program headers where
+ possible.
+
 .. option:: --regex
 
  If specified, symbol and section names specified by other switches are treated
@@ -74,15 +83,16 @@ multiple file formats.
  Remove all symbols, debug sections and relocations from the output. This option
  is equivalent to GNU :program:`strip`'s ``--strip-all`` switch.
 
-.. option:: --strip-all, -S
+.. option:: --strip-all, -s
 
  For ELF objects, remove from the output all symbols and non-alloc sections not
- within segments, except for .gnu.warning sections and the section name table.
+ within segments, except for .gnu.warning, .ARM.attribute sections and the
+ section name table.
 
  For COFF objects, remove all symbols, debug sections, and relocations from the
  output.
 
-.. option:: --strip-debug, -g
+.. option:: --strip-debug, -d, -g, -S
 
  Remove all debug sections from the output.
 
@@ -100,21 +110,33 @@ multiple file formats.
 
  Display the version of the :program:`llvm-strip` executable.
 
+.. option:: --wildcard, -w
+
+  Allow wildcard syntax for symbol-related flags. On by default for
+  section-related flags. Incompatible with --regex.
+
+  Wildcard syntax allows the following special symbols:
+
+  ====================== ========================= ==================
+   Character              Meaning                   Equivalent
+  ====================== ========================= ==================
+  ``*``                  Any number of characters  ``.*``
+  ``?``                  Any single character      ``.``
+  ``\``                  Escape the next character ``\``
+  ``[a-z]``              Character class           ``[a-z]``
+  ``[!a-z]``, ``[^a-z]`` Negated character class   ``[^a-z]``
+  ====================== ========================= ==================
+
+  Additionally, starting a wildcard with '!' will prevent a match, even if
+  another flag matches. For example ``-w -N '*' -N '!x'`` will strip all symbols
+  except for ``x``.
+
+  The order of wildcards does not matter. For example, ``-w -N '*' -N '!x'`` is
+  the same as ``-w -N '!x' -N '*'``.
+
 .. option:: @<FILE>
 
  Read command-line options and commands from response file `<FILE>`.
-
-COFF-SPECIFIC OPTIONS
----------------------
-
-The following options are implemented only for COFF objects. If used with other
-objects, :program:`llvm-strip` will either emit an error or silently ignore
-them.
-
-.. option:: --only-keep-debug
-
- Remove the contents of non-debug sections from the output, but keep the section
- headers.
 
 ELF-SPECIFIC OPTIONS
 --------------------
@@ -156,6 +178,10 @@ them.
  segments. Note that many tools will not be able to use an object without
  section headers.
 
+.. option:: -T
+
+ Remove Swift symbols.
+
 EXIT STATUS
 -----------
 
@@ -165,7 +191,7 @@ Otherwise, it exits with code 0.
 BUGS
 ----
 
-To report bugs, please visit <http://llvm.org/bugs/>.
+To report bugs, please visit <https://github.com/llvm/llvm-project/labels/tools:llvm-objcopy%2Fstrip>.
 
 SEE ALSO
 --------

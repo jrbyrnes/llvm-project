@@ -83,9 +83,12 @@ tools on some versions of Solaris will abort operations if there is no
 symbol table.  Create such an object, put it into an archive, and check to
 see that there is an empty symbol table.
 RUN: mkdir -p %t
-RUN: yaml2obj %S/Inputs/solaris-nosymbols.yaml > %t/foo.o
+RUN: yaml2obj %S/Inputs/solaris-nosymbols.yaml -o %t/foo.o
 RUN: llvm-ar rs %t/foo.a %t/foo.o
 RUN: cat -v %t/foo.a | FileCheck -strict-whitespace --check-prefix=SOLARIS %s
 SOLARIS:      !<arch>
 SOLARIS-NEXT: /               0           0     0     0       8         `
 SOLARIS-NEXT: ^@^@^@^@^@^@^@^@foo.o/
+
+RUN: not llvm-ar -format=gnu rc %t.a 0123456789abcde 2>&1 | FileCheck --check-prefix=ONE-DASH %s
+ONE-DASH: error: unknown option f

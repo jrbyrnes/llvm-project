@@ -175,6 +175,44 @@ TEST(MathExtras, reverseBits) {
   EXPECT_EQ(0x5400000000000000ULL, reverseBits(NZ64));
 }
 
+TEST(MathExtras, isShiftedMask_32) {
+  EXPECT_FALSE(isShiftedMask_32(0x01010101));
+  EXPECT_TRUE(isShiftedMask_32(0xf0000000));
+  EXPECT_TRUE(isShiftedMask_32(0xffff0000));
+  EXPECT_TRUE(isShiftedMask_32(0xff << 1));
+
+  unsigned MaskIdx, MaskLen;
+  EXPECT_FALSE(isShiftedMask_32(0x01010101, MaskIdx, MaskLen));
+  EXPECT_TRUE(isShiftedMask_32(0xf0000000, MaskIdx, MaskLen));
+  EXPECT_EQ(28, (int)MaskIdx);
+  EXPECT_EQ(4, (int)MaskLen);
+  EXPECT_TRUE(isShiftedMask_32(0xffff0000, MaskIdx, MaskLen));
+  EXPECT_EQ(16, (int)MaskIdx);
+  EXPECT_EQ(16, (int)MaskLen);
+  EXPECT_TRUE(isShiftedMask_32(0xff << 1, MaskIdx, MaskLen));
+  EXPECT_EQ(1, (int)MaskIdx);
+  EXPECT_EQ(8, (int)MaskLen);
+}
+
+TEST(MathExtras, isShiftedMask_64) {
+  EXPECT_FALSE(isShiftedMask_64(0x0101010101010101ull));
+  EXPECT_TRUE(isShiftedMask_64(0xf000000000000000ull));
+  EXPECT_TRUE(isShiftedMask_64(0xffff000000000000ull));
+  EXPECT_TRUE(isShiftedMask_64(0xffull << 55));
+
+  unsigned MaskIdx, MaskLen;
+  EXPECT_FALSE(isShiftedMask_64(0x0101010101010101ull, MaskIdx, MaskLen));
+  EXPECT_TRUE(isShiftedMask_64(0xf000000000000000ull, MaskIdx, MaskLen));
+  EXPECT_EQ(60, (int)MaskIdx);
+  EXPECT_EQ(4, (int)MaskLen);
+  EXPECT_TRUE(isShiftedMask_64(0xffff000000000000ull, MaskIdx, MaskLen));
+  EXPECT_EQ(48, (int)MaskIdx);
+  EXPECT_EQ(16, (int)MaskLen);
+  EXPECT_TRUE(isShiftedMask_64(0xffull << 55, MaskIdx, MaskLen));
+  EXPECT_EQ(55, (int)MaskIdx);
+  EXPECT_EQ(8, (int)MaskLen);
+}
+
 TEST(MathExtras, isPowerOf2_32) {
   EXPECT_FALSE(isPowerOf2_32(0));
   EXPECT_TRUE(isPowerOf2_32(1 << 6));
@@ -203,14 +241,23 @@ TEST(MathExtras, PowerOf2Floor) {
   EXPECT_EQ(4U, PowerOf2Floor(7U));
 }
 
-TEST(MathExtras, ByteSwap_32) {
-  EXPECT_EQ(0x44332211u, ByteSwap_32(0x11223344));
-  EXPECT_EQ(0xDDCCBBAAu, ByteSwap_32(0xAABBCCDD));
-}
-
-TEST(MathExtras, ByteSwap_64) {
-  EXPECT_EQ(0x8877665544332211ULL, ByteSwap_64(0x1122334455667788LL));
-  EXPECT_EQ(0x1100FFEEDDCCBBAAULL, ByteSwap_64(0xAABBCCDDEEFF0011LL));
+TEST(MathExtras, CTLog2) {
+  EXPECT_EQ(CTLog2<1ULL << 0>(), 0U);
+  EXPECT_EQ(CTLog2<1ULL << 1>(), 1U);
+  EXPECT_EQ(CTLog2<1ULL << 2>(), 2U);
+  EXPECT_EQ(CTLog2<1ULL << 3>(), 3U);
+  EXPECT_EQ(CTLog2<1ULL << 4>(), 4U);
+  EXPECT_EQ(CTLog2<1ULL << 5>(), 5U);
+  EXPECT_EQ(CTLog2<1ULL << 6>(), 6U);
+  EXPECT_EQ(CTLog2<1ULL << 7>(), 7U);
+  EXPECT_EQ(CTLog2<1ULL << 8>(), 8U);
+  EXPECT_EQ(CTLog2<1ULL << 9>(), 9U);
+  EXPECT_EQ(CTLog2<1ULL << 10>(), 10U);
+  EXPECT_EQ(CTLog2<1ULL << 11>(), 11U);
+  EXPECT_EQ(CTLog2<1ULL << 12>(), 12U);
+  EXPECT_EQ(CTLog2<1ULL << 13>(), 13U);
+  EXPECT_EQ(CTLog2<1ULL << 14>(), 14U);
+  EXPECT_EQ(CTLog2<1ULL << 15>(), 15U);
 }
 
 TEST(MathExtras, countLeadingOnes) {
@@ -474,7 +521,7 @@ class OverflowTest : public ::testing::Test { };
 using OverflowTestTypes = ::testing::Types<signed char, short, int, long,
                                            long long>;
 
-TYPED_TEST_CASE(OverflowTest, OverflowTestTypes);
+TYPED_TEST_SUITE(OverflowTest, OverflowTestTypes, );
 
 TYPED_TEST(OverflowTest, AddNoOverflow) {
   TypeParam Result;

@@ -19,13 +19,17 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineInstrBundleIterator.h"
 #include "llvm/Support/GenericDomTree.h"
 #include "llvm/Support/GenericDomTreeConstruction.h"
 #include <cassert>
 #include <memory>
-#include <vector>
 
 namespace llvm {
+class AnalysisUsage;
+class MachineFunction;
+class Module;
+class raw_ostream;
 
 template <>
 inline void DominatorTreeBase<MachineBasicBlock, false>::addRoot(
@@ -37,6 +41,7 @@ extern template class DomTreeNodeBase<MachineBasicBlock>;
 extern template class DominatorTreeBase<MachineBasicBlock, false>; // DomTree
 extern template class DominatorTreeBase<MachineBasicBlock, true>; // PostDomTree
 
+using MachineDomTree = DomTreeBase<MachineBasicBlock>;
 using MachineDomTreeNode = DomTreeNodeBase<MachineBasicBlock>;
 
 //===-------------------------------------
@@ -44,8 +49,6 @@ using MachineDomTreeNode = DomTreeNodeBase<MachineBasicBlock>;
 /// compute a normal dominator tree.
 ///
 class MachineDominatorTree : public MachineFunctionPass {
-  using DomTreeT = DomTreeBase<MachineBasicBlock>;
-
   /// Helper structure used to hold all the basic blocks
   /// involved in the split of a critical edge.
   struct CriticalEdge {
@@ -68,7 +71,7 @@ class MachineDominatorTree : public MachineFunctionPass {
   mutable SmallSet<MachineBasicBlock *, 32> NewBBs;
 
   /// The DominatorTreeBase that is used to compute a normal dominator tree.
-  std::unique_ptr<DomTreeT> DT;
+  std::unique_ptr<MachineDomTree> DT;
 
   /// Apply all the recorded critical edges to the DT.
   /// This updates the underlying DT information in a way that uses
@@ -81,23 +84,18 @@ public:
   static char ID; // Pass ID, replacement for typeid
 
   MachineDominatorTree();
+  explicit MachineDominatorTree(MachineFunction &MF) : MachineFunctionPass(ID) {
+    calculate(MF);
+  }
 
-  DomTreeT &getBase() {
-    if (!DT) DT.reset(new DomTreeT());
+  MachineDomTree &getBase() {
+    if (!DT)
+      DT.reset(new MachineDomTree());
     applySplitCriticalEdges();
     return *DT;
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override;
-
-  /// getRoots -  Return the root blocks of the current CFG.  This may include
-  /// multiple blocks if we are computing post dominators.  For forward
-  /// dominators, this will always be a single block (the entry node).
-  ///
-  const SmallVectorImpl<MachineBasicBlock*> &getRoots() const {
-    applySplitCriticalEdges();
-    return DT->getRoots();
-  }
 
   MachineBasicBlock *getRoot() const {
     applySplitCriticalEdges();
@@ -111,10 +109,18 @@ public:
 
   bool runOnMachineFunction(MachineFunction &F) override;
 
+  void calculate(MachineFunction &F);
+
   bool dominates(const MachineDomTreeNode *A,
                  const MachineDomTreeNode *B) const {
     applySplitCriticalEdges();
     return DT->dominates(A, B);
+  }
+
+  void getDescendants(MachineBasicBlock *A,
+                      SmallVectorImpl<MachineBasicBlock *> &Result) {
+    applySplitCriticalEdges();
+    DT->getDescendants(A, Result);
   }
 
   bool dominates(const MachineBasicBlock *A, const MachineBasicBlock *B) const {
@@ -265,7 +271,8 @@ template <class T> struct GraphTraits;
 template <>
 struct GraphTraits<MachineDomTreeNode *>
     : public MachineDomTreeGraphTraitsBase<MachineDomTreeNode,
-                                           MachineDomTreeNode::iterator> {};
+                                           MachineDomTreeNode::const_iterator> {
+};
 
 template <>
 struct GraphTraits<const MachineDomTreeNode *>

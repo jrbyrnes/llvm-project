@@ -1,6 +1,5 @@
-// RUN: %check_clang_tidy %s modernize-use-nodiscard %t -- \
-// RUN:   -config="{CheckOptions: [{key: modernize-use-nodiscard.ReplacementString, value: 'NO_DISCARD'}]}" \
-// RUN: -- -std=c++17
+// RUN: %check_clang_tidy -std=c++17-or-later %s modernize-use-nodiscard %t -- \
+// RUN:   -config="{CheckOptions: [{key: modernize-use-nodiscard.ReplacementString, value: 'NO_DISCARD'}]}"
 
 namespace std {
 template <class>
@@ -22,6 +21,8 @@ class function;
 typedef unsigned my_unsigned;
 typedef unsigned &my_unsigned_reference;
 typedef const unsigned &my_unsigned_const_reference;
+
+struct NO_DISCARD NoDiscardStruct{};
 
 class Foo {
 public:
@@ -160,6 +161,9 @@ public:
 
     // Do not add ``[[nodiscard]]`` to conversion functions.
     // explicit operator bool() const { return true; }
+
+    // Do not add ``[[nodiscard]]`` to functions returning types marked [[nodiscard]].
+    NoDiscardStruct f50() const;
 };
 
 // Do not add ``[[nodiscard]]`` to Lambda.

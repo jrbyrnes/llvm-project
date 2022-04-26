@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "InputFiles.h"
+#include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
 
@@ -14,9 +15,8 @@ using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::support::endian;
 using namespace llvm::ELF;
-
-namespace lld {
-namespace elf {
+using namespace lld;
+using namespace lld::elf;
 
 namespace {
 
@@ -24,15 +24,18 @@ class RISCV final : public TargetInfo {
 public:
   RISCV();
   uint32_t calcEFlags() const override;
+  int64_t getImplicitAddend(const uint8_t *buf, RelType type) const override;
   void writeGotHeader(uint8_t *buf) const override;
   void writeGotPlt(uint8_t *buf, const Symbol &s) const override;
+  void writeIgotPlt(uint8_t *buf, const Symbol &s) const override;
   void writePltHeader(uint8_t *buf) const override;
-  void writePlt(uint8_t *buf, uint64_t gotPltEntryAddr, uint64_t pltEntryAddr,
-                int32_t index, unsigned relOff) const override;
+  void writePlt(uint8_t *buf, const Symbol &sym,
+                uint64_t pltEntryAddr) const override;
   RelType getDynRel(RelType type) const override;
   RelExpr getRelExpr(RelType type, const Symbol &s,
                      const uint8_t *loc) const override;
-  void relocateOne(uint8_t *loc, RelType type, uint64_t val) const override;
+  void relocate(uint8_t *loc, const Relocation &rel,
+                uint64_t val) const override;
 };
 
 } // end anonymous namespace
@@ -72,9 +75,9 @@ static uint32_t utype(uint32_t op, uint32_t rd, uint32_t imm) {
 
 RISCV::RISCV() {
   copyRel = R_RISCV_COPY;
-  noneRel = R_RISCV_NONE;
   pltRel = R_RISCV_JUMP_SLOT;
   relativeRel = R_RISCV_RELATIVE;
+  iRelativeRel = R_RISCV_IRELATIVE;
   if (config->is64) {
     symbolicRel = R_RISCV_64;
     tlsModuleIndexRel = R_RISCV_TLS_DTPMOD64;
@@ -89,24 +92,27 @@ RISCV::RISCV() {
   gotRel = symbolicRel;
 
   // .got[0] = _DYNAMIC
-  gotBaseSymInGotPlt = false;
   gotHeaderEntriesNum = 1;
 
   // .got.plt[0] = _dl_runtime_resolve, .got.plt[1] = link_map
   gotPltHeaderEntriesNum = 2;
 
-  pltEntrySize = 16;
   pltHeaderSize = 32;
+  pltEntrySize = 16;
+  ipltEntrySize = 16;
 }
 
 static uint32_t getEFlags(InputFile *f) {
   if (config->is64)
-    return cast<ObjFile<ELF64LE>>(f)->getObj().getHeader()->e_flags;
-  return cast<ObjFile<ELF32LE>>(f)->getObj().getHeader()->e_flags;
+    return cast<ObjFile<ELF64LE>>(f)->getObj().getHeader().e_flags;
+  return cast<ObjFile<ELF32LE>>(f)->getObj().getHeader().e_flags;
 }
 
 uint32_t RISCV::calcEFlags() const {
-  assert(!objectFiles.empty());
+  // If there are only binary input files (from -b binary), use a
+  // value of 0 for the ELF header flags.
+  if (objectFiles.empty())
+    return 0;
 
   uint32_t target = getEFlags(objectFiles.front());
 
@@ -127,6 +133,28 @@ uint32_t RISCV::calcEFlags() const {
   return target;
 }
 
+int64_t RISCV::getImplicitAddend(const uint8_t *buf, RelType type) const {
+  switch (type) {
+  default:
+    internalLinkerError(getErrorLocation(buf),
+                        "cannot read addend for relocation " + toString(type));
+    return 0;
+  case R_RISCV_32:
+  case R_RISCV_TLS_DTPMOD32:
+  case R_RISCV_TLS_DTPREL32:
+    return SignExtend64<32>(read32le(buf));
+  case R_RISCV_64:
+    return read64le(buf);
+  case R_RISCV_RELATIVE:
+  case R_RISCV_IRELATIVE:
+    return config->is64 ? read64le(buf) : read32le(buf);
+  case R_RISCV_NONE:
+  case R_RISCV_JUMP_SLOT:
+    // These relocations are defined as not having an implicit addend.
+    return 0;
+  }
+}
+
 void RISCV::writeGotHeader(uint8_t *buf) const {
   if (config->is64)
     write64le(buf, mainPart->dynamic->getVA());
@@ -139,6 +167,15 @@ void RISCV::writeGotPlt(uint8_t *buf, const Symbol &s) const {
     write64le(buf, in.plt->getVA());
   else
     write32le(buf, in.plt->getVA());
+}
+
+void RISCV::writeIgotPlt(uint8_t *buf, const Symbol &s) const {
+  if (config->writeAddends) {
+    if (config->is64)
+      write64le(buf, s.getVA());
+    else
+      write32le(buf, s.getVA());
+  }
 }
 
 void RISCV::writePltHeader(uint8_t *buf) const {
@@ -162,14 +199,13 @@ void RISCV::writePltHeader(uint8_t *buf) const {
   write32le(buf + 28, itype(JALR, 0, X_T3, 0));
 }
 
-void RISCV::writePlt(uint8_t *buf, uint64_t gotPltEntryAddr,
-                     uint64_t pltEntryAddr, int32_t index,
-                     unsigned relOff) const {
+void RISCV::writePlt(uint8_t *buf, const Symbol &sym,
+                     uint64_t pltEntryAddr) const {
   // 1: auipc t3, %pcrel_hi(f@.got.plt)
   // l[wd] t3, %pcrel_lo(1b)(t3)
   // jalr t1, t3
   // nop
-  uint32_t offset = gotPltEntryAddr - pltEntryAddr;
+  uint32_t offset = sym.getGotPltVA() - pltEntryAddr;
   write32le(buf + 0, utype(AUIPC, X_T3, hi20(offset)));
   write32le(buf + 4, itype(config->is64 ? LD : LW, X_T3, X_T3, lo12(offset)));
   write32le(buf + 8, itype(JALR, X_T1, X_T3, 0));
@@ -184,6 +220,15 @@ RelType RISCV::getDynRel(RelType type) const {
 RelExpr RISCV::getRelExpr(const RelType type, const Symbol &s,
                           const uint8_t *loc) const {
   switch (type) {
+  case R_RISCV_NONE:
+    return R_NONE;
+  case R_RISCV_32:
+  case R_RISCV_64:
+  case R_RISCV_HI20:
+  case R_RISCV_LO12_I:
+  case R_RISCV_LO12_S:
+  case R_RISCV_RVC_LUI:
+    return R_ABS;
   case R_RISCV_ADD8:
   case R_RISCV_ADD16:
   case R_RISCV_ADD32:
@@ -216,18 +261,26 @@ RelExpr RISCV::getRelExpr(const RelType type, const Symbol &s,
   case R_RISCV_TLS_GD_HI20:
     return R_TLSGD_PC;
   case R_RISCV_TLS_GOT_HI20:
-    config->hasStaticTlsModel = true;
+    config->hasTlsIe = true;
     return R_GOT_PC;
   case R_RISCV_TPREL_HI20:
   case R_RISCV_TPREL_LO12_I:
   case R_RISCV_TPREL_LO12_S:
-    return R_TLS;
+    return R_TPREL;
   case R_RISCV_RELAX:
-  case R_RISCV_ALIGN:
   case R_RISCV_TPREL_ADD:
-    return R_HINT;
+    return R_NONE;
+  case R_RISCV_ALIGN:
+    // Not just a hint; always padded to the worst-case number of NOPs, so may
+    // not currently be aligned, and without linker relaxation support we can't
+    // delete NOPs to realign.
+    errorOrWarn(getErrorLocation(loc) + "relocation R_RISCV_ALIGN requires "
+                "unimplemented linker relaxation; recompile with -mno-relax");
+    return R_NONE;
   default:
-    return R_ABS;
+    error(getErrorLocation(loc) + "unknown relocation (" + Twine(type) +
+          ") against symbol " + toString(s));
+    return R_NONE;
   }
 }
 
@@ -236,11 +289,10 @@ static uint32_t extractBits(uint64_t v, uint32_t begin, uint32_t end) {
   return (v & ((1ULL << (begin + 1)) - 1)) >> end;
 }
 
-void RISCV::relocateOne(uint8_t *loc, const RelType type,
-                        const uint64_t val) const {
+void RISCV::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
   const unsigned bits = config->wordsize * 8;
 
-  switch (type) {
+  switch (rel.type) {
   case R_RISCV_32:
     write32le(loc, val);
     return;
@@ -249,8 +301,8 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
     return;
 
   case R_RISCV_RVC_BRANCH: {
-    checkInt(loc, static_cast<int64_t>(val) >> 1, 8, type);
-    checkAlignment(loc, val, 2, type);
+    checkInt(loc, static_cast<int64_t>(val) >> 1, 8, rel);
+    checkAlignment(loc, val, 2, rel);
     uint16_t insn = read16le(loc) & 0xE383;
     uint16_t imm8 = extractBits(val, 8, 8) << 12;
     uint16_t imm4_3 = extractBits(val, 4, 3) << 10;
@@ -264,8 +316,8 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
   }
 
   case R_RISCV_RVC_JUMP: {
-    checkInt(loc, static_cast<int64_t>(val) >> 1, 11, type);
-    checkAlignment(loc, val, 2, type);
+    checkInt(loc, static_cast<int64_t>(val) >> 1, 11, rel);
+    checkAlignment(loc, val, 2, rel);
     uint16_t insn = read16le(loc) & 0xE003;
     uint16_t imm11 = extractBits(val, 11, 11) << 12;
     uint16_t imm4 = extractBits(val, 4, 4) << 11;
@@ -283,7 +335,7 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
 
   case R_RISCV_RVC_LUI: {
     int64_t imm = SignExtend64(val + 0x800, bits) >> 12;
-    checkInt(loc, imm, 6, type);
+    checkInt(loc, imm, 6, rel);
     if (imm == 0) { // `c.lui rd, 0` is illegal, convert to `c.li rd, 0`
       write16le(loc, (read16le(loc) & 0x0F83) | 0x4000);
     } else {
@@ -295,8 +347,8 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
   }
 
   case R_RISCV_JAL: {
-    checkInt(loc, static_cast<int64_t>(val) >> 1, 20, type);
-    checkAlignment(loc, val, 2, type);
+    checkInt(loc, static_cast<int64_t>(val) >> 1, 20, rel);
+    checkAlignment(loc, val, 2, rel);
 
     uint32_t insn = read32le(loc) & 0xFFF;
     uint32_t imm20 = extractBits(val, 20, 20) << 31;
@@ -310,8 +362,8 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
   }
 
   case R_RISCV_BRANCH: {
-    checkInt(loc, static_cast<int64_t>(val) >> 1, 12, type);
-    checkAlignment(loc, val, 2, type);
+    checkInt(loc, static_cast<int64_t>(val) >> 1, 12, rel);
+    checkAlignment(loc, val, 2, rel);
 
     uint32_t insn = read32le(loc) & 0x1FFF07F;
     uint32_t imm12 = extractBits(val, 12, 12) << 31;
@@ -328,10 +380,10 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
   case R_RISCV_CALL:
   case R_RISCV_CALL_PLT: {
     int64_t hi = SignExtend64(val + 0x800, bits) >> 12;
-    checkInt(loc, hi, 20, type);
+    checkInt(loc, hi, 20, rel);
     if (isInt<20>(hi)) {
-      relocateOne(loc, R_RISCV_PCREL_HI20, val);
-      relocateOne(loc + 4, R_RISCV_PCREL_LO12_I, val);
+      relocateNoSym(loc, R_RISCV_PCREL_HI20, val);
+      relocateNoSym(loc + 4, R_RISCV_PCREL_LO12_I, val);
     }
     return;
   }
@@ -343,7 +395,7 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
   case R_RISCV_TPREL_HI20:
   case R_RISCV_HI20: {
     uint64_t hi = val + 0x800;
-    checkInt(loc, SignExtend64(hi, bits) >> 12, 20, type);
+    checkInt(loc, SignExtend64(hi, bits) >> 12, 20, rel);
     write32le(loc, (read32le(loc) & 0xFFF) | (hi & 0xFFFFF000));
     return;
   }
@@ -416,31 +468,15 @@ void RISCV::relocateOne(uint8_t *loc, const RelType type,
     write64le(loc, val - dtpOffset);
     break;
 
-  case R_RISCV_ALIGN:
   case R_RISCV_RELAX:
     return; // Ignored (for now)
-  case R_RISCV_NONE:
-    return; // Do nothing
 
-  // These are handled by the dynamic linker
-  case R_RISCV_RELATIVE:
-  case R_RISCV_COPY:
-  case R_RISCV_JUMP_SLOT:
-  // GP-relative relocations are only produced after relaxation, which
-  // we don't support for now
-  case R_RISCV_GPREL_I:
-  case R_RISCV_GPREL_S:
   default:
-    error(getErrorLocation(loc) +
-          "unimplemented relocation: " + toString(type));
-    return;
+    llvm_unreachable("unknown relocation");
   }
 }
 
-TargetInfo *getRISCVTargetInfo() {
+TargetInfo *elf::getRISCVTargetInfo() {
   static RISCV target;
   return &target;
 }
-
-} // namespace elf
-} // namespace lld

@@ -9,8 +9,6 @@
 #ifndef LLVM_ANALYSIS_OBJCARCINSTKIND_H
 #define LLVM_ANALYSIS_OBJCARCINSTKIND_H
 
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Instructions.h"
 
 namespace llvm {
@@ -30,7 +28,7 @@ namespace objcarc {
 enum class ARCInstKind {
   Retain,                   ///< objc_retain
   RetainRV,                 ///< objc_retainAutoreleasedReturnValue
-  ClaimRV,                  ///< objc_unsafeClaimAutoreleasedReturnValue
+  UnsafeClaimRV,            ///< objc_unsafeClaimAutoreleasedReturnValue
   RetainBlock,              ///< objc_retainBlock
   Release,                  ///< objc_release
   Autorelease,              ///< objc_autorelease

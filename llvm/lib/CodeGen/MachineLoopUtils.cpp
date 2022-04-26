@@ -41,8 +41,7 @@ MachineBasicBlock *llvm::PeelSingleBlockLoop(LoopPeelDirection Direction,
   else
     MF.insert(std::next(Loop->getIterator()), NewBB);
 
-  // FIXME: Add DenseMapInfo trait for Register so we can use it as a key.
-  DenseMap<unsigned, Register> Remaps;
+  DenseMap<Register, Register> Remaps;
   auto InsertPt = NewBB->end();
   for (MachineInstr &MI : *Loop) {
     MachineInstr *NewMI = MF.CloneMachineInstr(&MI);
@@ -90,15 +89,15 @@ MachineBasicBlock *llvm::PeelSingleBlockLoop(LoopPeelDirection Direction,
       if (Remaps.count(R))
         R = Remaps[R];
       OrigPhi.getOperand(InitRegIdx).setReg(R);
-      MI.RemoveOperand(LoopRegIdx + 1);
-      MI.RemoveOperand(LoopRegIdx + 0);
+      MI.removeOperand(LoopRegIdx + 1);
+      MI.removeOperand(LoopRegIdx + 0);
     } else {
       // When peeling back, the initial value is the loop-carried value from
       // the original loop.
       Register LoopReg = OrigPhi.getOperand(LoopRegIdx).getReg();
       MI.getOperand(LoopRegIdx).setReg(LoopReg);
-      MI.RemoveOperand(InitRegIdx + 1);
-      MI.RemoveOperand(InitRegIdx + 0);
+      MI.removeOperand(InitRegIdx + 1);
+      MI.removeOperand(InitRegIdx + 0);
     }
   }
 

@@ -1,9 +1,9 @@
 // RUN: %clang_cc1 %s -verify -pedantic -fsyntax-only
 // RUN: %clang_cc1 %s -verify -pedantic -fsyntax-only -DCHECK_SAMPLER_VALUE -Wspir-compat -triple amdgcn--amdhsa
-// RUN: %clang_cc1 %s -verify -pedantic -fsyntax-only -DCHECK_SAMPLER_VALUE -triple spir-unknown-unknown
+// RUN: %clang_cc1 %s -verify -pedantic -fsyntax-only -DCHECK_SAMPLER_VALUE -Wspir-compat -triple spir-unknown-unknown
 // RUN: %clang_cc1 %s -cl-std=CL2.0 -verify -pedantic -fsyntax-only
 // RUN: %clang_cc1 %s -cl-std=CL2.0 -verify -pedantic -fsyntax-only -DCHECK_SAMPLER_VALUE -Wspir-compat -triple amdgcn--amdhsa
-// RUN: %clang_cc1 %s -cl-std=CL2.0 -verify -pedantic -fsyntax-only -DCHECK_SAMPLER_VALUE -triple spir-unknown-unknown
+// RUN: %clang_cc1 %s -cl-std=CL2.0 -verify -pedantic -fsyntax-only -DCHECK_SAMPLER_VALUE -Wspir-compat -triple spir-unknown-unknown
 
 #define CLK_ADDRESS_CLAMP_TO_EDGE       2
 #define CLK_NORMALIZED_COORDS_TRUE      1
@@ -62,12 +62,12 @@ void kernel ker(sampler_t argsmp) {
 }
 
 #if __OPENCL_C_VERSION__ == 200
-void bad(sampler_t*); // expected-error{{pointer to type '__generic sampler_t' is invalid in OpenCL}}
+void bad(sampler_t *); // expected-error{{pointer to type 'sampler_t' is invalid in OpenCL}}
 #else
 void bad(sampler_t*); // expected-error{{pointer to type 'sampler_t' is invalid in OpenCL}}
 #endif
 
-void bar() {
+void bar(void) {
   sampler_t smp1 = CLK_ADDRESS_CLAMP_TO_EDGE | CLK_NORMALIZED_COORDS_TRUE | CLK_FILTER_LINEAR;
   sampler_t smp2 = CLK_ADDRESS_CLAMP_TO_EDGE | CLK_NORMALIZED_COORDS_TRUE | CLK_FILTER_NEAREST;
   smp1=smp2; //expected-error{{invalid operands to binary expression ('sampler_t' and 'sampler_t')}}

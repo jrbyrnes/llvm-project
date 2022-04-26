@@ -11,9 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SmallVectorMemoryBuffer.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Testing/Support/Error.h"
 #include "gtest/gtest.h"
@@ -73,15 +75,15 @@ protected:
 TEST_F(MemoryBufferTest, get) {
   // Default name and null-terminator flag
   OwningBuffer MB1(MemoryBuffer::getMemBuffer(data));
-  EXPECT_TRUE(nullptr != MB1.get());
+  EXPECT_NE(nullptr, MB1.get());
 
   // RequiresNullTerminator = false
   OwningBuffer MB2(MemoryBuffer::getMemBuffer(data, "one", false));
-  EXPECT_TRUE(nullptr != MB2.get());
+  EXPECT_NE(nullptr, MB2.get());
 
   // RequiresNullTerminator = true
   OwningBuffer MB3(MemoryBuffer::getMemBuffer(data, "two", true));
-  EXPECT_TRUE(nullptr != MB3.get());
+  EXPECT_NE(nullptr, MB3.get());
 
   // verify all 3 buffers point to the same address
   EXPECT_EQ(MB1->getBufferStart(), MB2->getBufferStart());
@@ -151,11 +153,11 @@ TEST_F(MemoryBufferTest, NullTerminator4K) {
 TEST_F(MemoryBufferTest, copy) {
   // copy with no name
   OwningBuffer MBC1(MemoryBuffer::getMemBufferCopy(data));
-  EXPECT_TRUE(nullptr != MBC1.get());
+  EXPECT_NE(nullptr, MBC1.get());
 
   // copy with a name
   OwningBuffer MBC2(MemoryBuffer::getMemBufferCopy(data, "copy"));
-  EXPECT_TRUE(nullptr != MBC2.get());
+  EXPECT_NE(nullptr, MBC2.get());
 
   // verify the two copies do not point to the same place
   EXPECT_NE(MBC1->getBufferStart(), MBC2->getBufferStart());
@@ -196,27 +198,32 @@ TEST_F(MemoryBufferTest, createFromPipe) {
 TEST_F(MemoryBufferTest, make_new) {
   // 0-sized buffer
   OwningBuffer Zero(WritableMemoryBuffer::getNewUninitMemBuffer(0));
-  EXPECT_TRUE(nullptr != Zero.get());
+  EXPECT_NE(nullptr, Zero.get());
 
   // uninitialized buffer with no name
   OwningBuffer One(WritableMemoryBuffer::getNewUninitMemBuffer(321));
-  EXPECT_TRUE(nullptr != One.get());
+  EXPECT_NE(nullptr, One.get());
 
   // uninitialized buffer with name
   OwningBuffer Two(WritableMemoryBuffer::getNewUninitMemBuffer(123, "bla"));
-  EXPECT_TRUE(nullptr != Two.get());
+  EXPECT_NE(nullptr, Two.get());
 
   // 0-initialized buffer with no name
   OwningBuffer Three(WritableMemoryBuffer::getNewMemBuffer(321, data));
-  EXPECT_TRUE(nullptr != Three.get());
+  EXPECT_NE(nullptr, Three.get());
   for (size_t i = 0; i < 321; ++i)
     EXPECT_EQ(0, Three->getBufferStart()[0]);
 
   // 0-initialized buffer with name
   OwningBuffer Four(WritableMemoryBuffer::getNewMemBuffer(123, "zeros"));
-  EXPECT_TRUE(nullptr != Four.get());
+  EXPECT_NE(nullptr, Four.get());
   for (size_t i = 0; i < 123; ++i)
     EXPECT_EQ(0, Four->getBufferStart()[0]);
+
+  // uninitialized buffer with rollover size
+  OwningBuffer Five(
+      WritableMemoryBuffer::getNewUninitMemBuffer(SIZE_MAX, "huge"));
+  EXPECT_EQ(nullptr, Five.get());
 }
 
 void MemoryBufferTest::testGetOpenFileSlice(bool Reopen) {
@@ -262,14 +269,6 @@ TEST_F(MemoryBufferTest, getOpenFileNoReopen) {
 
 TEST_F(MemoryBufferTest, getOpenFileReopened) {
   testGetOpenFileSlice(true);
-}
-
-TEST_F(MemoryBufferTest, reference) {
-  OwningBuffer MB(MemoryBuffer::getMemBuffer(data));
-  MemoryBufferRef MBR(*MB);
-
-  EXPECT_EQ(MB->getBufferStart(), MBR.getBufferStart());
-  EXPECT_EQ(MB->getBufferIdentifier(), MBR.getBufferIdentifier());
 }
 
 TEST_F(MemoryBufferTest, slice) {
@@ -380,4 +379,62 @@ TEST_F(MemoryBufferTest, writeThroughFile) {
   ASSERT_EQ(16u, MB.getBufferSize());
   EXPECT_EQ("xxxxxxxxxxxxxxxx", MB.getBuffer());
 }
+
+TEST_F(MemoryBufferTest, mmapVolatileNoNull) {
+  // Verify that `MemoryBuffer::getOpenFile` will use mmap when
+  // `RequiresNullTerminator = false`, `IsVolatile = true`, and the file is
+  // large enough to use mmap.
+  //
+  // This is done because Clang should use this mode to open module files, and
+  // falling back to malloc for them causes a huge memory usage increase.
+
+  int FD;
+  SmallString<64> TestPath;
+  ASSERT_NO_ERROR(sys::fs::createTemporaryFile(
+      "MemoryBufferTest_mmapVolatileNoNull", "temp", FD, TestPath));
+  FileRemover Cleanup(TestPath);
+  raw_fd_ostream OF(FD, true);
+  // Create a file large enough to mmap. 4 pages should be enough.
+  unsigned PageSize = sys::Process::getPageSizeEstimate();
+  unsigned FileWrites = (PageSize * 4) / 8;
+  for (unsigned i = 0; i < FileWrites; ++i)
+    OF << "01234567";
+  OF.close();
+
+  Expected<sys::fs::file_t> File = sys::fs::openNativeFileForRead(TestPath);
+  ASSERT_THAT_EXPECTED(File, Succeeded());
+  auto OnExit =
+      make_scope_exit([&] { ASSERT_NO_ERROR(sys::fs::closeFile(*File)); });
+
+  auto MBOrError = MemoryBuffer::getOpenFile(*File, TestPath,
+      /*FileSize=*/-1, /*RequiresNullTerminator=*/false, /*IsVolatile=*/true);
+  ASSERT_NO_ERROR(MBOrError.getError())
+  OwningBuffer MB = std::move(*MBOrError);
+  EXPECT_EQ(MB->getBufferKind(), MemoryBuffer::MemoryBuffer_MMap);
+  EXPECT_EQ(MB->getBufferSize(), std::size_t(FileWrites * 8));
+  EXPECT_TRUE(MB->getBuffer().startswith("01234567"));
 }
+
+// Test that SmallVector without a null terminator gets one.
+TEST(SmallVectorMemoryBufferTest, WithoutNullTerminatorRequiresNullTerminator) {
+  SmallString<0> Data("some data");
+
+  SmallVectorMemoryBuffer MB(std::move(Data),
+                             /*RequiresNullTerminator=*/true);
+  EXPECT_EQ(MB.getBufferSize(), 9u);
+  EXPECT_EQ(MB.getBufferEnd()[0], '\0');
+}
+
+// Test that SmallVector with a null terminator keeps it.
+TEST(SmallVectorMemoryBufferTest, WithNullTerminatorRequiresNullTerminator) {
+  SmallString<0> Data("some data");
+  Data.push_back('\0');
+  Data.pop_back();
+
+  SmallVectorMemoryBuffer MB(std::move(Data),
+                             /*RequiresNullTerminator=*/true);
+  EXPECT_EQ(MB.getBufferSize(), 9u);
+  EXPECT_EQ(MB.getBufferEnd()[0], '\0');
+}
+
+} // namespace

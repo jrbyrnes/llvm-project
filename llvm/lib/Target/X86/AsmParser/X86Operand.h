@@ -18,8 +18,8 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SMLoc.h"
 #include <cassert>
 #include <memory>
@@ -37,6 +37,10 @@ struct X86Operand final : public MCParsedAsmOperand {
   void *OpDecl;
   bool AddressOf;
 
+  /// This used for inline asm which may specify base reg and index reg for
+  /// MemOp. e.g. ARR[eax + ecx*4], so no extra reg can be used for MemOp.
+  bool UseUpRegs = false;
+
   struct TokOp {
     const char *Data;
     unsigned Length;
@@ -52,12 +56,14 @@ struct X86Operand final : public MCParsedAsmOperand {
 
   struct ImmOp {
     const MCExpr *Val;
+    bool LocalRef;
   };
 
   struct MemOp {
     unsigned SegReg;
     const MCExpr *Disp;
     unsigned BaseReg;
+    unsigned DefaultBaseReg;
     unsigned IndexReg;
     unsigned Scale;
     unsigned Size;
@@ -77,7 +83,8 @@ struct X86Operand final : public MCParsedAsmOperand {
   };
 
   X86Operand(KindTy K, SMLoc Start, SMLoc End)
-      : Kind(K), StartLoc(Start), EndLoc(End) {}
+      : Kind(K), StartLoc(Start), EndLoc(End), OpDecl(nullptr),
+        AddressOf(false) {}
 
   StringRef getSymName() override { return SymName; }
   void *getOpDecl() override { return OpDecl; }
@@ -104,8 +111,8 @@ struct X86Operand final : public MCParsedAsmOperand {
       } else if (Val->getKind() == MCExpr::SymbolRef) {
         if (auto *SRE = dyn_cast<MCSymbolRefExpr>(Val)) {
           const MCSymbol &Sym = SRE->getSymbol();
-          if (auto SymName = Sym.getName().data())
-            OS << VName << SymName;
+          if (const char *SymNameStr = Sym.getName().data())
+            OS << VName << SymNameStr;
         }
       }
     };
@@ -181,6 +188,10 @@ struct X86Operand final : public MCParsedAsmOperand {
   unsigned getMemBaseReg() const {
     assert(Kind == Memory && "Invalid access!");
     return Mem.BaseReg;
+  }
+  unsigned getMemDefaultBaseReg() const {
+    assert(Kind == Memory && "Invalid access!");
+    return Mem.DefaultBaseReg;
   }
   unsigned getMemIndexReg() const {
     assert(Kind == Memory && "Invalid access!");
@@ -278,13 +289,9 @@ struct X86Operand final : public MCParsedAsmOperand {
     return isImmUnsignedi8Value(CE->getValue());
   }
 
-  bool isOffsetOf() const override {
-    return OffsetOfLoc.getPointer();
-  }
+  bool isOffsetOfLocal() const override { return isImm() && Imm.LocalRef; }
 
-  bool needAddressOf() const override {
-    return AddressOf;
-  }
+  bool needAddressOf() const override { return AddressOf; }
 
   bool isMem() const override { return Kind == Memory; }
   bool isMemUnsized() const {
@@ -314,6 +321,11 @@ struct X86Operand final : public MCParsedAsmOperand {
   bool isMem512() const {
     return Kind == Memory && (!Mem.Size || Mem.Size == 512);
   }
+
+  bool isSibMem() const {
+    return isMem() && Mem.BaseReg != X86::RIP && Mem.BaseReg != X86::EIP;
+  }
+
   bool isMemIndexReg(unsigned LowR, unsigned HighR) const {
     assert(Kind == Memory && "Invalid access!");
     return Mem.IndexReg >= LowR && Mem.IndexReg <= HighR;
@@ -371,6 +383,8 @@ struct X86Operand final : public MCParsedAsmOperand {
   bool isAbsMem16() const {
     return isAbsMem() && Mem.ModeSize == 16;
   }
+
+  bool isMemUseUpRegs() const override { return UseUpRegs; }
 
   bool isSrcIdx() const {
     return !getMemIndexReg() && getMemScale() == 1 &&
@@ -457,7 +471,22 @@ struct X86Operand final : public MCParsedAsmOperand {
   bool isGR32orGR64() const {
     return Kind == Register &&
       (X86MCRegisterClasses[X86::GR32RegClassID].contains(getReg()) ||
-      X86MCRegisterClasses[X86::GR64RegClassID].contains(getReg()));
+       X86MCRegisterClasses[X86::GR64RegClassID].contains(getReg()));
+  }
+
+  bool isGR16orGR32orGR64() const {
+    return Kind == Register &&
+      (X86MCRegisterClasses[X86::GR16RegClassID].contains(getReg()) ||
+       X86MCRegisterClasses[X86::GR32RegClassID].contains(getReg()) ||
+       X86MCRegisterClasses[X86::GR64RegClassID].contains(getReg()));
+  }
+
+  bool isVectorReg() const {
+    return Kind == Register &&
+           (X86MCRegisterClasses[X86::VR64RegClassID].contains(getReg()) ||
+            X86MCRegisterClasses[X86::VR128XRegClassID].contains(getReg()) ||
+            X86MCRegisterClasses[X86::VR256XRegClassID].contains(getReg()) ||
+            X86MCRegisterClasses[X86::VR512RegClassID].contains(getReg()));
   }
 
   bool isVK1Pair() const {
@@ -506,6 +535,15 @@ struct X86Operand final : public MCParsedAsmOperand {
     Inst.addOperand(MCOperand::createReg(RegNo));
   }
 
+  void addGR16orGR32orGR64Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    MCRegister RegNo = getReg();
+    if (X86MCRegisterClasses[X86::GR32RegClassID].contains(RegNo) ||
+        X86MCRegisterClasses[X86::GR64RegClassID].contains(RegNo))
+      RegNo = getX86SubSuperRegister(RegNo, 16);
+    Inst.addOperand(MCOperand::createReg(RegNo));
+  }
+
   void addAVX512RCOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     addExpr(Inst, getImm());
@@ -542,7 +580,10 @@ struct X86Operand final : public MCParsedAsmOperand {
 
   void addMemOperands(MCInst &Inst, unsigned N) const {
     assert((N == 5) && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::createReg(getMemBaseReg()));
+    if (getMemBaseReg())
+      Inst.addOperand(MCOperand::createReg(getMemBaseReg()));
+    else
+      Inst.addOperand(MCOperand::createReg(getMemDefaultBaseReg()));
     Inst.addOperand(MCOperand::createImm(getMemScale()));
     Inst.addOperand(MCOperand::createReg(getMemIndexReg()));
     addExpr(Inst, getMemDisp());
@@ -613,9 +654,16 @@ struct X86Operand final : public MCParsedAsmOperand {
   }
 
   static std::unique_ptr<X86Operand> CreateImm(const MCExpr *Val,
-                                               SMLoc StartLoc, SMLoc EndLoc) {
+                                               SMLoc StartLoc, SMLoc EndLoc,
+                                               StringRef SymName = StringRef(),
+                                               void *OpDecl = nullptr,
+                                               bool GlobalRef = true) {
     auto Res = std::make_unique<X86Operand>(Immediate, StartLoc, EndLoc);
-    Res->Imm.Val = Val;
+    Res->Imm.Val      = Val;
+    Res->Imm.LocalRef = !GlobalRef;
+    Res->SymName      = SymName;
+    Res->OpDecl       = OpDecl;
+    Res->AddressOf    = true;
     return Res;
   }
 
@@ -623,16 +671,19 @@ struct X86Operand final : public MCParsedAsmOperand {
   static std::unique_ptr<X86Operand>
   CreateMem(unsigned ModeSize, const MCExpr *Disp, SMLoc StartLoc, SMLoc EndLoc,
             unsigned Size = 0, StringRef SymName = StringRef(),
-            void *OpDecl = nullptr, unsigned FrontendSize = 0) {
+            void *OpDecl = nullptr, unsigned FrontendSize = 0,
+            bool UseUpRegs = false) {
     auto Res = std::make_unique<X86Operand>(Memory, StartLoc, EndLoc);
     Res->Mem.SegReg   = 0;
     Res->Mem.Disp     = Disp;
     Res->Mem.BaseReg  = 0;
+    Res->Mem.DefaultBaseReg = 0;
     Res->Mem.IndexReg = 0;
     Res->Mem.Scale    = 1;
     Res->Mem.Size     = Size;
     Res->Mem.ModeSize = ModeSize;
     Res->Mem.FrontendSize = FrontendSize;
+    Res->UseUpRegs = UseUpRegs;
     Res->SymName      = SymName;
     Res->OpDecl       = OpDecl;
     Res->AddressOf    = false;
@@ -643,11 +694,14 @@ struct X86Operand final : public MCParsedAsmOperand {
   static std::unique_ptr<X86Operand>
   CreateMem(unsigned ModeSize, unsigned SegReg, const MCExpr *Disp,
             unsigned BaseReg, unsigned IndexReg, unsigned Scale, SMLoc StartLoc,
-            SMLoc EndLoc, unsigned Size = 0, StringRef SymName = StringRef(),
-            void *OpDecl = nullptr, unsigned FrontendSize = 0) {
+            SMLoc EndLoc, unsigned Size = 0,
+            unsigned DefaultBaseReg = X86::NoRegister,
+            StringRef SymName = StringRef(), void *OpDecl = nullptr,
+            unsigned FrontendSize = 0, bool UseUpRegs = false) {
     // We should never just have a displacement, that should be parsed as an
     // absolute memory operand.
-    assert((SegReg || BaseReg || IndexReg) && "Invalid memory operand!");
+    assert((SegReg || BaseReg || IndexReg || DefaultBaseReg) &&
+           "Invalid memory operand!");
 
     // The scale should always be one of {1,2,4,8}.
     assert(((Scale == 1 || Scale == 2 || Scale == 4 || Scale == 8)) &&
@@ -656,11 +710,13 @@ struct X86Operand final : public MCParsedAsmOperand {
     Res->Mem.SegReg   = SegReg;
     Res->Mem.Disp     = Disp;
     Res->Mem.BaseReg  = BaseReg;
+    Res->Mem.DefaultBaseReg = DefaultBaseReg;
     Res->Mem.IndexReg = IndexReg;
     Res->Mem.Scale    = Scale;
     Res->Mem.Size     = Size;
     Res->Mem.ModeSize = ModeSize;
     Res->Mem.FrontendSize = FrontendSize;
+    Res->UseUpRegs = UseUpRegs;
     Res->SymName      = SymName;
     Res->OpDecl       = OpDecl;
     Res->AddressOf    = false;

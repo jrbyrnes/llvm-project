@@ -27,18 +27,13 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/Passes.h"
+#include "llvm/InitializePasses.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <queue>
-
 using namespace llvm;
-
-namespace llvm {
-extern char &MIRCanonicalizerID;
-} // namespace llvm
 
 #define DEBUG_TYPE "mir-canonicalizer"
 
@@ -46,10 +41,6 @@ static cl::opt<unsigned>
     CanonicalizeFunctionNumber("canon-nth-function", cl::Hidden, cl::init(~0u),
                                cl::value_desc("N"),
                                cl::desc("Function number to canonicalize."));
-
-static cl::opt<unsigned> CanonicalizeBasicBlockNumber(
-    "canon-nth-basicblock", cl::Hidden, cl::init(~0u), cl::value_desc("N"),
-    cl::desc("BasicBlock number to canonicalize."));
 
 namespace {
 
@@ -87,9 +78,7 @@ static std::vector<MachineBasicBlock *> GetRPOList(MachineFunction &MF) {
     return {};
   ReversePostOrderTraversal<MachineBasicBlock *> RPOT(&*MF.begin());
   std::vector<MachineBasicBlock *> RPOList;
-  for (auto MBB : RPOT) {
-    RPOList.push_back(MBB);
-  }
+  append_range(RPOList, RPOT);
 
   return RPOList;
 }
@@ -109,8 +98,8 @@ rescheduleLexographically(std::vector<MachineInstr *> instructions,
     II->print(OS);
     OS.flush();
 
-    // Trim the assignment, or start from the begining in the case of a store.
-    const size_t i = S.find("=");
+    // Trim the assignment, or start from the beginning in the case of a store.
+    const size_t i = S.find('=');
     StringInstrMap.push_back({(i == std::string::npos) ? S : S.substr(i), II});
   }
 
@@ -140,7 +129,7 @@ static bool rescheduleCanonically(unsigned &PseudoIdempotentInstCount,
 
   bool Changed = false;
 
-  // Calculates the distance of MI from the begining of its parent BB.
+  // Calculates the distance of MI from the beginning of its parent BB.
   auto getInstrIdx = [](const MachineInstr &MI) {
     unsigned i = 0;
     for (auto &CurMI : *MI.getParent()) {
@@ -200,8 +189,7 @@ static bool rescheduleCanonically(unsigned &PseudoIdempotentInstCount,
 
       if (II->getOperand(i).isReg()) {
         if (!Register::isVirtualRegister(II->getOperand(i).getReg()))
-          if (llvm::find(PhysRegDefs, II->getOperand(i).getReg()) ==
-              PhysRegDefs.end()) {
+          if (!llvm::is_contained(PhysRegDefs, II->getOperand(i).getReg())) {
             continue;
           }
       }
@@ -278,9 +266,9 @@ static bool rescheduleCanonically(unsigned &PseudoIdempotentInstCount,
   // Sort the defs for users of multiple defs lexographically.
   for (const auto &E : MultiUserLookup) {
 
-    auto UseI =
-        std::find_if(MBB->instr_begin(), MBB->instr_end(),
-                     [&](MachineInstr &MI) -> bool { return &MI == E.second; });
+    auto UseI = llvm::find_if(MBB->instrs(), [&](MachineInstr &MI) -> bool {
+      return &MI == E.second;
+    });
 
     if (UseI == MBB->instr_end())
       continue;
@@ -337,8 +325,8 @@ static bool propagateLocalCopies(MachineBasicBlock *MBB) {
       continue;
 
     std::vector<MachineOperand *> Uses;
-    for (auto UI = MRI.use_begin(Dst); UI != MRI.use_end(); ++UI)
-      Uses.push_back(&*UI);
+    for (MachineOperand &MO : MRI.use_operands(Dst))
+      Uses.push_back(&MO);
     for (auto *MO : Uses)
       MO->setReg(Src);
 
@@ -372,34 +360,14 @@ static bool doDefKillClear(MachineBasicBlock *MBB) {
 }
 
 static bool runOnBasicBlock(MachineBasicBlock *MBB,
-                            std::vector<StringRef> &bbNames,
-                            unsigned &basicBlockNum, NamedVRegCursor &NVC) {
-
-  if (CanonicalizeBasicBlockNumber != ~0U) {
-    if (CanonicalizeBasicBlockNumber != basicBlockNum++)
-      return false;
-    LLVM_DEBUG(dbgs() << "\n Canonicalizing BasicBlock " << MBB->getName()
-                      << "\n";);
-  }
-
-  if (llvm::find(bbNames, MBB->getName()) != bbNames.end()) {
-    LLVM_DEBUG({
-      dbgs() << "Found potentially duplicate BasicBlocks: " << MBB->getName()
-             << "\n";
-    });
-    return false;
-  }
-
+                            unsigned BasicBlockNum, VRegRenamer &Renamer) {
   LLVM_DEBUG({
     dbgs() << "\n\n  NEW BASIC BLOCK: " << MBB->getName() << "  \n\n";
     dbgs() << "\n\n================================================\n\n";
   });
 
   bool Changed = false;
-  MachineFunction &MF = *MBB->getParent();
-  MachineRegisterInfo &MRI = MF.getRegInfo();
 
-  bbNames.push_back(MBB->getName());
   LLVM_DEBUG(dbgs() << "\n\n NEW BASIC BLOCK: " << MBB->getName() << "\n\n";);
 
   LLVM_DEBUG(dbgs() << "MBB Before Canonical Copy Propagation:\n";
@@ -412,32 +380,10 @@ static bool runOnBasicBlock(MachineBasicBlock *MBB,
   Changed |= rescheduleCanonically(IdempotentInstCount, MBB);
   LLVM_DEBUG(dbgs() << "MBB After Scheduling:\n"; MBB->dump(););
 
-  Changed |= NVC.renameVRegs(MBB);
+  Changed |= Renamer.renameVRegs(MBB, BasicBlockNum);
 
-  // Here we renumber the def vregs for the idempotent instructions from the top
-  // of the MachineBasicBlock so that they are named in the order that we sorted
-  // them alphabetically. Eventually we wont need SkipVRegs because we will use
-  // named vregs instead.
-  if (IdempotentInstCount)
-    NVC.skipVRegs();
-
-  auto MII = MBB->begin();
-  for (unsigned i = 0; i < IdempotentInstCount && MII != MBB->end(); ++i) {
-    MachineInstr &MI = *MII++;
-    Changed = true;
-    Register vRegToRename = MI.getOperand(0).getReg();
-    auto Rename = NVC.createVirtualRegister(vRegToRename);
-
-    std::vector<MachineOperand *> RenameMOs;
-    for (auto &MO : MRI.reg_operands(vRegToRename)) {
-      RenameMOs.push_back(&MO);
-    }
-
-    for (auto *MO : RenameMOs) {
-      MO->setReg(Rename);
-    }
-  }
-
+  // TODO: Consider dropping this. Dropping kill defs is probably not
+  // semantically sound.
   Changed |= doDefKillClear(MBB);
 
   LLVM_DEBUG(dbgs() << "Updated MachineBasicBlock:\n"; MBB->dump();
@@ -469,16 +415,12 @@ bool MIRCanonicalizer::runOnMachineFunction(MachineFunction &MF) {
            : RPOList) { dbgs() << MBB->getName() << "\n"; } dbgs()
       << "\n\n================================================\n\n";);
 
-  std::vector<StringRef> BBNames;
-
   unsigned BBNum = 0;
-
   bool Changed = false;
-
   MachineRegisterInfo &MRI = MF.getRegInfo();
-  NamedVRegCursor NVC(MRI);
+  VRegRenamer Renamer(MRI);
   for (auto MBB : RPOList)
-    Changed |= runOnBasicBlock(MBB, BBNames, BBNum, NVC);
+    Changed |= runOnBasicBlock(MBB, BBNum++, Renamer);
 
   return Changed;
 }

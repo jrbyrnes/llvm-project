@@ -94,10 +94,10 @@ void EnumCastOutOfRangeChecker::checkPreStmt(const CastExpr *CE,
 
   // Only perform enum range check on casts where such checks are valid.  For
   // all other cast kinds (where enum range checks are unnecessary or invalid),
-  // just return immediately.  TODO: The set of casts whitelisted for enum
-  // range checking may be incomplete.  Better to add a missing cast kind to
-  // enable a missing check than to generate false negatives and have to remove
-  // those later.
+  // just return immediately.  TODO: The set of casts allowed for enum range
+  // checking may be incomplete.  Better to add a missing cast kind to enable a
+  // missing check than to generate false negatives and have to remove those
+  // later.
   switch (CE->getCastKind()) {
   case CK_IntegralCast:
     break;
@@ -142,6 +142,6 @@ void ento::registerEnumCastOutOfRangeChecker(CheckerManager &mgr) {
   mgr.registerChecker<EnumCastOutOfRangeChecker>();
 }
 
-bool ento::shouldRegisterEnumCastOutOfRangeChecker(const LangOptions &LO) {
+bool ento::shouldRegisterEnumCastOutOfRangeChecker(const CheckerManager &mgr) {
   return true;
 }

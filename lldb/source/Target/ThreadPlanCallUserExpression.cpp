@@ -1,4 +1,4 @@
-//===-- ThreadPlanCallUserExpression.cpp -------------------------*- C++-*-===//
+//===-- ThreadPlanCallUserExpression.cpp ----------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Target/ThreadPlanCallUserExpression.h"
-
 
 #include "lldb/Breakpoint/Breakpoint.h"
 #include "lldb/Breakpoint/BreakpointLocation.h"
@@ -23,6 +22,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/ThreadPlanRunToAddress.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Stream.h"
 
@@ -39,11 +39,11 @@ ThreadPlanCallUserExpression::ThreadPlanCallUserExpression(
       m_user_expression_sp(user_expression_sp) {
   // User expressions are generally "User generated" so we should set them up
   // to stop when done.
-  SetIsMasterPlan(true);
+  SetIsControllingPlan(true);
   SetOkayToDiscard(false);
 }
 
-ThreadPlanCallUserExpression::~ThreadPlanCallUserExpression() {}
+ThreadPlanCallUserExpression::~ThreadPlanCallUserExpression() = default;
 
 void ThreadPlanCallUserExpression::GetDescription(
     Stream *s, lldb::DescriptionLevel level) {
@@ -59,14 +59,14 @@ void ThreadPlanCallUserExpression::DidPush() {
     m_user_expression_sp->WillStartExecuting();
 }
 
-void ThreadPlanCallUserExpression::WillPop() {
-  ThreadPlanCallFunction::WillPop();
+void ThreadPlanCallUserExpression::DidPop() {
+  ThreadPlanCallFunction::DidPop();
   if (m_user_expression_sp)
     m_user_expression_sp.reset();
 }
 
 bool ThreadPlanCallUserExpression::MischiefManaged() {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
 
   if (IsPlanComplete()) {
     LLDB_LOGF(log, "ThreadPlanCallFunction(%p): Completed call function plan.",
@@ -101,8 +101,7 @@ StopInfoSP ThreadPlanCallUserExpression::GetRealStopInfo() {
 
   if (stop_info_sp) {
     lldb::addr_t addr = GetStopAddress();
-    DynamicCheckerFunctions *checkers =
-        m_thread.GetProcess()->GetDynamicCheckers();
+    DynamicCheckerFunctions *checkers = m_process.GetDynamicCheckers();
     StreamString s;
 
     if (checkers && checkers->DoCheckersExplainStop(addr, s))

@@ -1,8 +1,10 @@
 // clang-format off
-// REQUIRES: lld
+// REQUIRES: lld, x86
 
 // Test that we can display tag types.
-// RUN: %build --compiler=clang-cl --nodefaultlib -o %t.exe -- %s 
+// RUN: %clang_cl --target=x86_64-windows-msvc -Od -Z7 \
+// RUN:   -Xclang -fkeep-static-consts -c /Fo%t.obj -- %s
+// RUN: lld-link -debug:full -nodefaultlib -entry:main %t.obj -out:%t.exe -pdb:%t.pdb
 // RUN: env LLDB_USE_NATIVE_PDB_READER=1 %lldb -f %t.exe -s \
 // RUN:     %p/Inputs/globals-classes.lldbinit | FileCheck %s
 
@@ -151,14 +153,14 @@ constexpr ClassWithPadding ClassWithPaddingInstance;
 // CHECK-NEXT: (const ClassWithPadding) ClassWithPaddingInstance = {
 // CHECK-NEXT:   (char) a = '0'
 // CHECK-NEXT:   (short) b = 50
-// CHECK-NEXT:   (char [2]) c = "01"
+// CHECK-NEXT:   (char[2]) c = "01"
 // CHECK-NEXT:   (int) d = 100
 // CHECK-NEXT:   (char) e = '0'
 // CHECK-NEXT:   (int) f = 200
 // CHECK-NEXT:   (long long) g = 300
-// CHECK-NEXT:   (char [3]) h = "012"
+// CHECK-NEXT:   (char[3]) h = "012"
 // CHECK-NEXT:   (long long) i = 400
-// CHECK-NEXT:   (char [2]) j = "01"
+// CHECK-NEXT:   (char[2]) j = "01"
 // CHECK-NEXT:   (long long) k = 500
 // CHECK-NEXT:   (char) l = '0'
 // CHECK-NEXT:   (long long) m = 600
@@ -182,7 +184,7 @@ constexpr ClassNoPadding ClassNoPaddingInstance;
 // CHECK-NEXT:   (double) m = 23890.897422999999
 // CHECK-NEXT:   (unsigned long long) n = 23490782
 // CHECK-NEXT:     (long long) o = -923409823
-// CHECK-NEXT:     (int [5]) p = {
+// CHECK-NEXT:     (int[5]) p = {
 // CHECK-NEXT:       (int) [0] = 2
 // CHECK-NEXT:       (int) [1] = 3
 // CHECK-NEXT:       (int) [2] = 5
@@ -274,14 +276,14 @@ constexpr References ReferencesInstance;
 // CHECK: |-CXXRecordDecl {{.*}} class ClassWithPadding definition
 // CHECK: | |-FieldDecl {{.*}} a 'char'
 // CHECK: | |-FieldDecl {{.*}} b 'short'
-// CHECK: | |-FieldDecl {{.*}} c 'char [2]'
+// CHECK: | |-FieldDecl {{.*}} c 'char[2]'
 // CHECK: | |-FieldDecl {{.*}} d 'int'
 // CHECK: | |-FieldDecl {{.*}} e 'char'
 // CHECK: | |-FieldDecl {{.*}} f 'int'
 // CHECK: | |-FieldDecl {{.*}} g 'long long'
-// CHECK: | |-FieldDecl {{.*}} h 'char [3]'
+// CHECK: | |-FieldDecl {{.*}} h 'char[3]'
 // CHECK: | |-FieldDecl {{.*}} i 'long long'
-// CHECK: | |-FieldDecl {{.*}} j 'char [2]'
+// CHECK: | |-FieldDecl {{.*}} j 'char[2]'
 // CHECK: | |-FieldDecl {{.*}} k 'long long'
 // CHECK: | |-FieldDecl {{.*}} l 'char'
 // CHECK: | `-FieldDecl {{.*}} m 'long long'
@@ -302,7 +304,7 @@ constexpr References ReferencesInstance;
 // CHECK: | |-FieldDecl {{.*}} m 'double'
 // CHECK: | |-FieldDecl {{.*}} n 'unsigned long long'
 // CHECK: | |-FieldDecl {{.*}} o 'long long'
-// CHECK: | `-FieldDecl {{.*}} p 'int [5]'
+// CHECK: | `-FieldDecl {{.*}} p 'int[5]'
 // CHECK: |-VarDecl {{.*}} ClassNoPaddingInstance 'const ClassNoPadding'
 // CHECK: |-EnumDecl {{.*}} EnumType
 // CHECK: | |-EnumConstantDecl {{.*}} A 'EnumType'

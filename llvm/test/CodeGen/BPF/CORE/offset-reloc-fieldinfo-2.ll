@@ -1,5 +1,6 @@
-; RUN: llc -march=bpfel -filetype=asm -o - %s | FileCheck -check-prefixes=CHECK,CHECK-EL %s
-; RUN: llc -march=bpfeb -filetype=asm -o - %s | FileCheck -check-prefixes=CHECK,CHECK-EB %s
+; RUN: opt -O2 %s | llvm-dis > %t1
+; RUN: llc -filetype=asm -o - %t1 | FileCheck -check-prefixes=CHECK,CHECK-EL,CHECK64 %s
+; RUN: llc -mattr=+alu32 -filetype=asm -o - %t1 | FileCheck -check-prefixes=CHECK,CHECK-EL,CHECK32 %s
 ; Source code:
 ;   struct s {
 ;     int a;
@@ -34,7 +35,9 @@
 ;     return ull >> __builtin_preserve_field_info(arg->b2, FIELD_RSHIFT_U64);
 ;   }
 ; Compilation flag:
-;   clang -target bpf -O2 -g -S -emit-llvm test.c
+;   clang -target bpfel -O2 -g -S -emit-llvm -Xclang -disable-llvm-passes test.c
+
+target triple = "bpfel"
 
 %struct.s = type { i32, i16 }
 
@@ -42,7 +45,7 @@
 define dso_local i32 @field_read(%struct.s* %arg) local_unnamed_addr #0 !dbg !26 {
 entry:
   call void @llvm.dbg.value(metadata %struct.s* %arg, metadata !37, metadata !DIExpression()), !dbg !41
-  %0 = tail call i16* @llvm.preserve.struct.access.index.p0i16.p0s_struct.ss(%struct.s* %arg, i32 1, i32 2), !dbg !42, !llvm.preserve.access.index !31
+  %0 = tail call i16* @llvm.preserve.struct.access.index.p0i16.p0s_struct.ss(%struct.s* elementtype(%struct.s) %arg, i32 1, i32 2), !dbg !42, !llvm.preserve.access.index !31
   %1 = tail call i32 @llvm.bpf.preserve.field.info.p0i16(i16* %0, i64 0), !dbg !43
   call void @llvm.dbg.value(metadata i32 %1, metadata !39, metadata !DIExpression()), !dbg !41
   %2 = tail call i32 @llvm.bpf.preserve.field.info.p0i16(i16* %0, i64 1), !dbg !44
@@ -112,9 +115,11 @@ sw.epilog:                                        ; preds = %entry, %sw.bb9, %sw
 
 ; CHECK:             r{{[0-9]+}} = 4
 ; CHECK:             r{{[0-9]+}} = 4
-; CHECK-EL:          r{{[0-9]+}} = 51
-; CHECK-EB:          r{{[0-9]+}} = 41
-; CHECK:             r{{[0-9]+}} = 60
+; CHECK-EL:          r{{[0-9]+}} <<= 51
+; CHECK64:           r{{[0-9]+}} s>>= 60
+; CHECK64:           r{{[0-9]+}} >>= 60
+; CHECK32:           r{{[0-9]+}} >>= 60
+; CHECK32:           r{{[0-9]+}} s>>= 60
 ; CHECK:             r{{[0-9]+}} = 1
 
 ; CHECK:             .long   1                       # BTF_KIND_STRUCT(id = 2)
@@ -124,11 +129,7 @@ sw.epilog:                                        ; preds = %entry, %sw.bb9, %sw
 
 ; CHECK:             .long   16                      # FieldReloc
 ; CHECK-NEXT:        .long   30                      # Field reloc section string offset=30
-; CHECK-NEXT:        .long   5
-; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
-; CHECK-NEXT:        .long   2
-; CHECK-NEXT:        .long   36
-; CHECK-NEXT:        .long   0
+; CHECK-NEXT:        .long   8
 ; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
 ; CHECK-NEXT:        .long   2
 ; CHECK-NEXT:        .long   36
@@ -136,7 +137,23 @@ sw.epilog:                                        ; preds = %entry, %sw.bb9, %sw
 ; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
 ; CHECK-NEXT:        .long   2
 ; CHECK-NEXT:        .long   36
+; CHECK-NEXT:        .long   0
+; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
+; CHECK-NEXT:        .long   2
+; CHECK-NEXT:        .long   36
+; CHECK-NEXT:        .long   0
+; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
+; CHECK-NEXT:        .long   2
+; CHECK-NEXT:        .long   36
+; CHECK-NEXT:        .long   0
+; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
+; CHECK-NEXT:        .long   2
+; CHECK-NEXT:        .long   36
 ; CHECK-NEXT:        .long   4
+; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
+; CHECK-NEXT:        .long   2
+; CHECK-NEXT:        .long   36
+; CHECK-NEXT:        .long   5
 ; CHECK-NEXT:        .long   .Ltmp{{[0-9]+}}
 ; CHECK-NEXT:        .long   2
 ; CHECK-NEXT:        .long   36

@@ -8,6 +8,7 @@
 
 #include "ARMMCTargetDesc.h"
 #include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCWinCOFFStreamer.h"
@@ -22,18 +23,18 @@ public:
                      std::unique_ptr<MCObjectWriter> OW)
       : MCWinCOFFStreamer(C, std::move(AB), std::move(CE), std::move(OW)) {}
 
-  void EmitThumbFunc(MCSymbol *Symbol) override;
-  void FinishImpl() override;
+  void emitThumbFunc(MCSymbol *Symbol) override;
+  void finishImpl() override;
 };
 
-void ARMWinCOFFStreamer::EmitThumbFunc(MCSymbol *Symbol) {
+void ARMWinCOFFStreamer::emitThumbFunc(MCSymbol *Symbol) {
   getAssembler().setIsThumbFunc(Symbol);
 }
 
-void ARMWinCOFFStreamer::FinishImpl() {
-  EmitFrames(nullptr);
+void ARMWinCOFFStreamer::finishImpl() {
+  emitFrames(nullptr);
 
-  MCWinCOFFStreamer::FinishImpl();
+  MCWinCOFFStreamer::finishImpl();
 }
 }
 

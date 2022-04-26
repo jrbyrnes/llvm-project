@@ -8,12 +8,9 @@
 
 #include "index/BackgroundIndexLoader.h"
 #include "GlobalCompilationDatabase.h"
-#include "Logger.h"
-#include "Path.h"
 #include "index/Background.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SmallString.h"
+#include "support/Logger.h"
+#include "support/Path.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Path.h"
 #include <string>
@@ -59,7 +56,7 @@ BackgroundIndexLoader::loadShard(PathRef StartSourceFile, PathRef DependentTU) {
     return {LS, Edges};
 
   LS.AbsolutePath = StartSourceFile.str();
-  LS.DependentTU = DependentTU;
+  LS.DependentTU = std::string(DependentTU);
   BackgroundIndexStorage *Storage = IndexStorageFactory(LS.AbsolutePath);
   auto Shard = Storage->loadShard(StartSourceFile);
   if (!Shard || !Shard->Sources) {

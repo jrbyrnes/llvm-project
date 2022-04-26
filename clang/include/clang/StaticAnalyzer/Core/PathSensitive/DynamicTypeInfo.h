@@ -18,7 +18,7 @@ namespace ento {
 /// of a region in a given state along the analysis path.
 class DynamicTypeInfo {
 public:
-  DynamicTypeInfo() : DynTy(QualType()) {}
+  DynamicTypeInfo() {}
 
   DynamicTypeInfo(QualType Ty, bool CanBeSub = true)
       : DynTy(Ty), CanBeASubClass(CanBeSub) {}
@@ -32,6 +32,8 @@ public:
 
   /// Returns the currently inferred upper bound on the runtime type.
   QualType getType() const { return DynTy; }
+
+  operator bool() const { return isValid(); }
 
   bool operator==(const DynamicTypeInfo &RHS) const {
     return DynTy == RHS.DynTy && CanBeASubClass == RHS.CanBeASubClass;

@@ -1,4 +1,5 @@
-// RUN: %check_clang_tidy %s cppcoreguidelines-init-variables %t -- -- -fno-delayed-template-parsing
+// RUN: %check_clang_tidy %s cppcoreguidelines-init-variables %t -- -- -fno-delayed-template-parsing -fexceptions
+// CHECK-FIXES: {{^}}#include <math.h>
 
 // Ensure that function declarations are not changed.
 void some_func(int x, double d, bool b, const char *p);
@@ -77,4 +78,49 @@ void init_unit_tests() {
   extern int does_not_need_an_initializer2;
   int parens(42);
   int braces{42};
+}
+
+template <typename RANGE>
+void f(RANGE r) {
+  for (char c : r) {
+  }
+}
+
+void catch_variable_decl() {
+  // Expect no warning given here.
+  try {
+  } catch (int X) {
+  }
+}
+
+enum Color { Red,
+             Green,
+             Blue };
+
+enum Car { Benz,
+           BMW = 20,
+           Audi = BMW + 2 };
+
+enum Gender : char { Male,
+                     Female };
+
+enum class Direction { Up,
+                       Down,
+                       Left,
+                       Right };
+
+enum class Fruit : int { Apple,
+                         Orange };
+
+void uninitialized_enum() {
+  Color color;
+  // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: variable 'color' is not initialized [cppcoreguidelines-init-variables]
+  Car car;
+  // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: variable 'car' is not initialized [cppcoreguidelines-init-variables]
+  Gender gender;
+  // CHECK-MESSAGES: :[[@LINE-1]]:10: warning: variable 'gender' is not initialized [cppcoreguidelines-init-variables]
+  Direction direction;
+  // CHECK-MESSAGES: :[[@LINE-1]]:13: warning: variable 'direction' is not initialized [cppcoreguidelines-init-variables]
+  Fruit fruit;
+  // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: variable 'fruit' is not initialized [cppcoreguidelines-init-variables]
 }

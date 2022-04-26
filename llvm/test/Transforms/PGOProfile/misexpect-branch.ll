@@ -1,19 +1,13 @@
+; Test that misexpect diagnostics are emtted when profile branch weights are
+; below the branch weights added by llvm.expect intrinsics
 
 ; RUN: llvm-profdata merge %S/Inputs/misexpect-branch.proftext -o %t.profdata
 
-
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pgo-warn-misexpect 2>&1 | FileCheck %s --check-prefix=WARNING
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pass-remarks=misexpect 2>&1 | FileCheck %s --check-prefix=REMARK
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pgo-warn-misexpect -pass-remarks=misexpect 2>&1 | FileCheck %s --check-prefix=BOTH
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S 2>&1 | FileCheck %s --check-prefix=DISABLED
-
-; New PM
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -S 2>&1 | FileCheck %s --check-prefix=WARNING
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pass-remarks=misexpect -S 2>&1 | FileCheck %s --check-prefix=REMARK
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -pass-remarks=misexpect -S 2>&1 | FileCheck %s --check-prefix=BOTH
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -S 2>&1 | FileCheck %s --check-prefix=DISABLED
-
-
+; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -misexpect-tolerance=81 -pass-remarks=misexpect -S 2>&1 | FileCheck %s --check-prefix=THRESHOLD
 
 ; WARNING-DAG: warning: misexpect-branch.c:22:0: 19.98%
 ; WARNING-NOT: remark: misexpect-branch.c:22:0: Potential performance regression from use of the llvm.expect intrinsic: Annotation was correct on 19.98% (399668 / 2000000) of profiled executions.
@@ -27,9 +21,8 @@
 ; DISABLED-NOT: warning: misexpect-branch.c:22:0: 19.98%
 ; DISABLED-NOT: remark: misexpect-branch.c:22:0: Potential performance regression from use of the llvm.expect intrinsic: Annotation was correct on 19.98% (399668 / 2000000) of profiled executions.
 
-; CHECK-DAG: !{!"misexpect", i64 1, i64 2000, i64 1}
-
-
+; THRESHOLD-NOT: warning: misexpect-branch.c:22:0: 19.98%
+; THRESHOLD-NOT: remark: misexpect-branch.c:22:0: Potential performance regression from use of the llvm.expect intrinsic: Annotation was correct on 19.98% (399668 / 2000000) of profiled executions.
 
 ; ModuleID = 'misexpect-branch.c'
 source_filename = "misexpect-branch.c"

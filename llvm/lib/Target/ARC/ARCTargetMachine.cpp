@@ -16,14 +16,12 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
-#include "llvm/Support/TargetRegistry.h"
+#include "llvm/MC/TargetRegistry.h"
 
 using namespace llvm;
 
 static Reloc::Model getRelocModel(Optional<Reloc::Model> RM) {
-  if (!RM.hasValue())
-    return Reloc::Static;
-  return *RM;
+  return RM.getValueOr(Reloc::Static);
 }
 
 /// ARCTargetMachine ctor - Create an ILP32 architecture model
@@ -39,7 +37,7 @@ ARCTargetMachine::ARCTargetMachine(const Target &T, const Triple &TT,
                         TT, CPU, FS, Options, getRelocModel(RM),
                         getEffectiveCodeModel(CM, CodeModel::Small), OL),
       TLOF(std::make_unique<TargetLoweringObjectFileELF>()),
-      Subtarget(TT, CPU, FS, *this) {
+      Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
 }
 
@@ -81,11 +79,11 @@ void ARCPassConfig::addPreRegAlloc() {
 }
 
 // Force static initialization.
-extern "C" void LLVMInitializeARCTarget() {
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARCTarget() {
   RegisterTargetMachine<ARCTargetMachine> X(getTheARCTarget());
 }
 
 TargetTransformInfo
-ARCTargetMachine::getTargetTransformInfo(const Function &F) {
+ARCTargetMachine::getTargetTransformInfo(const Function &F) const {
   return TargetTransformInfo(ARCTTIImpl(this, F));
 }

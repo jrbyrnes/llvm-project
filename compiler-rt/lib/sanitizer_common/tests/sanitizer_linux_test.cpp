@@ -188,24 +188,9 @@ TEST(SanitizerCommon, SetEnvTest) {
 }
 
 #if (defined(__x86_64__) || defined(__i386__)) && !SANITIZER_ANDROID
-void *thread_self_offset_test_func(void *arg) {
-  bool result =
-      *(uptr *)((char *)ThreadSelf() + ThreadSelfOffset()) == ThreadSelf();
-  return (void *)result;
-}
-
-TEST(SanitizerLinux, ThreadSelfOffset) {
-  EXPECT_TRUE((bool)thread_self_offset_test_func(0));
-  pthread_t tid;
-  void *result;
-  ASSERT_EQ(0, pthread_create(&tid, 0, thread_self_offset_test_func, 0));
-  ASSERT_EQ(0, pthread_join(tid, &result));
-  EXPECT_TRUE((bool)result);
-}
-
 // libpthread puts the thread descriptor at the end of stack space.
 void *thread_descriptor_size_test_func(void *arg) {
-  uptr descr_addr = ThreadSelf();
+  uptr descr_addr = (uptr)pthread_self();
   pthread_attr_t attr;
   pthread_getattr_np(pthread_self(), &attr);
   void *stackaddr;
@@ -264,7 +249,7 @@ TEST(SanitizerCommon, StartSubprocessTest) {
   const char *shell = "/bin/sh";
 #endif
   const char *argv[] = {shell, "-c", "echo -n 'hello'", (char *)NULL};
-  int pid = StartSubprocess(shell, argv,
+  int pid = StartSubprocess(shell, argv, GetEnviron(),
                             /* stdin */ kInvalidFd, /* stdout */ pipe_fds[1]);
   ASSERT_GT(pid, 0);
 

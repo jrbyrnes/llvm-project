@@ -22,9 +22,12 @@
 ;  19	  }
 ;  20	}
 
-; CHECK: remark: /tmp/s.c:2:3: loop not vectorized: unsafe dependent memory operations in loop. Use #pragma loop distribute(enable) to allow loop distribution to attempt to isolate the offending operations into a separate loop (hotness: 300)
-; CHECK: remark: /tmp/s.c:9:3: loop not vectorized: unsafe dependent memory operations in loop. Use #pragma loop distribute(enable) to allow loop distribution to attempt to isolate the offending operations into a separate loop (hotness: 5000)
-; CHECK: remark: /tmp/s.c:16:3: loop not vectorized: unsafe dependent memory operations in loop. Use #pragma loop distribute(enable) to allow loop distribution to attempt to isolate the offending operations into a separate loop{{$}}
+; CHECK: remark: /tmp/s.c:3:14: loop not vectorized: unsafe dependent memory operations in loop. Use #pragma loop distribute(enable) to allow loop distribution to attempt to isolate the offending operations into a separate loop
+; CHECK-NEXT: Backward loop carried data dependence. Memory location is the same as accessed at /tmp/s.c:3:16 (hotness: 300)
+; CHECK: remark: /tmp/s.c:10:14: loop not vectorized: unsafe dependent memory operations in loop. Use #pragma loop distribute(enable) to allow loop distribution to attempt to isolate the offending operations into a separate loop
+; CHECK-NEXT: Backward loop carried data dependence. Memory location is the same as accessed at /tmp/s.c:10:16 (hotness: 5000)
+; CHECK: remark: /tmp/s.c:17:14: loop not vectorized: unsafe dependent memory operations in loop. Use #pragma loop distribute(enable) to allow loop distribution to attempt to isolate the offending operations into a separate loop
+; CHECK-NEXT: Backward loop carried data dependence. Memory location is the same as accessed at /tmp/s.c:17:16{{$}}
 
 ; ModuleID = '/tmp/s.c'
 source_filename = "/tmp/s.c"
@@ -132,7 +135,7 @@ for.cond.cleanup:
   ret void, !dbg !44
 }
 
-attributes #0 = { norecurse nounwind ssp uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="core2" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { norecurse nounwind ssp uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "frame-pointer"="all" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="core2" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!3, !4, !5}

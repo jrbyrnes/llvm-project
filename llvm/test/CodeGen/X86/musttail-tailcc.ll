@@ -4,13 +4,11 @@
 
 ; tailcc will turn all of these musttail calls into tail calls.
 
-declare tailcc i32 @tailcallee(i32 %a1, i32 %a2)
+declare dso_local tailcc i32 @tailcallee(i32 %a1, i32 %a2)
 
-define tailcc i32 @tailcaller(i32 %in1, i32 %in2) nounwind {
+define dso_local tailcc i32 @tailcaller(i32 %in1, i32 %in2) nounwind {
 ; X64-LABEL: tailcaller:
 ; X64:       # %bb.0: # %entry
-; X64-NEXT:    pushq %rax
-; X64-NEXT:    popq %rax
 ; X64-NEXT:    jmp tailcallee # TAILCALL
 ;
 ; X32-LABEL: tailcaller:
@@ -21,13 +19,11 @@ entry:
   ret i32 %tmp11
 }
 
-declare tailcc i8* @alias_callee()
+declare dso_local tailcc i8* @alias_callee()
 
 define tailcc noalias i8* @noalias_caller() nounwind {
 ; X64-LABEL: noalias_caller:
 ; X64:       # %bb.0:
-; X64-NEXT:    pushq %rax
-; X64-NEXT:    popq %rax
 ; X64-NEXT:    jmp alias_callee # TAILCALL
 ;
 ; X32-LABEL: noalias_caller:
@@ -37,13 +33,11 @@ define tailcc noalias i8* @noalias_caller() nounwind {
   ret i8* %p
 }
 
-declare tailcc noalias i8* @noalias_callee()
+declare dso_local tailcc noalias i8* @noalias_callee()
 
-define tailcc i8* @alias_caller() nounwind {
+define dso_local tailcc i8* @alias_caller() nounwind {
 ; X64-LABEL: alias_caller:
 ; X64:       # %bb.0:
-; X64-NEXT:    pushq %rax
-; X64-NEXT:    popq %rax
 ; X64-NEXT:    jmp noalias_callee # TAILCALL
 ;
 ; X32-LABEL: alias_caller:
@@ -53,28 +47,20 @@ define tailcc i8* @alias_caller() nounwind {
   ret i8* %p
 }
 
-define tailcc void @void_test(i32, i32, i32, i32) {
+define dso_local tailcc void @void_test(i32, i32, i32, i32) {
 ; X64-LABEL: void_test:
 ; X64:       # %bb.0: # %entry
-; X64-NEXT:    pushq %rax
-; X64-NEXT:    .cfi_def_cfa_offset 16
-; X64-NEXT:    popq %rax
-; X64-NEXT:    .cfi_def_cfa_offset 8
 ; X64-NEXT:    jmp void_test # TAILCALL
 ;
 ; X32-LABEL: void_test:
 ; X32:       # %bb.0: # %entry
 ; X32-NEXT:    pushl %esi
 ; X32-NEXT:    .cfi_def_cfa_offset 8
-; X32-NEXT:    subl $8, %esp
-; X32-NEXT:    .cfi_def_cfa_offset 16
 ; X32-NEXT:    .cfi_offset %esi, -8
 ; X32-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; X32-NEXT:    movl {{[0-9]+}}(%esp), %esi
 ; X32-NEXT:    movl %esi, {{[0-9]+}}(%esp)
 ; X32-NEXT:    movl %eax, {{[0-9]+}}(%esp)
-; X32-NEXT:    addl $8, %esp
-; X32-NEXT:    .cfi_def_cfa_offset 8
 ; X32-NEXT:    popl %esi
 ; X32-NEXT:    .cfi_def_cfa_offset 4
 ; X32-NEXT:    jmp void_test # TAILCALL
@@ -83,28 +69,20 @@ define tailcc void @void_test(i32, i32, i32, i32) {
    ret void
 }
 
-define tailcc i1 @i1test(i32, i32, i32, i32) {
+define dso_local tailcc i1 @i1test(i32, i32, i32, i32) {
 ; X64-LABEL: i1test:
 ; X64:       # %bb.0: # %entry
-; X64-NEXT:    pushq %rax
-; X64-NEXT:    .cfi_def_cfa_offset 16
-; X64-NEXT:    popq %rax
-; X64-NEXT:    .cfi_def_cfa_offset 8
 ; X64-NEXT:    jmp i1test # TAILCALL
 ;
 ; X32-LABEL: i1test:
 ; X32:       # %bb.0: # %entry
 ; X32-NEXT:    pushl %esi
 ; X32-NEXT:    .cfi_def_cfa_offset 8
-; X32-NEXT:    subl $8, %esp
-; X32-NEXT:    .cfi_def_cfa_offset 16
 ; X32-NEXT:    .cfi_offset %esi, -8
 ; X32-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; X32-NEXT:    movl {{[0-9]+}}(%esp), %esi
 ; X32-NEXT:    movl %esi, {{[0-9]+}}(%esp)
 ; X32-NEXT:    movl %eax, {{[0-9]+}}(%esp)
-; X32-NEXT:    addl $8, %esp
-; X32-NEXT:    .cfi_def_cfa_offset 8
 ; X32-NEXT:    popl %esi
 ; X32-NEXT:    .cfi_def_cfa_offset 4
 ; X32-NEXT:    jmp i1test # TAILCALL

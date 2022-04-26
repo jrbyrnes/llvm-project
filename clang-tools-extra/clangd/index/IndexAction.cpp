@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "IndexAction.h"
+#include "AST.h"
 #include "Headers.h"
-#include "Logger.h"
 #include "index/Relation.h"
 #include "index/SymbolOrigin.h"
 #include "clang/AST/ASTConsumer.h"
@@ -16,11 +16,10 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/MultiplexConsumer.h"
+#include "clang/Frontend/FrontendAction.h"
 #include "clang/Index/IndexingAction.h"
 #include "clang/Index/IndexingOptions.h"
-#include "clang/Tooling/Tooling.h"
-#include "llvm/ADT/STLExtras.h"
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -29,10 +28,10 @@ namespace clang {
 namespace clangd {
 namespace {
 
-llvm::Optional<std::string> toURI(const FileEntry *File) {
+llvm::Optional<std::string> toURI(Optional<FileEntryRef> File) {
   if (!File)
     return llvm::None;
-  auto AbsolutePath = File->tryGetRealPathName();
+  auto AbsolutePath = File->getFileEntry().tryGetRealPathName();
   if (AbsolutePath.empty())
     return llvm::None;
   return URI::create(AbsolutePath).toString();
@@ -59,7 +58,7 @@ public:
       return;
 
     const auto FileID = SM.getFileID(Loc);
-    const auto File = SM.getFileEntryForID(FileID);
+    auto File = SM.getFileEntryRefForID(FileID);
     auto URI = toURI(File);
     if (!URI)
       return;
@@ -85,7 +84,8 @@ public:
   // Add edges from including files to includes.
   void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
                           llvm::StringRef FileName, bool IsAngled,
-                          CharSourceRange FilenameRange, const FileEntry *File,
+                          CharSourceRange FilenameRange,
+                          Optional<FileEntryRef> File,
                           llvm::StringRef SearchPath,
                           llvm::StringRef RelativePath, const Module *Imported,
                           SrcMgr::CharacteristicKind FileType) override {
@@ -93,7 +93,7 @@ public:
     if (!IncludeURI)
       return;
 
-    auto IncludingURI = toURI(SM.getFileEntryForID(SM.getFileID(HashLoc)));
+    auto IncludingURI = toURI(SM.getFileEntryRefForID(SM.getFileID(HashLoc)));
     if (!IncludingURI)
       return;
 
@@ -107,7 +107,7 @@ public:
   void FileSkipped(const FileEntryRef &SkippedFile, const Token &FilenameTok,
                    SrcMgr::CharacteristicKind FileType) override {
 #ifndef NDEBUG
-    auto URI = toURI(&SkippedFile.getFileEntry());
+    auto URI = toURI(SkippedFile);
     if (!URI)
       return;
     auto I = IG.try_emplace(*URI);
@@ -132,11 +132,25 @@ public:
               std::function<void(RefSlab)> RefsCallback,
               std::function<void(RelationSlab)> RelationsCallback,
               std::function<void(IncludeGraph)> IncludeGraphCallback)
-      : SymbolsCallback(SymbolsCallback),
-        RefsCallback(RefsCallback), RelationsCallback(RelationsCallback),
+      : SymbolsCallback(SymbolsCallback), RefsCallback(RefsCallback),
+        RelationsCallback(RelationsCallback),
         IncludeGraphCallback(IncludeGraphCallback), Collector(C),
         Includes(std::move(Includes)), Opts(Opts),
-        PragmaHandler(collectIWYUHeaderMaps(this->Includes.get())) {}
+        PragmaHandler(collectIWYUHeaderMaps(this->Includes.get())) {
+    this->Opts.ShouldTraverseDecl = [this](const Decl *D) {
+      // Many operations performed during indexing is linear in terms of depth
+      // of the decl (USR generation, name lookups, figuring out role of a
+      // reference are some examples). Since we index all the decls nested
+      // inside, it becomes quadratic. So we give up on nested symbols.
+      if (isDeeplyNested(D))
+        return false;
+      auto &SM = D->getASTContext().getSourceManager();
+      auto FID = SM.getFileID(SM.getExpansionLoc(D->getLocation()));
+      if (!FID.isValid())
+        return true;
+      return Collector->shouldIndexFile(FID);
+    };
+  }
 
   std::unique_ptr<ASTConsumer>
   CreateASTConsumer(CompilerInstance &CI, llvm::StringRef InFile) override {
@@ -146,20 +160,14 @@ public:
       CI.getPreprocessor().addPPCallbacks(
           std::make_unique<IncludeGraphCollector>(CI.getSourceManager(), IG));
 
-    return index::createIndexingASTConsumer(
-        Collector, Opts, CI.getPreprocessorPtr(),
-        /*ShouldSkipFunctionBody=*/[this](const Decl *D) {
-          auto &SM = D->getASTContext().getSourceManager();
-          auto FID = SM.getFileID(SM.getExpansionLoc(D->getLocation()));
-          if (!FID.isValid())
-            return false;
-          return !Collector->shouldIndexFile(FID);
-        });
+    return index::createIndexingASTConsumer(Collector, Opts,
+                                            CI.getPreprocessorPtr());
   }
 
   bool BeginInvocation(CompilerInstance &CI) override {
     // We want all comments, not just the doxygen ones.
     CI.getLangOpts().CommentOpts.ParseAllComments = true;
+    CI.getLangOpts().RetainCommentsFromSystemHeaders = true;
     // Index the whole file even if there are warnings and -Werror is set.
     // Avoids some analyses too. Set in two places as we're late to the party.
     CI.getDiagnosticOpts().IgnoreWarnings = true;
@@ -210,6 +218,8 @@ std::unique_ptr<FrontendAction> createStaticIndexingAction(
   index::IndexingOptions IndexOpts;
   IndexOpts.SystemSymbolFilter =
       index::IndexingOptions::SystemSymbolFilterKind::All;
+  // We index function-local classes and its member functions only.
+  IndexOpts.IndexFunctionLocals = true;
   Opts.CollectIncludePath = true;
   if (Opts.Origin == SymbolOrigin::Unknown)
     Opts.Origin = SymbolOrigin::Static;

@@ -6,26 +6,41 @@ include(CheckCSourceCompiles)
 
 check_library_exists(c fopen "" LIBCXXABI_HAS_C_LIB)
 if (NOT LIBCXXABI_USE_COMPILER_RT)
-  check_library_exists(gcc_s __gcc_personality_v0 "" LIBCXXABI_HAS_GCC_S_LIB)
-  check_library_exists(gcc __aeabi_uldivmod "" LIBCXXABI_HAS_GCC_LIB)
+  if (ANDROID)
+    check_library_exists(gcc __gcc_personality_v0 "" LIBCXXABI_HAS_GCC_LIB)
+  else ()
+    check_library_exists(gcc_s __gcc_personality_v0 "" LIBCXXABI_HAS_GCC_S_LIB)
+    check_library_exists(gcc __aeabi_uldivmod "" LIBCXXABI_HAS_GCC_LIB)
+  endif ()
 endif ()
 
-# libc++abi is built with -nodefaultlibs, so we want all our checks to also
-# use this option, otherwise we may end up with an inconsistency between
+# libc++abi is using -nostdlib++ at the link step when available,
+# otherwise -nodefaultlibs is used. We want all our checks to also
+# use one of these options, otherwise we may end up with an inconsistency between
 # the flags we think we require during configuration (if the checks are
 # performed without -nodefaultlibs) and the flags that are actually
 # required during compilation (which has the -nodefaultlibs). libc is
 # required for the link to go through. We remove sanitizers from the
 # configuration checks to avoid spurious link errors.
-check_c_compiler_flag(-nodefaultlibs LIBCXXABI_HAS_NODEFAULTLIBS_FLAG)
-if (LIBCXXABI_HAS_NODEFAULTLIBS_FLAG)
-  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -nodefaultlibs")
+
+check_cxx_compiler_flag(-nostdlib++ CXX_SUPPORTS_NOSTDLIBXX_FLAG)
+if (CXX_SUPPORTS_NOSTDLIBXX_FLAG)
+  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -nostdlib++")
+else()
+  check_c_compiler_flag(-nodefaultlibs C_SUPPORTS_NODEFAULTLIBS_FLAG)
+  if (C_SUPPORTS_NODEFAULTLIBS_FLAG)
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -nodefaultlibs")
+  endif()
+endif()
+
+if (CXX_SUPPORTS_NOSTDLIBXX_FLAG OR C_SUPPORTS_NODEFAULTLIBS_FLAG)
   if (LIBCXXABI_HAS_C_LIB)
     list(APPEND CMAKE_REQUIRED_LIBRARIES c)
   endif ()
   if (LIBCXXABI_USE_COMPILER_RT)
-    list(APPEND CMAKE_REQUIRED_FLAGS -rtlib=compiler-rt)
-    find_compiler_rt_library(builtins LIBCXXABI_BUILTINS_LIBRARY)
+    include(HandleCompilerRT)
+    find_compiler_rt_library(builtins LIBCXXABI_BUILTINS_LIBRARY
+                             FLAGS "${LIBCXXABI_COMPILE_FLAGS}")
     list(APPEND CMAKE_REQUIRED_LIBRARIES "${LIBCXXABI_BUILTINS_LIBRARY}")
   else ()
     if (LIBCXXABI_HAS_GCC_S_LIB)
@@ -52,7 +67,7 @@ if (LIBCXXABI_HAS_NODEFAULTLIBS_FLAG)
     set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -fno-sanitize=all")
   endif ()
   if (CMAKE_C_FLAGS MATCHES -fsanitize-coverage OR CMAKE_CXX_FLAGS MATCHES -fsanitize-coverage)
-    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -fno-sanitize-coverage=edge,trace-cmp,indirect-calls,8bit-counters")
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -fsanitize-coverage=0")
   endif ()
 endif ()
 
@@ -63,16 +78,24 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   check_c_source_compiles("
 #pragma comment(lib, \"c\")
 int main() { return 0; }
-" LIBCXXABI_HAS_COMMENT_LIB_PRAGMA)
+" C_SUPPORTS_COMMENT_LIB_PRAGMA)
   cmake_pop_check_state()
 endif()
 
 # Check compiler flags
-check_cxx_compiler_flag(-nostdinc++ LIBCXXABI_HAS_NOSTDINCXX_FLAG)
+check_cxx_compiler_flag(-nostdinc++ CXX_SUPPORTS_NOSTDINCXX_FLAG)
 
 # Check libraries
-check_library_exists(dl dladdr "" LIBCXXABI_HAS_DL_LIB)
-check_library_exists(pthread pthread_once "" LIBCXXABI_HAS_PTHREAD_LIB)
-check_library_exists(c __cxa_thread_atexit_impl ""
-  LIBCXXABI_HAS_CXA_THREAD_ATEXIT_IMPL)
-check_library_exists(System write "" LIBCXXABI_HAS_SYSTEM_LIB)
+if(FUCHSIA)
+  set(LIBCXXABI_HAS_DL_LIB NO)
+  set(LIBCXXABI_HAS_PTHREAD_LIB NO)
+  check_library_exists(c __cxa_thread_atexit_impl ""
+    LIBCXXABI_HAS_CXA_THREAD_ATEXIT_IMPL)
+  set(LIBCXXABI_HAS_SYSTEM_LIB NO)
+else()
+  check_library_exists(dl dladdr "" LIBCXXABI_HAS_DL_LIB)
+  check_library_exists(pthread pthread_once "" LIBCXXABI_HAS_PTHREAD_LIB)
+  check_library_exists(c __cxa_thread_atexit_impl ""
+    LIBCXXABI_HAS_CXA_THREAD_ATEXIT_IMPL)
+  check_library_exists(System write "" LIBCXXABI_HAS_SYSTEM_LIB)
+endif()

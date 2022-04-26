@@ -7,35 +7,36 @@
 //===----------------------------------------------------------------------===//
 //
 // This file implements a function which calls the Generic Delta pass in order
-// to reduce initialized Global Variables in the provided Module.
+// to reduce Global Variables in the provided Module.
 //
 //===----------------------------------------------------------------------===//
 
 #include "ReduceGlobalVars.h"
+#include "llvm/IR/Constants.h"
 #include <set>
 
 using namespace llvm;
 
-/// Removes all the Initialized GVs that aren't inside the desired Chunks.
-static void extractGVsFromModule(std::vector<Chunk> ChunksToKeep,
-                                 Module *Program) {
+/// Removes all the GVs that aren't inside the desired Chunks.
+static void extractGVsFromModule(Oracle &O, Module &Program) {
   // Get GVs inside desired chunks
-  std::set<GlobalVariable *> GVsToKeep;
-  int I = 0, GVCount = 0;
-  for (auto &GV : Program->globals())
-    if (GV.hasInitializer() && I < (int)ChunksToKeep.size()) {
-      if (ChunksToKeep[I].contains(++GVCount))
-        GVsToKeep.insert(&GV);
-      if (GVCount == ChunksToKeep[I].end)
-        ++I;
-    }
+  std::vector<GlobalVariable *> InitGVsToKeep;
+  for (auto &GV : Program.globals())
+    if (O.shouldKeep())
+      InitGVsToKeep.push_back(&GV);
+
+  // We create a vector first, then convert it to a set, so that we don't have
+  // to pay the cost of rebalancing the set frequently if the order we insert
+  // the elements doesn't match the order they should appear inside the set.
+  std::set<GlobalVariable *> GVsToKeep(InitGVsToKeep.begin(),
+                                       InitGVsToKeep.end());
 
   // Delete out-of-chunk GVs and their uses
   std::vector<GlobalVariable *> ToRemove;
-  std::vector<Instruction *> InstToRemove;
-  for (auto &GV : Program->globals())
-    if (GV.hasInitializer() && !GVsToKeep.count(&GV)) {
-      for (auto U : GV.users())
+  std::vector<WeakVH> InstToRemove;
+  for (auto &GV : Program.globals())
+    if (!GVsToKeep.count(&GV)) {
+      for (auto *U : GV.users())
         if (auto *Inst = dyn_cast<Instruction>(U))
           InstToRemove.push_back(Inst);
 
@@ -43,8 +44,11 @@ static void extractGVsFromModule(std::vector<Chunk> ChunksToKeep,
       ToRemove.push_back(&GV);
     }
 
-  // Delete Instruction uses of unwanted GVs
-  for (auto *Inst : InstToRemove) {
+  // Delete (unique) Instruction uses of unwanted GVs
+  for (Value *V : InstToRemove) {
+    if (!V)
+      continue;
+    auto *Inst = cast<Instruction>(V);
     Inst->replaceAllUsesWith(UndefValue::get(Inst->getType()));
     Inst->eraseFromParent();
   }
@@ -53,22 +57,7 @@ static void extractGVsFromModule(std::vector<Chunk> ChunksToKeep,
     GV->eraseFromParent();
 }
 
-/// Counts the amount of initialized GVs and displays their
-/// respective name & index
-static int countGVs(Module *Program) {
-  // TODO: Silence index with --quiet flag
-  outs() << "----------------------------\n";
-  outs() << "GlobalVariable Index Reference:\n";
-  int GVCount = 0;
-  for (auto &GV : Program->globals())
-    if (GV.hasInitializer())
-      outs() << "\t" << ++GVCount << ": " << GV.getName() << "\n";
-  outs() << "----------------------------\n";
-  return GVCount;
-}
-
 void llvm::reduceGlobalsDeltaPass(TestRunner &Test) {
   outs() << "*** Reducing GVs...\n";
-  int GVCount = countGVs(Test.getProgram());
-  runDeltaPass(Test, GVCount, extractGVsFromModule);
+  runDeltaPass(Test, extractGVsFromModule);
 }

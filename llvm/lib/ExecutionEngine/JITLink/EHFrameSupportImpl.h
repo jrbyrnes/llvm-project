@@ -21,30 +21,20 @@
 namespace llvm {
 namespace jitlink {
 
-/// A generic binary parser for eh-frame sections.
-///
-/// Adds blocks and symbols representing CIE and FDE entries to a JITLink graph.
-///
-/// This parser assumes that the user has already verified that the EH-frame's
-/// address range does not overlap any other section/symbol, so that generated
-/// CIE/FDE records do not overlap other sections/symbols.
-class EHFrameBinaryParser {
+/// A LinkGraph pass that adds missing FDE-to-CIE, FDE-to-PC and FDE-to-LSDA
+/// edges.
+class EHFrameEdgeFixer {
 public:
-  EHFrameBinaryParser(JITTargetAddress EHFrameAddress, StringRef EHFrameContent,
-                      unsigned PointerSize, support::endianness Endianness);
-  virtual ~EHFrameBinaryParser() {}
-
-  Error addToGraph();
+  /// Create an eh-frame edge fixer.
+  /// If a given edge-kind is not supported on the target architecture then
+  /// Edge::Invalid should be used.
+  EHFrameEdgeFixer(StringRef EHFrameSectionName, unsigned PointerSize,
+                   Edge::Kind Pointer32, Edge::Kind Pointer64,
+                   Edge::Kind Delta32, Edge::Kind Delta64,
+                   Edge::Kind NegDelta32);
+  Error operator()(LinkGraph &G);
 
 private:
-  virtual void anchor();
-  virtual Symbol *getSymbolAtAddress(JITTargetAddress Addr) = 0;
-  virtual Symbol &createCIERecord(JITTargetAddress RecordAddr,
-                                  StringRef RecordContent) = 0;
-  virtual Expected<Symbol &>
-  createFDERecord(JITTargetAddress RecordAddr, StringRef RecordContent,
-                  Symbol &CIE, size_t CIEOffset, Symbol &Func,
-                  size_t FuncOffset, Symbol *LSDA, size_t LSDAOffset) = 0;
 
   struct AugmentationInfo {
     bool AugmentationDataPresent = false;
@@ -52,24 +42,85 @@ private:
     uint8_t Fields[4] = {0x0, 0x0, 0x0, 0x0};
   };
 
-  Expected<AugmentationInfo> parseAugmentationString();
-  Expected<JITTargetAddress> readAbsolutePointer();
-  Error processCIE(size_t RecordOffset, size_t RecordLength);
-  Error processFDE(size_t RecordOffset, size_t RecordLength,
-                   JITTargetAddress CIEPointerOffset, uint32_t CIEPointer);
-
   struct CIEInformation {
     CIEInformation() = default;
     CIEInformation(Symbol &CIESymbol) : CIESymbol(&CIESymbol) {}
     Symbol *CIESymbol = nullptr;
-    bool FDEsHaveLSDAField = false;
+    bool AugmentationDataPresent = false;
+    bool LSDAPresent = false;
+    uint8_t LSDAEncoding = 0;
+    uint8_t AddressEncoding = 0;
   };
 
-  JITTargetAddress EHFrameAddress;
-  StringRef EHFrameContent;
+  struct EdgeTarget {
+    EdgeTarget() = default;
+    EdgeTarget(const Edge &E) : Target(&E.getTarget()), Addend(E.getAddend()) {}
+
+    Symbol *Target = nullptr;
+    Edge::AddendT Addend = 0;
+  };
+
+  using BlockEdgeMap = DenseMap<Edge::OffsetT, EdgeTarget>;
+  using CIEInfosMap = DenseMap<orc::ExecutorAddr, CIEInformation>;
+
+  struct ParseContext {
+    ParseContext(LinkGraph &G) : G(G) {}
+
+    Expected<CIEInformation *> findCIEInfo(orc::ExecutorAddr Address) {
+      auto I = CIEInfos.find(Address);
+      if (I == CIEInfos.end())
+        return make_error<JITLinkError>("No CIE found at address " +
+                                        formatv("{0:x16}", Address));
+      return &I->second;
+    }
+
+    LinkGraph &G;
+    CIEInfosMap CIEInfos;
+    BlockAddressMap AddrToBlock;
+    DenseMap<orc::ExecutorAddr, Symbol *> AddrToSym;
+  };
+
+  Error processBlock(ParseContext &PC, Block &B);
+  Error processCIE(ParseContext &PC, Block &B, size_t RecordOffset,
+                   size_t RecordLength, size_t CIEDeltaFieldOffset,
+                   const BlockEdgeMap &BlockEdges);
+  Error processFDE(ParseContext &PC, Block &B, size_t RecordOffset,
+                   size_t RecordLength, size_t CIEDeltaFieldOffset,
+                   uint32_t CIEDelta, const BlockEdgeMap &BlockEdges);
+
+  Expected<AugmentationInfo>
+  parseAugmentationString(BinaryStreamReader &RecordReader);
+
+  Expected<uint8_t> readPointerEncoding(BinaryStreamReader &RecordReader,
+                                        Block &InBlock, const char *FieldName);
+  Error skipEncodedPointer(uint8_t PointerEncoding,
+                           BinaryStreamReader &RecordReader);
+  Expected<Symbol *> getOrCreateEncodedPointerEdge(
+      ParseContext &PC, const BlockEdgeMap &BlockEdges, uint8_t PointerEncoding,
+      BinaryStreamReader &RecordReader, Block &BlockToFix,
+      size_t PointerFieldOffset, const char *FieldName);
+
+  Expected<Symbol &> getOrCreateSymbol(ParseContext &PC,
+                                       orc::ExecutorAddr Addr);
+
+  StringRef EHFrameSectionName;
   unsigned PointerSize;
-  BinaryStreamReader EHFrameReader;
-  DenseMap<JITTargetAddress, CIEInformation> CIEInfos;
+  Edge::Kind Pointer32;
+  Edge::Kind Pointer64;
+  Edge::Kind Delta32;
+  Edge::Kind Delta64;
+  Edge::Kind NegDelta32;
+};
+
+/// Add a 32-bit null-terminator to the end of the eh-frame section.
+class EHFrameNullTerminator {
+public:
+  EHFrameNullTerminator(StringRef EHFrameSectionName);
+  Error operator()(LinkGraph &G);
+
+private:
+  static char NullTerminatorBlockContent[];
+  StringRef EHFrameSectionName;
 };
 
 } // end namespace jitlink

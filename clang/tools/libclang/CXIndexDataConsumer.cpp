@@ -154,7 +154,7 @@ CXSymbolRole getSymbolRole(SymbolRoleSet Role) {
 }
 }
 
-bool CXIndexDataConsumer::handleDeclOccurence(
+bool CXIndexDataConsumer::handleDeclOccurrence(
     const Decl *D, SymbolRoleSet Roles, ArrayRef<SymbolRelation> Relations,
     SourceLocation Loc, ASTNodeInfo ASTNode) {
   Loc = getASTContext().getSourceManager().getFileLoc(Loc);
@@ -220,10 +220,10 @@ bool CXIndexDataConsumer::handleDeclOccurence(
   return !shouldAbort();
 }
 
-bool CXIndexDataConsumer::handleModuleOccurence(const ImportDecl *ImportD,
-                                                const Module *Mod,
-                                                SymbolRoleSet Roles,
-                                                SourceLocation Loc) {
+bool CXIndexDataConsumer::handleModuleOccurrence(const ImportDecl *ImportD,
+                                                 const Module *Mod,
+                                                 SymbolRoleSet Roles,
+                                                 SourceLocation Loc) {
   if (Roles & (SymbolRoleSet)SymbolRole::Declaration)
     IndexingDeclVisitor(*this, SourceLocation(), nullptr).Visit(ImportD);
   return !shouldAbort();
@@ -459,20 +459,22 @@ void CXIndexDataConsumer::enteredMainFile(const FileEntry *File) {
 
 void CXIndexDataConsumer::ppIncludedFile(SourceLocation hashLoc,
                                      StringRef filename,
-                                     const FileEntry *File,
+                                     Optional<FileEntryRef> File,
                                      bool isImport, bool isAngled,
                                      bool isModuleImport) {
   if (!CB.ppIncludedFile)
     return;
 
+  const FileEntry *FE = File ? &File->getFileEntry() : nullptr;
+
   ScratchAlloc SA(*this);
   CXIdxIncludedFileInfo Info = { getIndexLoc(hashLoc),
                                  SA.toCStr(filename),
                                  static_cast<CXFile>(
-                                   const_cast<FileEntry *>(File)),
+                                   const_cast<FileEntry *>(FE)),
                                  isImport, isAngled, isModuleImport };
   CXIdxClientFile idxFile = CB.ppIncludedFile(ClientData, &Info);
-  FileMap[File] = idxFile;
+  FileMap[FE] = idxFile;
 }
 
 void CXIndexDataConsumer::importedModule(const ImportDecl *ImportD) {
@@ -491,13 +493,12 @@ void CXIndexDataConsumer::importedModule(const ImportDecl *ImportD) {
     if (SrcMod->getTopLevelModule() == Mod->getTopLevelModule())
       return;
 
-  CXIdxImportedASTFileInfo Info = {
-                                    static_cast<CXFile>(
-                                    const_cast<FileEntry *>(Mod->getASTFile())),
-                                    Mod,
-                                    getIndexLoc(ImportD->getLocation()),
-                                    ImportD->isImplicit()
-                                  };
+  FileEntry *FE = nullptr;
+  if (auto File = Mod->getASTFile())
+    FE = const_cast<FileEntry *>(&File->getFileEntry());
+  CXIdxImportedASTFileInfo Info = {static_cast<CXFile>(FE), Mod,
+                                   getIndexLoc(ImportD->getLocation()),
+                                   ImportD->isImplicit()};
   CXIdxClientASTFile astFile = CB.importedASTFile(ClientData, &Info);
   (void)astFile;
 }
@@ -1245,6 +1246,10 @@ static CXIdxEntityKind getEntityKindFromSymbolKind(SymbolKind K, SymbolLanguage 
   case SymbolKind::Macro:
   case SymbolKind::ClassProperty:
   case SymbolKind::Using:
+  case SymbolKind::TemplateTypeParm:
+  case SymbolKind::TemplateTemplateParm:
+  case SymbolKind::NonTypeTemplateParm:
+  case SymbolKind::Concept:
     return CXIdxEntity_Unexposed;
 
   case SymbolKind::Enum: return CXIdxEntity_Enum;

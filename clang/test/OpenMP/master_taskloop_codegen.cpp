@@ -1,10 +1,10 @@
-// RUN: %clang_cc1 -verify -triple x86_64-apple-darwin10 -fopenmp -x c++ -emit-llvm %s -o - -femit-all-decls | FileCheck %s
-// RUN: %clang_cc1 -fopenmp -x c++ -triple x86_64-apple-darwin10 -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -x c++ -triple x86_64-apple-darwin10 -include-pch %t -verify %s -emit-llvm -o - -femit-all-decls | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -verify -triple x86_64-apple-darwin10 -fopenmp -x c++ -emit-llvm %s -o - | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -fopenmp -x c++ -triple x86_64-apple-darwin10 -emit-pch -o %t %s
+// RUN: %clang_cc1 -no-opaque-pointers -fopenmp -x c++ -triple x86_64-apple-darwin10 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s
 
-// RUN: %clang_cc1 -verify -triple x86_64-apple-darwin10 -fopenmp-simd -x c++ -emit-llvm %s -o - -femit-all-decls | FileCheck --check-prefix SIMD-ONLY0 %s
-// RUN: %clang_cc1 -fopenmp-simd -x c++ -triple x86_64-apple-darwin10 -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp-simd -x c++ -triple x86_64-apple-darwin10 -include-pch %t -verify %s -emit-llvm -o - -femit-all-decls | FileCheck --check-prefix SIMD-ONLY0 %s
+// RUN: %clang_cc1 -no-opaque-pointers -verify -triple x86_64-apple-darwin10 -fopenmp-simd -x c++ -emit-llvm %s -o - | FileCheck --check-prefix SIMD-ONLY0 %s
+// RUN: %clang_cc1 -no-opaque-pointers -fopenmp-simd -x c++ -triple x86_64-apple-darwin10 -emit-pch -o %t %s
+// RUN: %clang_cc1 -no-opaque-pointers -fopenmp-simd -x c++ -triple x86_64-apple-darwin10 -include-pch %t -verify %s -emit-llvm -o - | FileCheck --check-prefix SIMD-ONLY0 %s
 // SIMD-ONLY0-NOT: {{__kmpc|__tgt}}
 // expected-no-diagnostics
 #ifndef HEADER
@@ -89,9 +89,25 @@ int main(int argc, char **argv) {
   for (i = 0; i < argc; ++i)
   for (int j = argc; j < argv[argc][argc]; ++j)
     ;
+// CHECK:       [[RES:%.+]] = call {{.*}}i32 @__kmpc_master(%struct.ident_t* [[DEFLOC]], i32 [[GTID]])
+// CHECK-NEXT:  [[IS_MASTER:%.+]] = icmp ne i32 [[RES]], 0
+// CHECK-NEXT:  br i1 [[IS_MASTER]], label {{%?}}[[THEN:.+]], label {{%?}}[[EXIT:.+]]
+// CHECK:       [[THEN]]
+// CHECK: call void @__kmpc_taskgroup(
+// CHECK: call i8* @__kmpc_omp_task_alloc(%struct.ident_t* @{{.+}}, i32 %{{.+}}, i32 1, i64 80, i64 1, i32 (i32, i8*)* bitcast (i32 (i32, %{{.+}}*)* [[TASK_CANCEL:@.+]] to i32 (i32, i8*)*))
+// CHECK: call void @__kmpc_taskloop(
+// CHECK: call void @__kmpc_end_taskgroup(
+// CHECK-NEXT:  call {{.*}}void @__kmpc_end_master(%struct.ident_t* [[DEFLOC]], i32 [[GTID]])
+// CHECK-NEXT:  br label {{%?}}[[EXIT]]
+// CHECK:       [[EXIT]]
+#pragma omp master taskloop
+  for (int i = 0; i < 10; ++i) {
+#pragma omp cancel taskgroup
+#pragma omp cancellation point taskgroup
+  }
 }
 
-// CHECK: define internal i32 [[TASK1]](
+// CHECK: define internal noundef i32 [[TASK1]](
 // CHECK: [[DOWN:%.+]] = getelementptr inbounds [[TD_TY:%.+]], [[TD_TY]]* %{{.+}}, i32 0, i32 5
 // CHECK: [[DOWN_VAL:%.+]] = load i64, i64* [[DOWN]],
 // CHECK: [[UP:%.+]] = getelementptr inbounds [[TD_TY]], [[TD_TY]]* %{{.+}}, i32 0, i32 6
@@ -121,7 +137,7 @@ int main(int argc, char **argv) {
 // CHECK: br label %
 // CHECK: ret i32 0
 
-// CHECK: define internal i32 [[TASK2]](
+// CHECK: define internal noundef i32 [[TASK2]](
 // CHECK: [[DOWN:%.+]] = getelementptr inbounds [[TD_TY:%.+]], [[TD_TY]]* %{{.+}}, i32 0, i32 5
 // CHECK: [[DOWN_VAL:%.+]] = load i64, i64* [[DOWN]],
 // CHECK: [[UP:%.+]] = getelementptr inbounds [[TD_TY]], [[TD_TY]]* %{{.+}}, i32 0, i32 6
@@ -151,7 +167,7 @@ int main(int argc, char **argv) {
 // CHECK: br label %
 // CHECK: ret i32 0
 
-// CHECK: define internal i32 [[TASK3]](
+// CHECK: define internal noundef i32 [[TASK3]](
 // CHECK: [[DOWN:%.+]] = getelementptr inbounds [[TD_TY:%.+]], [[TD_TY]]* %{{.+}}, i32 0, i32 5
 // CHECK: [[DOWN_VAL:%.+]] = load i64, i64* [[DOWN]],
 // CHECK: [[UP:%.+]] = getelementptr inbounds [[TD_TY]], [[TD_TY]]* %{{.+}}, i32 0, i32 6
@@ -167,6 +183,25 @@ int main(int argc, char **argv) {
 // CHECK: [[LB_VAL:%.+]] = load i64, i64* [[LB]],
 // CHECK: store i64 [[LB_VAL]], i64* [[CNT:%.+]],
 // CHECK: br label
+// CHECK: ret i32 0
+
+// CHECK: define internal noundef i32 [[TASK_CANCEL]](
+// CHECK: [[RES:%.+]] = call i32 @__kmpc_cancel(%struct.ident_t* @{{.+}}, i32 %{{.+}}, i32 4)
+// CHECK: [[IS_CANCEL:%.+]] = icmp ne i32 [[RES]], 0
+// CHECK: br i1 [[IS_CANCEL]], label %[[EXIT:.+]], label %[[CONTINUE:[^,]+]]
+// CHECK: [[EXIT]]:
+// CHECK: store i32 1, i32* [[CLEANUP_SLOT:%.+]],
+// CHECK: br label %[[DONE:[^,]+]]
+// CHECK: [[CONTINUE]]:
+// CHECK: [[RES:%.+]] = call i32 @__kmpc_cancellationpoint(%struct.ident_t* @{{.+}}, i32 %{{.+}}, i32 4)
+// CHECK: [[IS_CANCEL:%.+]] = icmp ne i32 [[RES]], 0
+// CHECK: br i1 [[IS_CANCEL]], label %[[EXIT2:.+]], label %[[CONTINUE2:[^,]+]]
+// CHECK: [[EXIT2]]:
+// CHECK: store i32 1, i32* [[CLEANUP_SLOT]],
+// CHECK: br label %[[DONE]]
+// CHECK: store i32 0, i32* [[CLEANUP_SLOT]],
+// CHECK: br label %[[DONE]]
+// CHECK: [[DONE]]:
 // CHECK: ret i32 0
 
 // CHECK-LABEL: @_ZN1SC2Ei
@@ -192,7 +227,7 @@ struct S {
   }
 } s(1);
 
-// CHECK: define internal i32 [[TASK4]](
+// CHECK: define internal noundef i32 [[TASK4]](
 // CHECK: [[DOWN:%.+]] = getelementptr inbounds [[TD_TY:%.+]], [[TD_TY]]* %{{.+}}, i32 0, i32 5
 // CHECK: [[DOWN_VAL:%.+]] = load i64, i64* [[DOWN]],
 // CHECK: [[UP:%.+]] = getelementptr inbounds [[TD_TY]], [[TD_TY]]* %{{.+}}, i32 0, i32 6

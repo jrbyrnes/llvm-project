@@ -1,14 +1,11 @@
 ; RUN: opt < %s -msan-check-access-address=0 -msan-track-origins=1 -S          \
 ; RUN: -passes=msan 2>&1 | FileCheck                                           \
 ; RUN: "-check-prefixes=CHECK,CHECK-MSAN,CHECK-ORIGINS1" %s
-; RUN: opt < %s -msan -msan-check-access-address=0 -msan-track-origins=1 -S | FileCheck -check-prefixes=CHECK,CHECK-MSAN,CHECK-ORIGINS1 %s
 ; RUN: opt < %s -msan-check-access-address=0 -msan-track-origins=2 -S          \
 ; RUN: -passes=msan 2>&1 | FileCheck                                           \
 ; RUN: "-check-prefixes=CHECK,CHECK-MSAN,CHECK-ORIGINS2" %s
-; RUN: opt < %s -msan -msan-check-access-address=0 -msan-track-origins=2 -S | FileCheck -check-prefixes=CHECK,CHECK-MSAN,CHECK-ORIGINS2 %s
 ; RUN: opt < %s -msan-kernel=1 -msan-check-access-address=0 -S -passes=msan    \
 ; RUN: 2>&1 | FileCheck "-check-prefixes=CHECK,CHECK-KMSAN,CHECK-ORIGINS2" %s
-; RUN: opt < %s -msan -msan-kernel=1 -msan-check-access-address=0 -S | FileCheck -check-prefixes=CHECK,CHECK-KMSAN,CHECK-ORIGINS2 %s
 
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80:128:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -29,7 +26,7 @@ entry:
 ; Function Attrs: nounwind readnone
 declare void @llvm.dbg.value(metadata, i64, metadata, metadata) #1
 
-attributes #0 = { nounwind sanitize_memory "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { nounwind sanitize_memory "less-precise-fpmad"="false" "frame-pointer"="none" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { nounwind readnone }
 
 !llvm.dbg.cu = !{!0}
@@ -65,7 +62,6 @@ attributes #1 = { nounwind readnone }
 ; CHECK-MSAN: load {{.*}} @__msan_param_tls
 ; CHECK-MSAN: [[ORIGIN:%[0-9a-z]+]] = load {{.*}} @__msan_param_origin_tls
 
-; CHECK-KMSAN-LABEL: entry.split:
 ; CHECK-KMSAN: %param_shadow
 ; CHECK-KMSAN: load i32, i32*
 ; CHECK-KMSAN: %param_origin

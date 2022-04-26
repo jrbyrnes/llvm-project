@@ -9,7 +9,7 @@
  li      3,1
  sc
 
-// CHECK: Format: ELF32-ppc
+// CHECK:      Format: elf32-powerpc
 // CHECK-NEXT: Arch: powerpc
 // CHECK-NEXT: AddressSize: 32bit
 // CHECK-NEXT: LoadName:
@@ -26,7 +26,7 @@
 // CHECK-NEXT:   Type: Executable (0x2)
 // CHECK-NEXT:   Machine: EM_PPC (0x14)
 // CHECK-NEXT:   Version: 1
-// CHECK-NEXT:   Entry: 0x100100B4
+// CHECK-NEXT:   Entry: 0x0
 // CHECK-NEXT:   ProgramHeaderOffset: 0x34
 // CHECK-NEXT:   SectionHeaderOffset: 0x104
 // CHECK-NEXT:   Flags [ (0x0)

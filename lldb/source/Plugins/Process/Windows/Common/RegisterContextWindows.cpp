@@ -1,4 +1,4 @@
-//===-- RegisterContextWindows.cpp ------------------------------*- C++ -*-===//
+//===-- RegisterContextWindows.cpp ----------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -37,7 +37,7 @@ void RegisterContextWindows::InvalidateAllRegisters() {
 }
 
 bool RegisterContextWindows::ReadAllRegisterValues(
-    lldb::DataBufferSP &data_sp) {
+    lldb::WritableDataBufferSP &data_sp) {
 
   if (!CacheAllRegisterValues())
     return false;
@@ -112,7 +112,7 @@ bool RegisterContextWindows::AddHardwareBreakpoint(uint32_t slot,
   return ApplyAllRegisterValues();
 
 #else
-  Log *log = ProcessWindowsLog::GetLogIfAny(WINDOWS_LOG_REGISTERS);
+  Log *log = GetLog(WindowsLog::Registers);
   LLDB_LOG(log, "hardware breakpoints not currently supported on this arch");
   return false;
 #endif
@@ -149,20 +149,13 @@ uint32_t RegisterContextWindows::GetTriggeredHardwareBreakpointSlotId() {
 }
 
 bool RegisterContextWindows::CacheAllRegisterValues() {
-  Log *log = ProcessWindowsLog::GetLogIfAny(WINDOWS_LOG_REGISTERS);
+  Log *log = GetLog(WindowsLog::Registers);
   if (!m_context_stale)
     return true;
 
   TargetThreadWindows &wthread = static_cast<TargetThreadWindows &>(m_thread);
-  uint8_t buffer[2048];
-  memset(buffer, 0, sizeof(buffer));
-  PCONTEXT tmpContext = NULL;
-  DWORD contextLength = (DWORD)sizeof(buffer);
-  if (!::InitializeContext(buffer, kWinContextFlags, &tmpContext,
-                           &contextLength)) {
-    return false;
-  }
-  memcpy(&m_context, tmpContext, sizeof(m_context));
+  memset(&m_context, 0, sizeof(m_context));
+  m_context.ContextFlags = kWinContextFlags;
   if (::SuspendThread(
           wthread.GetHostThread().GetNativeThread().GetSystemHandle()) ==
       (DWORD)-1) {

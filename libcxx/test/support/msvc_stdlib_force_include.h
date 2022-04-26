@@ -14,7 +14,7 @@
 
 #ifndef _LIBCXX_IN_DEVCRT
     // Silence warnings about CRT machinery.
-    #define _CRT_SECURE_NO_WARNINGS
+    #define _CRT_SECURE_NO_WARNINGS 1
 
     // Avoid assertion dialogs.
     #define _CRT_SECURE_INVALID_PARAMETER(EXPR) ::abort()
@@ -62,31 +62,46 @@ const AssertionDialogAvoider assertion_dialog_avoider{};
     #pragma warning(disable: 28251) // Inconsistent annotation for 'new': this instance has no annotations.
 #endif // !defined(__clang__)
 
-// MSVC doesn't have __int128_t.
-#define _LIBCPP_HAS_NO_INT128
-
-// MSVC has quick_exit() and at_quick_exit().
-#define _LIBCPP_HAS_QUICK_EXIT
-
 #ifndef _LIBCXX_IN_DEVCRT
     // atomic_is_lock_free.pass.cpp needs this VS 2015 Update 2 fix.
     #define _ENABLE_ATOMIC_ALIGNMENT_FIX
 
-    // Silence warnings about features that are deprecated in C++17 and C++20.
+    // Restore features that are removed in C++20.
+    #define _HAS_FEATURES_REMOVED_IN_CXX20 1
+
+    // Silence warnings about features that are deprecated in non-default language modes.
     #define _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS
     #define _SILENCE_ALL_CXX20_DEPRECATION_WARNINGS
+    #define _SILENCE_ALL_CXX23_DEPRECATION_WARNINGS
 #endif // _LIBCXX_IN_DEVCRT
 
-#include <ciso646>
+#include <version>
 
-#if _HAS_CXX20
+#if _HAS_CXX23
     #define TEST_STD_VER 99
+#elif _HAS_CXX20
+    #define TEST_STD_VER 20
 #elif _HAS_CXX17
     #define TEST_STD_VER 17
-#else // !(_HAS_CXX20 || _HAS_CXX17)
+#else
     #define TEST_STD_VER 14
 #endif
 
 #define _LIBCPP_AVAILABILITY_THROW_BAD_ANY_CAST
+
+#ifdef __clang__
+#define _LIBCPP_SUPPRESS_DEPRECATED_PUSH \
+    _Pragma("GCC diagnostic push") \
+    _Pragma("GCC diagnostic ignored \"-Wdeprecated\"")
+#define _LIBCPP_SUPPRESS_DEPRECATED_POP \
+    _Pragma("GCC diagnostic pop")
+#else // ^^^ clang / MSVC vvv
+#define _LIBCPP_SUPPRESS_DEPRECATED_PUSH \
+    __pragma(warning(push)) \
+    __pragma(warning(disable : 4996)) \
+    __pragma(warning(disable : 5215))
+#define _LIBCPP_SUPPRESS_DEPRECATED_POP \
+    __pragma(warning(pop))
+#endif // __clang__
 
 #endif // SUPPORT_MSVC_STDLIB_FORCE_INCLUDE_H

@@ -14,7 +14,6 @@ LLVM and API reference documentation.
    BlockFrequencyTerminology
    BranchWeightMetadata
    Bugpoint
-   CFIVerify
    CommandGuide/index
    Coroutines
    DependenceGraphs/index
@@ -24,7 +23,7 @@ LLVM and API reference documentation.
    FuzzingLLVM
    GarbageCollection
    GetElementPtr
-   GlobalISel
+   GlobalISel/index
    GwpAsan
    HowToSetUpLLVMStyleRTTI
    HowToUseAttributes
@@ -34,9 +33,12 @@ LLVM and API reference documentation.
    MarkedUpDisassembly
    MIRLangRef
    OptBisect
-   ORCv2
    PDB/index
+   PointerAuth
    ScudoHardenedAllocator
+   MemTagSanitizer
+   Security
+   SecurityTransparencyReports
    SegmentedStacks
    StackMaps
    SpeculativeLoadHardening
@@ -53,17 +55,13 @@ LLVM and API reference documentation.
 API Reference
 -------------
 
-`Doxygen generated documentation <http://llvm.org/doxygen/>`_
-  (`classes <http://llvm.org/doxygen/inherits.html>`_)
+`Doxygen generated documentation <https://llvm.org/doxygen/>`_
+  (`classes <https://llvm.org/doxygen/inherits.html>`_)
 
 :doc:`HowToUseAttributes`
   Answers some questions about the new Attributes infrastructure.
 
 `Documentation for Go bindings <http://godoc.org/llvm.org/llvm/bindings/go/llvm>`_
-
-:doc:`ORCv2`
-   Describes the design and implementation of the ORC APIs, including some
-   usage examples, and a guide for users transitioning from ORCv1 to ORCv2.
 
 LLVM Reference
 --------------
@@ -126,18 +124,22 @@ LLVM IR
    A reference manual for the MIR serialization format, which is used to test
    LLVM's code generation passes.
 
-:doc:`GlobalISel`
+:doc:`GlobalISel/index`
   This describes the prototype instruction selection replacement, GlobalISel.
 
-=======
-Testing
-=======
+=====================
+Testing and Debugging
+=====================
 
 :doc:`LLVM Testing Infrastructure Guide <TestingGuide>`
    A reference manual for using the LLVM testing infrastructure.
 
 :doc:`TestSuiteGuide`
   Describes how to compile and run the test-suite benchmarks.
+
+
+:doc:`GwpAsan`
+  A sampled heap memory error detection toolkit designed for production use.
 
 ====
 XRay
@@ -184,15 +186,13 @@ Additional Topics
 :doc:`ScudoHardenedAllocator`
   A library that implements a security-hardened `malloc()`.
 
-:doc:`GwpAsan`
-  A sampled heap memory error detection toolkit designed for production use.
+:doc:`MemTagSanitizer`
+  Security hardening for production code aiming to mitigate memory
+  related vulnerabilities. Based on the Armv8.5-A Memory Tagging Extension.
 
 :doc:`Dependence Graphs <DependenceGraphs/index>`
   A description of the design of the various dependence graphs such as
   the DDG (Data Dependence Graph).
-
-:doc:`CFIVerify`
-  A description of the verification tool for Control Flow Integrity.
 
 :doc:`SpeculativeLoadHardening`
   A description of the Speculative Load Hardening mitigation for Spectre v1.
@@ -209,6 +209,10 @@ Additional Topics
 
 :doc:`Coroutines`
   LLVM support for coroutines.
+
+:doc:`PointerAuth`
+  A description of pointer authentication, its LLVM IR representation, and its
+  support in the backend.
 
 :doc:`YamlIO`
    A reference guide for using LLVM's YAML I/O library.

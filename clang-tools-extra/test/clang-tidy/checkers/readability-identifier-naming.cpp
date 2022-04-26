@@ -18,6 +18,7 @@
 // RUN:     {key: readability-identifier-naming.ConstexprVariableCase, value: lower_case}, \
 // RUN:     {key: readability-identifier-naming.EnumCase, value: CamelCase}, \
 // RUN:     {key: readability-identifier-naming.EnumPrefix, value: 'E'}, \
+// RUN:     {key: readability-identifier-naming.ScopedEnumConstantCase, value: CamelCase}, \
 // RUN:     {key: readability-identifier-naming.EnumConstantCase, value: UPPER_CASE}, \
 // RUN:     {key: readability-identifier-naming.FunctionCase, value: camelBack}, \
 // RUN:     {key: readability-identifier-naming.GlobalConstantCase, value: UPPER_CASE}, \
@@ -67,7 +68,7 @@
 // RUN:     {key: readability-identifier-naming.MacroDefinitionCase, value: UPPER_CASE}, \
 // RUN:     {key: readability-identifier-naming.TypeAliasCase, value: camel_Snake_Back}, \
 // RUN:     {key: readability-identifier-naming.TypeAliasSuffix, value: '_t'}, \
-// RUN:     {key: readability-identifier-naming.IgnoreFailedSplit, value: 0}, \
+// RUN:     {key: readability-identifier-naming.IgnoreFailedSplit, value: false}, \
 // RUN:     {key: readability-identifier-naming.GlobalPointerCase, value: CamelCase}, \
 // RUN:     {key: readability-identifier-naming.GlobalPointerSuffix, value: '_Ptr'}, \
 // RUN:     {key: readability-identifier-naming.GlobalConstantPointerCase, value: UPPER_CASE}, \
@@ -80,13 +81,14 @@
 // RUN:     {key: readability-identifier-naming.LocalPointerPrefix, value: 'l_'}, \
 // RUN:     {key: readability-identifier-naming.LocalConstantPointerCase, value: CamelCase}, \
 // RUN:     {key: readability-identifier-naming.LocalConstantPointerPrefix, value: 'lc_'}, \
-// RUN:   ]}' -- -fno-delayed-template-parsing \
+// RUN:   ]}' -- -fno-delayed-template-parsing -Dbad_macro -std=c++17 -fcoroutines-ts \
 // RUN:   -I%S/Inputs/readability-identifier-naming \
 // RUN:   -isystem %S/Inputs/readability-identifier-naming/system
 
 // clang-format off
 
 #include <system-header.h>
+#include <coroutines.h>
 #include "user-header.h"
 // NO warnings or fixes expected from declarations within header files without
 // the -header-filter= option
@@ -146,6 +148,10 @@ int global3;
 int g_twice_global3 = ADD_TO_SELF(global3);
 // CHECK-FIXES: {{^}}int g_twice_global3 = ADD_TO_SELF(g_global3);{{$}}
 
+int g_Global4;
+// CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for global variable 'g_Global4'
+// CHECK-FIXES: {{^}}int g_global4;{{$}}
+
 enum my_enumeration {
 // CHECK-MESSAGES: :[[@LINE-1]]:6: warning: invalid case style for enum 'my_enumeration'
 // CHECK-FIXES: {{^}}enum EMyEnumeration {{{$}}
@@ -158,6 +164,18 @@ enum my_enumeration {
     THIS_ConstValue = 1,
 // CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for enum constant 'THIS_ConstValue'
 // CHECK-FIXES: {{^}}    THIS_CONST_VALUE = 1,{{$}}
+};
+
+enum class EMyEnumeration {
+    myConstant = 1,
+// CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for scoped enum constant 'myConstant'
+// CHECK-FIXES: {{^}}    MyConstant = 1,{{$}}
+    your_CONST = 1,
+// CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for scoped enum constant 'your_CONST'
+// CHECK-FIXES: {{^}}    YourConst = 1,{{$}}
+    THIS_ConstValue = 1,
+// CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for scoped enum constant 'THIS_ConstValue'
+// CHECK-FIXES: {{^}}    ThisConstValue = 1,{{$}}
 };
 
 constexpr int ConstExpr_variable = MyConstant;
@@ -214,17 +232,16 @@ public:
 // CHECK-FIXES: {{^}}    static int ClassMember2;{{$}}
 };
 class my_class;
-// CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for class 'my_class'
+// No warning needed here as this is tied to the previous declaration.
+// Just make sure the fix is applied.
 // CHECK-FIXES: {{^}}class CMyClass;{{$}}
 
 class my_forward_declared_class; // No warning should be triggered.
 
 const int my_class::classConstant = 4;
-// CHECK-MESSAGES: :[[@LINE-1]]:21: warning: invalid case style for class constant 'classConstant'
 // CHECK-FIXES: {{^}}const int CMyClass::kClassConstant = 4;{{$}}
 
 int my_class::ClassMember_2 = 5;
-// CHECK-MESSAGES: :[[@LINE-1]]:15: warning: invalid case style for class member 'ClassMember_2'
 // CHECK-FIXES: {{^}}int CMyClass::ClassMember2 = 5;{{$}}
 
 class my_derived_class : public virtual my_class {};
@@ -267,13 +284,105 @@ public:
   virtual ~AOverridden() = default;
   virtual void BadBaseMethod() = 0;
   // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for virtual method 'BadBaseMethod'
+  // CHECK-FIXES: {{^}}  virtual void v_Bad_Base_Method() = 0;
+
+  virtual void BadBaseMethodNoAttr() = 0;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for virtual method 'BadBaseMethodNoAttr'
+  // CHECK-FIXES: {{^}}  virtual void v_Bad_Base_Method_No_Attr() = 0;
 };
 
 class COverriding : public AOverridden {
 public:
   // Overriding a badly-named base isn't a new violation.
   void BadBaseMethod() override {}
+  // CHECK-FIXES: {{^}}  void v_Bad_Base_Method() override {}
+
+  void BadBaseMethodNoAttr() /* override */ {}
+  // CHECK-FIXES: {{^}}  void v_Bad_Base_Method_No_Attr() /* override */ {}
+
+  void foo() {
+    BadBaseMethod();
+    // CHECK-FIXES: {{^}}    v_Bad_Base_Method();
+    this->BadBaseMethod();
+    // CHECK-FIXES: {{^}}    this->v_Bad_Base_Method();
+    AOverridden::BadBaseMethod();
+    // CHECK-FIXES: {{^}}    AOverridden::v_Bad_Base_Method();
+    COverriding::BadBaseMethod();
+    // CHECK-FIXES: {{^}}    COverriding::v_Bad_Base_Method();
+
+    BadBaseMethodNoAttr();
+    // CHECK-FIXES: {{^}}    v_Bad_Base_Method_No_Attr();
+    this->BadBaseMethodNoAttr();
+    // CHECK-FIXES: {{^}}    this->v_Bad_Base_Method_No_Attr();
+    AOverridden::BadBaseMethodNoAttr();
+    // CHECK-FIXES: {{^}}    AOverridden::v_Bad_Base_Method_No_Attr();
+    COverriding::BadBaseMethodNoAttr();
+    // CHECK-FIXES: {{^}}    COverriding::v_Bad_Base_Method_No_Attr();
+  }
 };
+
+// Same test as above, now with a dependent base class.
+template<typename some_t>
+class ATOverridden {
+public:
+  virtual void BadBaseMethod() = 0;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for virtual method 'BadBaseMethod'
+  // CHECK-FIXES: {{^}}  virtual void v_Bad_Base_Method() = 0;
+
+  virtual void BadBaseMethodNoAttr() = 0;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for virtual method 'BadBaseMethodNoAttr'
+  // CHECK-FIXES: {{^}}  virtual void v_Bad_Base_Method_No_Attr() = 0;
+};
+
+template<typename some_t>
+class CTOverriding : public ATOverridden<some_t> {
+  // Overriding a badly-named base isn't a new violation.
+  // FIXME: The fixes from the base class should be propagated to the derived class here
+  //        (note that there could be specializations of the template base class, though)
+  void BadBaseMethod() override {}
+
+  // Without the "override" attribute, and due to the dependent base class, it is not
+  // known whether this method overrides anything, so we get the warning here.
+  virtual void BadBaseMethodNoAttr() {};
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for virtual method 'BadBaseMethodNoAttr'
+  // CHECK-FIXES: {{^}}  virtual void v_Bad_Base_Method_No_Attr() {};
+};
+
+template<typename some_t>
+void VirtualCall(AOverridden &a_vItem, ATOverridden<some_t> &a_vTitem) {
+  a_vItem.BadBaseMethod();
+  // CHECK-FIXES: {{^}}  a_vItem.v_Bad_Base_Method();
+
+  // FIXME: The fixes from ATOverridden should be propagated to the following call
+  a_vTitem.BadBaseMethod();
+}
+
+// Same test as above, now with a dependent base class that is instantiated below.
+template<typename some_t>
+class ATIOverridden {
+public:
+  virtual void BadBaseMethod() = 0;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for virtual method 'BadBaseMethod'
+  // CHECK-FIXES: {{^}}  virtual void v_Bad_Base_Method() = 0;
+};
+
+template<typename some_t>
+class CTIOverriding : public ATIOverridden<some_t> {
+public:
+  // Overriding a badly-named base isn't a new violation.
+  void BadBaseMethod() override {}
+  // CHECK-FIXES: {{^}}  void v_Bad_Base_Method() override {}
+};
+
+template class CTIOverriding<int>;
+
+void VirtualCallI(ATIOverridden<int>& a_vItem, CTIOverriding<int>& a_vCitem) {
+  a_vItem.BadBaseMethod();
+  // CHECK-FIXES: {{^}}  a_vItem.v_Bad_Base_Method();
+
+  a_vCitem.BadBaseMethod();
+  // CHECK-FIXES: {{^}}  a_vCitem.v_Bad_Base_Method();
+}
 
 template <typename derived_t>
 class CRTPBase {
@@ -500,7 +609,6 @@ template <typename t_t> struct a {
 
 template<typename t_t>
 char const a<t_t>::MyConstClass_string[] = "123";
-// CHECK-MESSAGES: :[[@LINE-1]]:20: warning: invalid case style for class constant 'MyConstClass_string'
 // CHECK-FIXES: {{^}}char const a<t_t>::kMyConstClassString[] = "123";{{$}}
 
 template <template <typename> class A> struct b { A<int> c; };
@@ -514,6 +622,9 @@ unsigned const MyConstGlobal_array[] = {1,2,3};
 // CHECK-FIXES: {{^}}unsigned const MY_CONST_GLOBAL_ARRAY[] = {1,2,3};{{$}}
 
 int * MyGlobal_Ptr;// -> ok
+int * my_second_global_Ptr;
+// CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for global pointer 'my_second_global_Ptr'
+// CHECK-FIXES: {{^}}int * MySecondGlobal_Ptr;{{$}}
 int * const MyConstantGlobalPointer = nullptr;
 // CHECK-MESSAGES: :[[@LINE-1]]:13: warning: invalid case style for global constant pointer 'MyConstantGlobalPointer'
 // CHECK-FIXES: {{^}}int * const MY_CONSTANT_GLOBAL_POINTER_Ptr = nullptr;{{$}}
@@ -527,3 +638,72 @@ void MyPoiterFunction(int * p_normal_pointer, int * const constant_ptr){
 // CHECK-FIXES: {{^}}    int * const lc_PointerB = nullptr;{{$}}
 }
 
+using namespace FOO_NS;
+// CHECK-FIXES: {{^}}using namespace foo_ns;
+
+using namespace FOO_NS::InlineNamespace;
+// CHECK-FIXES: {{^}}using namespace foo_ns::inline_namespace;
+
+void QualifiedTypeLocTest(THIS___Structure);
+// CHECK-FIXES: {{^}}void QualifiedTypeLocTest(this_structure);{{$}}
+void QualifiedTypeLocTest(THIS___Structure &);
+// CHECK-FIXES: {{^}}void QualifiedTypeLocTest(this_structure &);{{$}}
+void QualifiedTypeLocTest(THIS___Structure &&);
+// CHECK-FIXES: {{^}}void QualifiedTypeLocTest(this_structure &&);{{$}}
+void QualifiedTypeLocTest(const THIS___Structure);
+// CHECK-FIXES: {{^}}void QualifiedTypeLocTest(const this_structure);{{$}}
+void QualifiedTypeLocTest(const THIS___Structure &);
+// CHECK-FIXES: {{^}}void QualifiedTypeLocTest(const this_structure &);{{$}}
+void QualifiedTypeLocTest(volatile THIS___Structure &);
+// CHECK-FIXES: {{^}}void QualifiedTypeLocTest(volatile this_structure &);{{$}}
+
+namespace redecls {
+// We only want the warning to show up once here for the first decl.
+// CHECK-MESSAGES: :[[@LINE+1]]:6: warning: invalid case style for global function 'badNamedFunction'
+void badNamedFunction();
+void badNamedFunction();
+void badNamedFunction(){}
+//      CHECK-FIXES: {{^}}void BadNamedFunction();
+// CHECK-FIXES-NEXT: {{^}}void BadNamedFunction();
+// CHECK-FIXES-NEXT: {{^}}void BadNamedFunction(){}
+void ReferenceBadNamedFunction() {
+  auto l_Ptr = badNamedFunction;
+  // CHECK-FIXES: {{^}}  auto l_Ptr = BadNamedFunction;
+  l_Ptr();
+  badNamedFunction();
+  // CHECK-FIXES: {{^}}  BadNamedFunction();
+}
+
+} // namespace redecls
+
+namespace scratchspace {
+#define DUP(Tok) Tok
+#define M1(Tok) DUP(badName##Tok())
+
+// We don't want a warning here as the call to this in Foo is in a scratch
+// buffer so its fix-it wouldn't be applied, resulting in invalid code.
+void badNameWarn();
+
+void Foo() {
+  M1(Warn);
+}
+
+#undef M1
+#undef DUP
+} // namespace scratchspace
+
+template<typename type_t>
+auto GetRes(type_t& Param) -> decltype(Param.res());
+// CHECK-MESSAGES: :[[@LINE-1]]:21: warning: invalid case style for parameter 'Param'
+// CHECK-FIXES: auto GetRes(type_t& a_param) -> decltype(a_param.res());
+
+// Check implicit declarations in coroutines
+
+struct async_obj {
+public:
+  never_suspend operator co_await() const noexcept;
+};
+
+task ImplicitDeclTest(async_obj &a_object) {
+  co_await a_object;  // CHECK-MESSAGES-NOT: warning: invalid case style for local variable
+}

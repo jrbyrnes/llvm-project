@@ -43,7 +43,9 @@ void ARMTargetStreamer::emitCurrentConstantPool() {
 }
 
 // finish() - write out any non-empty assembler constant pools.
-void ARMTargetStreamer::finish() { ConstantPools->emitAll(Streamer); }
+void ARMTargetStreamer::emitConstantPools() {
+  ConstantPools->emitAll(Streamer);
+}
 
 // reset() - Reset any state
 void ARMTargetStreamer::reset() {}
@@ -80,7 +82,7 @@ void ARMTargetStreamer::emitInst(uint32_t Inst, char Suffix) {
   default:
     llvm_unreachable("Invalid Suffix");
   }
-  getStreamer().EmitBytes(StringRef(Buffer, Size));
+  getStreamer().emitBytes(StringRef(Buffer, Size));
 }
 
 // The remaining callbacks should be handled separately by each
@@ -108,7 +110,7 @@ void ARMTargetStreamer::emitIntTextAttribute(unsigned Attribute,
                                              unsigned IntValue,
                                              StringRef StringValue) {}
 void ARMTargetStreamer::emitArch(ARM::ArchKind Arch) {}
-void ARMTargetStreamer::emitArchExtension(unsigned ArchExt) {}
+void ARMTargetStreamer::emitArchExtension(uint64_t ArchExt) {}
 void ARMTargetStreamer::emitObjectArch(ARM::ArchKind Arch) {}
 void ARMTargetStreamer::emitFPU(unsigned FPU) {}
 void ARMTargetStreamer::finishAttributeSection() {}
@@ -297,4 +299,9 @@ void ARMTargetStreamer::emitTargetAttributes(const MCSubtargetInfo &STI) {
   else if (STI.hasFeature(ARM::FeatureVirtualization))
     emitAttribute(ARMBuildAttrs::Virtualization_use,
                   ARMBuildAttrs::AllowVirtualization);
+
+  if (STI.hasFeature(ARM::FeaturePACBTI)) {
+    emitAttribute(ARMBuildAttrs::PAC_extension, ARMBuildAttrs::AllowPAC);
+    emitAttribute(ARMBuildAttrs::BTI_extension, ARMBuildAttrs::AllowBTI);
+  }
 }

@@ -14,6 +14,7 @@
 #include "mutex.h"
 
 #include <limits.h> // for PTHREAD_DESTRUCTOR_ITERATIONS
+#include <pthread.h>
 
 // With some build setups, this might still not be defined.
 #ifndef PTHREAD_DESTRUCTOR_ITERATIONS
@@ -22,23 +23,22 @@
 
 namespace scudo {
 
-template <class Allocator> struct ALIGNED(SCUDO_CACHE_LINE_SIZE) TSD {
+template <class Allocator> struct alignas(SCUDO_CACHE_LINE_SIZE) TSD {
   typename Allocator::CacheT Cache;
   typename Allocator::QuarantineCacheT QuarantineCache;
-  u8 DestructorIterations;
+  using ThisT = TSD<Allocator>;
+  u8 DestructorIterations = 0;
 
-  void initLinkerInitialized(Allocator *Instance) {
+  void init(Allocator *Instance) {
+    DCHECK_EQ(DestructorIterations, 0U);
+    DCHECK(isAligned(reinterpret_cast<uptr>(this), alignof(ThisT)));
     Instance->initCache(&Cache);
     DestructorIterations = PTHREAD_DESTRUCTOR_ITERATIONS;
-  }
-  void init(Allocator *Instance) {
-    memset(this, 0, sizeof(*this));
-    initLinkerInitialized(Instance);
   }
 
   void commitBack(Allocator *Instance) { Instance->commitBack(this); }
 
-  INLINE bool tryLock() {
+  inline bool tryLock() {
     if (Mutex.tryLock()) {
       atomic_store_relaxed(&Precedence, 0);
       return true;
@@ -49,16 +49,16 @@ template <class Allocator> struct ALIGNED(SCUDO_CACHE_LINE_SIZE) TSD {
           static_cast<uptr>(getMonotonicTime() >> FIRST_32_SECOND_64(16, 0)));
     return false;
   }
-  INLINE void lock() {
+  inline void lock() {
     atomic_store_relaxed(&Precedence, 0);
     Mutex.lock();
   }
-  INLINE void unlock() { Mutex.unlock(); }
-  INLINE uptr getPrecedence() { return atomic_load_relaxed(&Precedence); }
+  inline void unlock() { Mutex.unlock(); }
+  inline uptr getPrecedence() { return atomic_load_relaxed(&Precedence); }
 
 private:
   HybridMutex Mutex;
-  atomic_uptr Precedence;
+  atomic_uptr Precedence = {};
 };
 
 } // namespace scudo

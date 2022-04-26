@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Taint.h"
 #include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
+#include "clang/StaticAnalyzer/Checkers/Taint.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
@@ -101,6 +101,6 @@ void ento::registerDivZeroChecker(CheckerManager &mgr) {
   mgr.registerChecker<DivZeroChecker>();
 }
 
-bool ento::shouldRegisterDivZeroChecker(const LangOptions &LO) {
+bool ento::shouldRegisterDivZeroChecker(const CheckerManager &mgr) {
   return true;
 }

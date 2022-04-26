@@ -728,6 +728,9 @@ description (``*.td``) files.  Our goal is for the entire instruction selector
 to be generated from these ``.td`` files, though currently there are still
 things that require custom C++ code.
 
+`GlobalISel <https://llvm.org/docs/GlobalISel/index.html>`_ is another
+instruction selection framework.
+
 .. _SelectionDAG:
 
 Introduction to SelectionDAGs
@@ -1272,7 +1275,7 @@ compatible with a given physical, this code can be used:
 
 Sometimes, mostly for debugging purposes, it is useful to change the number of
 physical registers available in the target architecture. This must be done
-statically, inside the ``TargetRegsterInfo.td`` file. Just ``grep`` for
+statically, inside the ``TargetRegisterInfo.td`` file. Just ``grep`` for
 ``RegisterClass``, the last parameter of which is a list of registers. Just
 commenting some out is one simple way to avoid them being used. A more polite
 way is to explicitly exclude some registers from the *allocation order*. See the
@@ -1479,7 +1482,12 @@ line option ``-regalloc=...``:
 Prolog/Epilog Code Insertion
 ----------------------------
 
+.. note::
+
+  To Be Written
+
 Compact Unwind
+--------------
 
 Throwing an exception requires *unwinding* out of a function. The information on
 how to unwind a given function is traditionally expressed in DWARF unwind
@@ -1869,9 +1877,9 @@ Here is the table:
 :raw-html:`<td class="no"></td> <!-- ARM -->`
 :raw-html:`<td class="no"></td> <!-- Hexagon -->`
 :raw-html:`<td class="no"></td> <!-- MSP430 -->`
-:raw-html:`<td class="no"></td> <!-- Mips -->`
+:raw-html:`<td class="yes"></td> <!-- Mips -->`
 :raw-html:`<td class="no"></td> <!-- NVPTX -->`
-:raw-html:`<td class="no"></td> <!-- PowerPC -->`
+:raw-html:`<td class="yes"></td> <!-- PowerPC -->`
 :raw-html:`<td class="no"></td> <!-- Sparc -->`
 :raw-html:`<td class="yes"></td> <!-- SystemZ -->`
 :raw-html:`<td class="yes"></td> <!-- X86 -->`
@@ -1884,11 +1892,11 @@ Here is the table:
 :raw-html:`<td class="yes"></td> <!-- ARM -->`
 :raw-html:`<td class="no"></td> <!-- Hexagon -->`
 :raw-html:`<td class="no"></td> <!-- MSP430 -->`
-:raw-html:`<td class="no"></td> <!-- Mips -->`
+:raw-html:`<td class="yes"></td> <!-- Mips -->`
 :raw-html:`<td class="na"></td> <!-- NVPTX -->`
-:raw-html:`<td class="no"></td> <!-- PowerPC -->`
+:raw-html:`<td class="yes"></td> <!-- PowerPC -->`
+:raw-html:`<td class="yes"></td> <!-- Sparc -->`
 :raw-html:`<td class="yes"></td> <!-- SystemZ -->`
-:raw-html:`<td class="no"></td> <!-- Sparc -->`
 :raw-html:`<td class="yes"></td> <!-- X86 -->`
 :raw-html:`<td class="yes"></td> <!-- XCore -->`
 :raw-html:`<td class="yes"></td> <!-- eBPF -->`
@@ -1899,7 +1907,7 @@ Here is the table:
 :raw-html:`<td class="yes"></td> <!-- ARM -->`
 :raw-html:`<td class="yes"></td> <!-- Hexagon -->`
 :raw-html:`<td class="unknown"></td> <!-- MSP430 -->`
-:raw-html:`<td class="no"></td> <!-- Mips -->`
+:raw-html:`<td class="yes"></td> <!-- Mips -->`
 :raw-html:`<td class="yes"></td> <!-- NVPTX -->`
 :raw-html:`<td class="yes"></td> <!-- PowerPC -->`
 :raw-html:`<td class="unknown"></td> <!-- Sparc -->`
@@ -1929,9 +1937,9 @@ Here is the table:
 :raw-html:`<td class="no"></td> <!-- ARM -->`
 :raw-html:`<td class="no"></td> <!-- Hexagon -->`
 :raw-html:`<td class="no"></td> <!-- MSP430 -->`
-:raw-html:`<td class="no"></td> <!-- Mips -->`
+:raw-html:`<td class="yes"></td> <!-- Mips -->`
 :raw-html:`<td class="na"></td> <!-- NVPTX -->`
-:raw-html:`<td class="no"></td> <!-- PowerPC -->`
+:raw-html:`<td class="yes"></td> <!-- PowerPC -->`
 :raw-html:`<td class="no"></td> <!-- Sparc -->`
 :raw-html:`<td class="yes"></td> <!-- SystemZ -->`
 :raw-html:`<td class="yes"></td> <!-- X86 -->`
@@ -1944,7 +1952,7 @@ Here is the table:
 :raw-html:`<td class="yes"></td> <!-- ARM -->`
 :raw-html:`<td class="yes"></td> <!-- Hexagon -->`
 :raw-html:`<td class="unknown"></td> <!-- MSP430 -->`
-:raw-html:`<td class="no"></td> <!-- Mips -->`
+:raw-html:`<td class="yes"></td> <!-- Mips -->`
 :raw-html:`<td class="no"></td> <!-- NVPTX -->`
 :raw-html:`<td class="yes"></td> <!-- PowerPC -->`
 :raw-html:`<td class="unknown"></td> <!-- Sparc -->`
@@ -2064,11 +2072,12 @@ Tail call optimization
 ----------------------
 
 Tail call optimization, callee reusing the stack of the caller, is currently
-supported on x86/x86-64, PowerPC, and WebAssembly. It is performed on x86/x86-64
-and PowerPC if:
+supported on x86/x86-64, PowerPC, AArch64, and WebAssembly. It is performed on
+x86/x86-64, PowerPC, and AArch64 if:
 
 * Caller and callee have the calling convention ``fastcc``, ``cc 10`` (GHC
-  calling convention), ``cc 11`` (HiPE calling convention), or ``tailcc``.
+  calling convention), ``cc 11`` (HiPE calling convention), ``tailcc``, or
+  ``swifttailcc``.
 
 * The call is a tail call - in tail position (ret immediately follows call and
   ret uses value of call or is void).
@@ -2102,6 +2111,10 @@ WebAssembly constraints:
 * The caller and callee's return types must match. The caller cannot
   be void unless the callee is, too.
 
+AArch64 constraints:
+
+* No variable argument lists are used.
+
 Example:
 
 Call as ``llc -tailcallopt test.ll``.
@@ -2112,7 +2125,7 @@ Call as ``llc -tailcallopt test.ll``.
 
   define fastcc i32 @tailcaller(i32 %in1, i32 %in2) {
     %l1 = add i32 %in1, %in2
-    %tmp = tail call fastcc i32 @tailcallee(i32 %in1 inreg, i32 %in2 inreg, i32 %in1, i32 %l1)
+    %tmp = tail call fastcc i32 @tailcallee(i32 inreg %in1, i32 inreg %in2, i32 %in1, i32 %l1)
     ret i32 %tmp
   }
 
@@ -2418,7 +2431,7 @@ to spill registers r3-r10.  This allows callees blind to the call signature,
 such as thunks and vararg functions, enough space to cache the argument
 registers.  Therefore, the parameter area is minimally 32 bytes (64 bytes in 64
 bit mode.)  Also note that since the parameter area is a fixed offset from the
-top of the frame, that a callee can access its spilt arguments using fixed
+top of the frame, that a callee can access its split arguments using fixed
 offsets from the stack pointer (or base pointer.)
 
 Combining the information about the linkage, parameter areas and alignment. A

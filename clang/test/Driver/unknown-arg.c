@@ -10,6 +10,8 @@
 // RUN:     FileCheck %s --check-prefix=CL-DID-YOU-MEAN
 // RUN: %clang_cl /Brepo -### -- %s 2>&1 | \
 // RUN:     FileCheck %s --check-prefix=CL-DID-YOU-MEAN-SLASH
+// RUN: %clang_cl /Brepo -### /Tc%s /link 2>&1 | \
+// RUN:     FileCheck %s --check-prefix=CL-DID-YOU-MEAN-SLASH
 // RUN: not %clang_cl -cake-is-lie -%0 -%d -HHHH -munknown-to-clang-option -print-stats -funknown-to-clang-option -c -Werror=unknown-argument -### -- %s 2>&1 | \
 // RUN:     FileCheck %s --check-prefix=CL-ERROR
 // RUN: not %clang_cl -helo -Werror=unknown-argument -### -- %s 2>&1 | \
@@ -20,6 +22,9 @@
 // RUN:     FileCheck %s --check-prefix=CC1AS-DID-YOU-MEAN
 // RUN: not %clang -cc1asphalt -help 2>&1 | \
 // RUN:     FileCheck %s --check-prefix=UNKNOWN-INTEGRATED
+
+// This needs to exit non-0, for configure scripts.
+// RUN: not %clang /GR-
 
 // CHECK: error: unknown argument: '-cake-is-lie'
 // CHECK: error: unknown argument: '-%0'
@@ -54,7 +59,7 @@
 // SILENT-NOT: warning:
 // CC1AS-DID-YOU-MEAN: error: unknown argument '-hell'; did you mean '-help'?
 // CC1AS-DID-YOU-MEAN: error: unknown argument '--version'; did you mean '-version'?
-// UNKNOWN-INTEGRATED: error: unknown integrated tool 'asphalt'. Valid tools include '-cc1' and '-cc1as'.
+// UNKNOWN-INTEGRATED: error: unknown integrated tool '-cc1asphalt'. Valid tools include '-cc1' and '-cc1as'.
 
 // RUN: %clang -S %s -o %t.s  -Wunknown-to-clang-option 2>&1 | FileCheck --check-prefix=IGNORED %s
 

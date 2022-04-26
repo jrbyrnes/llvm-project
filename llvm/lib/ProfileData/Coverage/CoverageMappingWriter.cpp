@@ -11,9 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/ProfileData/Coverage/CoverageMappingWriter.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Compression.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -25,7 +27,7 @@ using namespace llvm;
 using namespace coverage;
 
 CoverageFilenamesSectionWriter::CoverageFilenamesSectionWriter(
-    ArrayRef<StringRef> Filenames)
+    ArrayRef<std::string> Filenames)
     : Filenames(Filenames) {
 #ifndef NDEBUG
   StringSet<> NameSet;
@@ -34,12 +36,30 @@ CoverageFilenamesSectionWriter::CoverageFilenamesSectionWriter(
 #endif
 }
 
-void CoverageFilenamesSectionWriter::write(raw_ostream &OS) {
-  encodeULEB128(Filenames.size(), OS);
-  for (const auto &Filename : Filenames) {
-    encodeULEB128(Filename.size(), OS);
-    OS << Filename;
+void CoverageFilenamesSectionWriter::write(raw_ostream &OS, bool Compress) {
+  std::string FilenamesStr;
+  {
+    raw_string_ostream FilenamesOS{FilenamesStr};
+    for (const auto &Filename : Filenames) {
+      encodeULEB128(Filename.size(), FilenamesOS);
+      FilenamesOS << Filename;
+    }
   }
+
+  SmallString<128> CompressedStr;
+  bool doCompression =
+      Compress && zlib::isAvailable() && DoInstrProfNameCompression;
+  if (doCompression)
+    zlib::compress(FilenamesStr, CompressedStr, zlib::BestSizeCompression);
+
+  // ::= <num-filenames>
+  //     <uncompressed-len>
+  //     <compressed-len-or-zero>
+  //     (<compressed-filenames> | <uncompressed-filenames>)
+  encodeULEB128(Filenames.size(), OS);
+  encodeULEB128(FilenamesStr.size(), OS);
+  encodeULEB128(doCompression ? CompressedStr.size() : 0U, OS);
+  OS << (doCompression ? CompressedStr.str() : StringRef(FilenamesStr));
 }
 
 namespace {
@@ -56,10 +76,14 @@ public:
                               ArrayRef<CounterMappingRegion> MappingRegions)
       : Expressions(Expressions) {
     AdjustedExpressionIDs.resize(Expressions.size(), 0);
-    for (const auto &I : MappingRegions)
+    for (const auto &I : MappingRegions) {
       mark(I.Count);
-    for (const auto &I : MappingRegions)
+      mark(I.FalseCount);
+    }
+    for (const auto &I : MappingRegions) {
       gatherUsed(I.Count);
+      gatherUsed(I.FalseCount);
+    }
   }
 
   void mark(Counter C) {
@@ -177,6 +201,7 @@ void CoverageMappingWriter::write(raw_ostream &OS) {
       PrevLineStart = 0;
     }
     Counter Count = Minimizer.adjust(I->Count);
+    Counter FalseCount = Minimizer.adjust(I->FalseCount);
     switch (I->Kind) {
     case CounterMappingRegion::CodeRegion:
     case CounterMappingRegion::GapRegion:
@@ -201,6 +226,13 @@ void CoverageMappingWriter::write(raw_ostream &OS) {
       encodeULEB128(unsigned(I->Kind)
                         << Counter::EncodingCounterTagAndExpansionRegionTagBits,
                     OS);
+      break;
+    case CounterMappingRegion::BranchRegion:
+      encodeULEB128(unsigned(I->Kind)
+                        << Counter::EncodingCounterTagAndExpansionRegionTagBits,
+                    OS);
+      writeCounter(MinExpressions, Count, OS);
+      writeCounter(MinExpressions, FalseCount, OS);
       break;
     }
     assert(I->LineStart >= PrevLineStart);

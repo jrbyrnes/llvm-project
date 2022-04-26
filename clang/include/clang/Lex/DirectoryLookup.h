@@ -14,13 +14,12 @@
 #define LLVM_CLANG_LEX_DIRECTORYLOOKUP_H
 
 #include "clang/Basic/LLVM.h"
+#include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/ModuleMap.h"
 
 namespace clang {
 class HeaderMap;
-class DirectoryEntry;
-class FileEntry;
 class HeaderSearch;
 class Module;
 
@@ -90,6 +89,10 @@ public:
   ///
   const DirectoryEntry *getDir() const {
     return isNormalDir() ? &u.Dir.getDirEntry() : nullptr;
+  }
+
+  Optional<DirectoryEntryRef> getDirRef() const {
+    return isNormalDir() ? Optional<DirectoryEntryRef>(u.Dir) : None;
   }
 
   /// getFrameworkDir - Return the directory that this framework refers to.

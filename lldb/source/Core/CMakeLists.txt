@@ -9,10 +9,10 @@ lldb_tablegen(CorePropertiesEnum.inc -gen-lldb-property-enum-defs
 set(LLDB_CURSES_LIBS)
 set(LLDB_LIBEDIT_LIBS)
 
-if (NOT LLDB_DISABLE_CURSES)
-  list(APPEND LLDB_CURSES_LIBS ${CURSES_LIBRARIES})
-  if(LLVM_ENABLE_TERMINFO AND HAVE_TERMINFO)
-    list(APPEND LLDB_CURSES_LIBS ${TERMINFO_LIBS})
+if (LLDB_ENABLE_CURSES)
+  list(APPEND LLDB_CURSES_LIBS ${CURSES_LIBRARIES} ${PANEL_LIBRARIES})
+  if(LLVM_ENABLE_TERMINFO)
+    list(APPEND LLDB_CURSES_LIBS ${TERMINFO_LIB})
   endif()
   if (LLVM_BUILD_STATIC)
     list(APPEND LLDB_CURSES_LIBS gpm)
@@ -24,9 +24,11 @@ add_lldb_library(lldbCore
   AddressRange.cpp
   AddressResolver.cpp
   AddressResolverFileLine.cpp
-  AddressResolverName.cpp
   Communication.cpp
+  DataFileCache.cpp
   Debugger.cpp
+  DebuggerEvents.cpp
+  Declaration.cpp
   Disassembler.cpp
   DumpDataExtractor.cpp
   DumpRegisterValue.cpp
@@ -37,15 +39,18 @@ add_lldb_library(lldbCore
   FormatEntity.cpp
   Highlighter.cpp
   IOHandler.cpp
+  IOHandlerCursesGUI.cpp
   Mangled.cpp
   Module.cpp
   ModuleChild.cpp
   ModuleList.cpp
   Opcode.cpp
   PluginManager.cpp
+  Progress.cpp
   RichManglingContext.cpp
   SearchFilter.cpp
   Section.cpp
+  SourceLocationSpec.cpp
   SourceManager.cpp
   StreamAsynchronousIO.cpp
   StreamFile.cpp
@@ -63,6 +68,7 @@ add_lldb_library(lldbCore
   ValueObjectMemory.cpp
   ValueObjectRegister.cpp
   ValueObjectSyntheticFilter.cpp
+  ValueObjectUpdater.cpp
   ValueObjectVariable.cpp
 
   DEPENDS
@@ -95,8 +101,12 @@ add_dependencies(lldbCore
 
 # Needed to properly resolve references in a debug build.
 # TODO: Remove once we have better layering
-set_target_properties(lldbCore PROPERTIES LINK_INTERFACE_MULTIPLICITY 4)
+set_target_properties(lldbCore PROPERTIES LINK_INTERFACE_MULTIPLICITY 5)
 
-if (NOT LLDB_DISABLE_LIBEDIT)
-  target_include_directories(lldbCore PRIVATE ${libedit_INCLUDE_DIRS})
+if (LLDB_ENABLE_LIBEDIT)
+  target_include_directories(lldbCore PRIVATE ${LibEdit_INCLUDE_DIRS})
+endif()
+
+if (LLDB_ENABLE_CURSES)
+  target_include_directories(lldbCore PRIVATE ${CURSES_INCLUDE_DIRS})
 endif()

@@ -96,9 +96,8 @@ static bool replaceDominatedUses(MachineBasicBlock &MBB, MachineInstr &MI,
 
   SmallVector<SlotIndex, 4> Indices;
 
-  for (auto I = MRI.use_nodbg_begin(FromReg), E = MRI.use_nodbg_end();
-       I != E;) {
-    MachineOperand &O = *I++;
+  for (MachineOperand &O :
+       llvm::make_early_inc_range(MRI.use_nodbg_operands(FromReg))) {
     MachineInstr *Where = O.getParent();
 
     // Check that MI dominates the instruction in the normal way.
@@ -201,8 +200,7 @@ bool WebAssemblyMemIntrinsicResults::runOnMachineFunction(MachineFunction &MF) {
       switch (MI.getOpcode()) {
       default:
         break;
-      case WebAssembly::CALL_i32:
-      case WebAssembly::CALL_i64:
+      case WebAssembly::CALL:
         Changed |= optimizeCall(MBB, MI, MRI, MDT, LIS, TLI, LibInfo);
         break;
       }

@@ -4,7 +4,7 @@
     {
       "artifacts": [
         {
-          "length": 951,
+          "length": 1081,
           "location": {
           },
           "mimeType": "text/plain",
@@ -13,6 +13,7 @@
           ]
         }
       ],
+      "columnKind": "unicodeCodePoints",
       "results": [
         {
           "codeFlows": [
@@ -32,9 +33,9 @@
                           },
                           "region": {
                             "endColumn": 6,
-                            "endLine": 34,
+                            "endLine": 39,
                             "startColumn": 3,
-                            "startLine": 34
+                            "startLine": 39
                           }
                         }
                       }
@@ -102,9 +103,9 @@
                           },
                           "region": {
                             "endColumn": 6,
-                            "endLine": 35,
+                            "endLine": 40,
                             "startColumn": 3,
-                            "startLine": 35
+                            "startLine": 40
                           }
                         }
                       }
@@ -120,7 +121,7 @@
                             "index": 0,
                           },
                           "region": {
-                            "endColumn": 11,
+                            "endColumn": 12,
                             "endLine": 15,
                             "startColumn": 3,
                             "startLine": 15
@@ -363,6 +364,74 @@
           },
           "ruleId": "unix.Malloc",
           "ruleIndex": 3
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "importance": "essential",
+                      "location": {
+                        "message": {
+                          "text": "'løçål' initialized to 0"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 0,
+                          },
+                          "region": {
+                            "endColumn": 12,
+                            "endLine": 34,
+                            "startColumn": 3,
+                            "startLine": 34
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "importance": "essential",
+                      "location": {
+                        "message": {
+                          "text": "Division by zero"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 0,
+                          },
+                          "region": {
+                            "endColumn": 20,
+                            "startColumn": 20,
+                            "startLine": 35
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                },
+                "region": {
+                  "endColumn": 20,
+                  "startColumn": 20,
+                  "startLine": 35
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Division by zero"
+          },
+          "ruleId": "core.DivideZero",
+          "ruleIndex": 2
         }
       ],
       "tool": {
@@ -382,7 +451,7 @@
               "fullDescription": {
                 "text": "Check for logical errors for function calls and Objective-C message expressions (e.g., uninitialized arguments, null function pointers)"
               },
-              "helpUri": "https://clang-analyzer.llvm.org/available_checks.html#core.CallAndMessage",
+              "helpUri": "https://clang.llvm.org/docs/analyzer/checkers.html#core-callandmessage",
               "id": "core.CallAndMessage",
               "name": "core.CallAndMessage"
             },
@@ -390,7 +459,7 @@
               "fullDescription": {
                 "text": "Check for division by zero"
               },
-              "helpUri": "https://clang-analyzer.llvm.org/available_checks.html#core.DivideZero",
+              "helpUri": "https://clang.llvm.org/docs/analyzer/checkers.html#core-dividezero",
               "id": "core.DivideZero",
               "name": "core.DivideZero"
             },
@@ -398,7 +467,7 @@
               "fullDescription": {
                 "text": "Check for memory leaks, double free, and use-after-free problems. Traces memory managed by malloc()/free()."
               },
-              "helpUri": "https://clang-analyzer.llvm.org/available_checks.html#unix.Malloc",
+              "helpUri": "https://clang.llvm.org/docs/analyzer/checkers.html#unix-malloc",
               "id": "unix.Malloc",
               "name": "unix.Malloc"
             }

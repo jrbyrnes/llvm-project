@@ -7,11 +7,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "InfiniteLoopCheck.h"
+#include "../utils/Aliasing.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Analysis/Analyses/ExprMutationAnalyzer.h"
 
 using namespace clang::ast_matchers;
+using clang::tidy::utils::hasPtrOrReferenceInFunc;
 
 namespace clang {
 namespace tidy {
@@ -19,57 +21,10 @@ namespace bugprone {
 
 static internal::Matcher<Stmt>
 loopEndingStmt(internal::Matcher<Stmt> Internal) {
-  return stmt(anyOf(breakStmt(Internal), returnStmt(Internal),
-                    gotoStmt(Internal), cxxThrowExpr(Internal),
-                    callExpr(Internal, callee(functionDecl(isNoReturn())))));
-}
-
-/// Return whether `S` is a reference to the declaration of `Var`.
-static bool isAccessForVar(const Stmt *S, const VarDecl *Var) {
-  if (const auto *DRE = dyn_cast<DeclRefExpr>(S))
-    return DRE->getDecl() == Var;
-
-  return false;
-}
-
-/// Return whether `Var` has a pointer or reference in `S`.
-static bool isPtrOrReferenceForVar(const Stmt *S, const VarDecl *Var) {
-  if (const auto *DS = dyn_cast<DeclStmt>(S)) {
-    for (const Decl *D : DS->getDeclGroup()) {
-      if (const auto *LeftVar = dyn_cast<VarDecl>(D)) {
-        if (LeftVar->hasInit() && LeftVar->getType()->isReferenceType()) {
-          return isAccessForVar(LeftVar->getInit(), Var);
-        }
-      }
-    }
-  } else if (const auto *UnOp = dyn_cast<UnaryOperator>(S)) {
-    if (UnOp->getOpcode() == UO_AddrOf)
-      return isAccessForVar(UnOp->getSubExpr(), Var);
-  }
-
-  return false;
-}
-
-/// Return whether `Var` has a pointer or reference in `S`.
-static bool hasPtrOrReferenceInStmt(const Stmt *S, const VarDecl *Var) {
-  if (isPtrOrReferenceForVar(S, Var))
-    return true;
-
-  for (const Stmt *Child : S->children()) {
-    if (!Child)
-      continue;
-
-    if (hasPtrOrReferenceInStmt(Child, Var))
-      return true;
-  }
-
-  return false;
-}
-
-/// Return whether `Var` has a pointer or reference in `Func`.
-static bool hasPtrOrReferenceInFunc(const FunctionDecl *Func,
-                                    const VarDecl *Var) {
-  return hasPtrOrReferenceInStmt(Func->getBody(), Var);
+  // FIXME: Cover noreturn ObjC methods (and blocks?).
+  return stmt(anyOf(
+      mapAnyOf(breakStmt, returnStmt, gotoStmt, cxxThrowExpr).with(Internal),
+      callExpr(Internal, callee(functionDecl(isNoReturn())))));
 }
 
 /// Return whether `Var` was changed in `LoopStmt`.
@@ -89,9 +44,8 @@ static bool isChanged(const Stmt *LoopStmt, const VarDecl *Var,
 }
 
 /// Return whether `Cond` is a variable that is possibly changed in `LoopStmt`.
-static bool isVarThatIsPossiblyChanged(const FunctionDecl *Func,
-                                       const Stmt *LoopStmt, const Stmt *Cond,
-                                       ASTContext *Context) {
+static bool isVarThatIsPossiblyChanged(const Decl *Func, const Stmt *LoopStmt,
+                                       const Stmt *Cond, ASTContext *Context) {
   if (const auto *DRE = dyn_cast<DeclRefExpr>(Cond)) {
     if (const auto *Var = dyn_cast<VarDecl>(DRE->getDecl())) {
       if (!Var->isLocalVarDeclOrParm())
@@ -107,18 +61,29 @@ static bool isVarThatIsPossiblyChanged(const FunctionDecl *Func,
              isChanged(LoopStmt, Var, Context);
       // FIXME: Track references.
     }
-  } else if (isa<MemberExpr>(Cond) || isa<CallExpr>(Cond)) {
+  } else if (isa<MemberExpr, CallExpr,
+                 ObjCIvarRefExpr, ObjCPropertyRefExpr, ObjCMessageExpr>(Cond)) {
     // FIXME: Handle MemberExpr.
     return true;
+  } else if (const auto *CE = dyn_cast<CastExpr>(Cond)) {
+    QualType T = CE->getType();
+    while (true) {
+      if (T.isVolatileQualified())
+        return true;
+
+      if (!T->isAnyPointerType() && !T->isReferenceType())
+        break;
+
+      T = T->getPointeeType();
+    }
   }
 
   return false;
 }
 
 /// Return whether at least one variable of `Cond` changed in `LoopStmt`.
-static bool isAtLeastOneCondVarChanged(const FunctionDecl *Func,
-                                       const Stmt *LoopStmt, const Stmt *Cond,
-                                       ASTContext *Context) {
+static bool isAtLeastOneCondVarChanged(const Decl *Func, const Stmt *LoopStmt,
+                                       const Stmt *Cond, ASTContext *Context) {
   if (isVarThatIsPossiblyChanged(Func, LoopStmt, Cond, Context))
     return true;
 
@@ -136,7 +101,7 @@ static bool isAtLeastOneCondVarChanged(const FunctionDecl *Func,
 static std::string getCondVarNames(const Stmt *Cond) {
   if (const auto *DRE = dyn_cast<DeclRefExpr>(Cond)) {
     if (const auto *Var = dyn_cast<VarDecl>(DRE->getDecl()))
-      return Var->getName();
+      return std::string(Var->getName());
   }
 
   std::string Result;
@@ -152,15 +117,44 @@ static std::string getCondVarNames(const Stmt *Cond) {
   return Result;
 }
 
+static bool isKnownToHaveValue(const Expr &Cond, const ASTContext &Ctx,
+                               bool ExpectedValue) {
+  if (Cond.isValueDependent()) {
+    if (const auto *BinOp = dyn_cast<BinaryOperator>(&Cond)) {
+      // Conjunctions (disjunctions) can still be handled if at least one
+      // conjunct (disjunct) is known to be false (true).
+      if (!ExpectedValue && BinOp->getOpcode() == BO_LAnd)
+        return isKnownToHaveValue(*BinOp->getLHS(), Ctx, false) ||
+               isKnownToHaveValue(*BinOp->getRHS(), Ctx, false);
+      if (ExpectedValue && BinOp->getOpcode() == BO_LOr)
+        return isKnownToHaveValue(*BinOp->getLHS(), Ctx, true) ||
+               isKnownToHaveValue(*BinOp->getRHS(), Ctx, true);
+      if (BinOp->getOpcode() == BO_Comma)
+        return isKnownToHaveValue(*BinOp->getRHS(), Ctx, ExpectedValue);
+    } else if (const auto *UnOp = dyn_cast<UnaryOperator>(&Cond)) {
+      if (UnOp->getOpcode() == UO_LNot)
+        return isKnownToHaveValue(*UnOp->getSubExpr(), Ctx, !ExpectedValue);
+    } else if (const auto *Paren = dyn_cast<ParenExpr>(&Cond))
+      return isKnownToHaveValue(*Paren->getSubExpr(), Ctx, ExpectedValue);
+    else if (const auto *ImplCast = dyn_cast<ImplicitCastExpr>(&Cond))
+      return isKnownToHaveValue(*ImplCast->getSubExpr(), Ctx, ExpectedValue);
+    return false;
+  }
+  bool Result = false;
+  if (Cond.EvaluateAsBooleanCondition(Result, Ctx))
+    return Result == ExpectedValue;
+  return false;
+}
+
 void InfiniteLoopCheck::registerMatchers(MatchFinder *Finder) {
   const auto LoopCondition = allOf(
       hasCondition(
-          expr(forFunction(functionDecl().bind("func"))).bind("condition")),
+          expr(forCallable(decl().bind("func"))).bind("condition")),
       unless(hasBody(hasDescendant(
-          loopEndingStmt(forFunction(equalsBoundNode("func")))))));
+          loopEndingStmt(forCallable(equalsBoundNode("func")))))));
 
-  Finder->addMatcher(stmt(anyOf(whileStmt(LoopCondition), doStmt(LoopCondition),
-                                forStmt(LoopCondition)))
+  Finder->addMatcher(mapAnyOf(whileStmt, doStmt, forStmt)
+                         .with(LoopCondition)
                          .bind("loop-stmt"),
                      this);
 }
@@ -168,19 +162,38 @@ void InfiniteLoopCheck::registerMatchers(MatchFinder *Finder) {
 void InfiniteLoopCheck::check(const MatchFinder::MatchResult &Result) {
   const auto *Cond = Result.Nodes.getNodeAs<Expr>("condition");
   const auto *LoopStmt = Result.Nodes.getNodeAs<Stmt>("loop-stmt");
-  const auto *Func = Result.Nodes.getNodeAs<FunctionDecl>("func");
+  const auto *Func = Result.Nodes.getNodeAs<Decl>("func");
+
+  if (isKnownToHaveValue(*Cond, *Result.Context, false))
+    return;
+
+  bool ShouldHaveConditionVariables = true;
+  if (const auto *While = dyn_cast<WhileStmt>(LoopStmt)) {
+    if (const VarDecl *LoopVarDecl = While->getConditionVariable()) {
+      if (const Expr *Init = LoopVarDecl->getInit()) {
+        ShouldHaveConditionVariables = false;
+        Cond = Init;
+      }
+    }
+  }
 
   if (isAtLeastOneCondVarChanged(Func, LoopStmt, Cond, Result.Context))
     return;
 
   std::string CondVarNames = getCondVarNames(Cond);
-  if (CondVarNames.empty())
+  if (ShouldHaveConditionVariables && CondVarNames.empty())
     return;
 
-  diag(LoopStmt->getBeginLoc(),
-       "this loop is infinite; none of its condition variables (%0)"
-       " are updated in the loop body")
+  if (CondVarNames.empty()) {
+    diag(LoopStmt->getBeginLoc(),
+         "this loop is infinite; it does not check any variables in the"
+         " condition");
+  } else {
+    diag(LoopStmt->getBeginLoc(),
+         "this loop is infinite; none of its condition variables (%0)"
+         " are updated in the loop body")
       << CondVarNames;
+  }
 }
 
 } // namespace bugprone

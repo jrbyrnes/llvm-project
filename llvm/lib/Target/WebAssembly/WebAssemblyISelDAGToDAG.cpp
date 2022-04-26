@@ -13,14 +13,19 @@
 
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "WebAssembly.h"
+#include "WebAssemblyISelLowering.h"
 #include "WebAssemblyTargetMachine.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
+#include "llvm/CodeGen/WasmEHFuncInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h" // To access function attributes.
+#include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+
 using namespace llvm;
 
 #define DEBUG_TYPE "wasm-isel"
@@ -35,12 +40,10 @@ class WebAssemblyDAGToDAGISel final : public SelectionDAGISel {
   /// right decision when generating code for different targets.
   const WebAssemblySubtarget *Subtarget;
 
-  bool ForCodeSize;
-
 public:
   WebAssemblyDAGToDAGISel(WebAssemblyTargetMachine &TM,
                           CodeGenOpt::Level OptLevel)
-      : SelectionDAGISel(TM, OptLevel), Subtarget(nullptr), ForCodeSize(false) {
+      : SelectionDAGISel(TM, OptLevel), Subtarget(nullptr) {
   }
 
   StringRef getPassName() const override {
@@ -52,16 +55,12 @@ public:
                          "********** Function: "
                       << MF.getName() << '\n');
 
-    ForCodeSize = MF.getFunction().hasOptSize();
     Subtarget = &MF.getSubtarget<WebAssemblySubtarget>();
-
-    // Wasm64 is not fully supported right now (and is not specified)
-    if (Subtarget->hasAddr64())
-      report_fatal_error(
-          "64-bit WebAssembly (wasm64) is not currently supported");
 
     return SelectionDAGISel::runOnMachineFunction(MF);
   }
+
+  void PreprocessISelDAG() override;
 
   void Select(SDNode *Node) override;
 
@@ -76,6 +75,29 @@ private:
 };
 } // end anonymous namespace
 
+void WebAssemblyDAGToDAGISel::PreprocessISelDAG() {
+  // Stack objects that should be allocated to locals are hoisted to WebAssembly
+  // locals when they are first used.  However for those without uses, we hoist
+  // them here.  It would be nice if there were some hook to do this when they
+  // are added to the MachineFrameInfo, but that's not the case right now.
+  MachineFrameInfo &FrameInfo = MF->getFrameInfo();
+  for (int Idx = 0; Idx < FrameInfo.getObjectIndexEnd(); Idx++)
+    WebAssemblyFrameLowering::getLocalForStackObject(*MF, Idx);
+
+  SelectionDAGISel::PreprocessISelDAG();
+}
+
+static SDValue getTagSymNode(int Tag, SelectionDAG *DAG) {
+  assert(Tag == WebAssembly::CPP_EXCEPTION || WebAssembly::C_LONGJMP);
+  auto &MF = DAG->getMachineFunction();
+  const auto &TLI = DAG->getTargetLoweringInfo();
+  MVT PtrVT = TLI.getPointerTy(DAG->getDataLayout());
+  const char *SymName = Tag == WebAssembly::CPP_EXCEPTION
+                            ? MF.createExternalSymbolName("__cpp_exception")
+                            : MF.createExternalSymbolName("__c_longjmp");
+  return DAG->getTargetExternalSymbol(SymName, PtrVT);
+}
+
 void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
   // If we have a custom node, we already have selected!
   if (Node->isMachineOpcode()) {
@@ -83,6 +105,10 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
     Node->setNodeId(-1);
     return;
   }
+
+  MVT PtrVT = TLI->getPointerTy(CurDAG->getDataLayout());
+  auto GlobalGetIns = PtrVT == MVT::i64 ? WebAssembly::GLOBAL_GET_I64
+                                        : WebAssembly::GLOBAL_GET_I32;
 
   // Few custom selection stuff.
   SDLoc DL(Node);
@@ -92,8 +118,7 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
     if (!MF.getSubtarget<WebAssemblySubtarget>().hasAtomics())
       break;
 
-    uint64_t SyncScopeID =
-        cast<ConstantSDNode>(Node->getOperand(2).getNode())->getZExtValue();
+    uint64_t SyncScopeID = Node->getConstantOperandVal(2);
     MachineSDNode *Fence = nullptr;
     switch (SyncScopeID) {
     case SyncScope::SingleThread:
@@ -126,87 +151,111 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
     return;
   }
 
-  case ISD::GlobalTLSAddress: {
-    const auto *GA = cast<GlobalAddressSDNode>(Node);
-
-    if (!MF.getSubtarget<WebAssemblySubtarget>().hasBulkMemory())
-      report_fatal_error("cannot use thread-local storage without bulk memory",
-                         false);
-
-    // Currently Emscripten does not support dynamic linking with threads.
-    // Therefore, if we have thread-local storage, only the local-exec model
-    // is possible.
-    // TODO: remove this and implement proper TLS models once Emscripten
-    // supports dynamic linking with threads.
-    if (GA->getGlobal()->getThreadLocalMode() !=
-            GlobalValue::LocalExecTLSModel &&
-        !Subtarget->getTargetTriple().isOSEmscripten()) {
-      report_fatal_error("only -ftls-model=local-exec is supported for now on "
-                         "non-Emscripten OSes: variable " +
-                             GA->getGlobal()->getName(),
-                         false);
-    }
-
-    MVT PtrVT = TLI->getPointerTy(CurDAG->getDataLayout());
-    assert(PtrVT == MVT::i32 && "only wasm32 is supported for now");
-
-    SDValue TLSBaseSym = CurDAG->getTargetExternalSymbol("__tls_base", PtrVT);
-    SDValue TLSOffsetSym = CurDAG->getTargetGlobalAddress(
-        GA->getGlobal(), DL, PtrVT, GA->getOffset(), 0);
-
-    MachineSDNode *TLSBase = CurDAG->getMachineNode(WebAssembly::GLOBAL_GET_I32,
-                                                    DL, MVT::i32, TLSBaseSym);
-    MachineSDNode *TLSOffset = CurDAG->getMachineNode(
-        WebAssembly::CONST_I32, DL, MVT::i32, TLSOffsetSym);
-    MachineSDNode *TLSAddress =
-        CurDAG->getMachineNode(WebAssembly::ADD_I32, DL, MVT::i32,
-                               SDValue(TLSBase, 0), SDValue(TLSOffset, 0));
-    ReplaceNode(Node, TLSAddress);
-    return;
-  }
-
   case ISD::INTRINSIC_WO_CHAIN: {
-    unsigned IntNo = cast<ConstantSDNode>(Node->getOperand(0))->getZExtValue();
+    unsigned IntNo = Node->getConstantOperandVal(0);
     switch (IntNo) {
     case Intrinsic::wasm_tls_size: {
-      MVT PtrVT = TLI->getPointerTy(CurDAG->getDataLayout());
-      assert(PtrVT == MVT::i32 && "only wasm32 is supported for now");
-
       MachineSDNode *TLSSize = CurDAG->getMachineNode(
-          WebAssembly::GLOBAL_GET_I32, DL, PtrVT,
-          CurDAG->getTargetExternalSymbol("__tls_size", MVT::i32));
+          GlobalGetIns, DL, PtrVT,
+          CurDAG->getTargetExternalSymbol("__tls_size", PtrVT));
       ReplaceNode(Node, TLSSize);
       return;
     }
-    case Intrinsic::wasm_tls_align: {
-      MVT PtrVT = TLI->getPointerTy(CurDAG->getDataLayout());
-      assert(PtrVT == MVT::i32 && "only wasm32 is supported for now");
 
+    case Intrinsic::wasm_tls_align: {
       MachineSDNode *TLSAlign = CurDAG->getMachineNode(
-          WebAssembly::GLOBAL_GET_I32, DL, PtrVT,
-          CurDAG->getTargetExternalSymbol("__tls_align", MVT::i32));
+          GlobalGetIns, DL, PtrVT,
+          CurDAG->getTargetExternalSymbol("__tls_align", PtrVT));
       ReplaceNode(Node, TLSAlign);
       return;
     }
     }
     break;
   }
+
   case ISD::INTRINSIC_W_CHAIN: {
-    unsigned IntNo = cast<ConstantSDNode>(Node->getOperand(1))->getZExtValue();
+    unsigned IntNo = Node->getConstantOperandVal(1);
+    const auto &TLI = CurDAG->getTargetLoweringInfo();
+    MVT PtrVT = TLI.getPointerTy(CurDAG->getDataLayout());
     switch (IntNo) {
     case Intrinsic::wasm_tls_base: {
-      MVT PtrVT = TLI->getPointerTy(CurDAG->getDataLayout());
-      assert(PtrVT == MVT::i32 && "only wasm32 is supported for now");
-
       MachineSDNode *TLSBase = CurDAG->getMachineNode(
-          WebAssembly::GLOBAL_GET_I32, DL, MVT::i32, MVT::Other,
+          GlobalGetIns, DL, PtrVT, MVT::Other,
           CurDAG->getTargetExternalSymbol("__tls_base", PtrVT),
           Node->getOperand(0));
       ReplaceNode(Node, TLSBase);
       return;
     }
+
+    case Intrinsic::wasm_catch: {
+      int Tag = Node->getConstantOperandVal(2);
+      SDValue SymNode = getTagSymNode(Tag, CurDAG);
+      MachineSDNode *Catch =
+          CurDAG->getMachineNode(WebAssembly::CATCH, DL,
+                                 {
+                                     PtrVT,     // exception pointer
+                                     MVT::Other // outchain type
+                                 },
+                                 {
+                                     SymNode,            // exception symbol
+                                     Node->getOperand(0) // inchain
+                                 });
+      ReplaceNode(Node, Catch);
+      return;
+    }
     }
     break;
+  }
+
+  case ISD::INTRINSIC_VOID: {
+    unsigned IntNo = Node->getConstantOperandVal(1);
+    switch (IntNo) {
+    case Intrinsic::wasm_throw: {
+      int Tag = Node->getConstantOperandVal(2);
+      SDValue SymNode = getTagSymNode(Tag, CurDAG);
+      MachineSDNode *Throw =
+          CurDAG->getMachineNode(WebAssembly::THROW, DL,
+                                 MVT::Other, // outchain type
+                                 {
+                                     SymNode,             // exception symbol
+                                     Node->getOperand(3), // thrown value
+                                     Node->getOperand(0)  // inchain
+                                 });
+      ReplaceNode(Node, Throw);
+      return;
+    }
+    }
+    break;
+  }
+
+  case WebAssemblyISD::CALL:
+  case WebAssemblyISD::RET_CALL: {
+    // CALL has both variable operands and variable results, but ISel only
+    // supports one or the other. Split calls into two nodes glued together, one
+    // for the operands and one for the results. These two nodes will be
+    // recombined in a custom inserter hook into a single MachineInstr.
+    SmallVector<SDValue, 16> Ops;
+    for (size_t i = 1; i < Node->getNumOperands(); ++i) {
+      SDValue Op = Node->getOperand(i);
+      if (i == 1 && Op->getOpcode() == WebAssemblyISD::Wrapper)
+        Op = Op->getOperand(0);
+      Ops.push_back(Op);
+    }
+
+    // Add the chain last
+    Ops.push_back(Node->getOperand(0));
+    MachineSDNode *CallParams =
+        CurDAG->getMachineNode(WebAssembly::CALL_PARAMS, DL, MVT::Glue, Ops);
+
+    unsigned Results = Node->getOpcode() == WebAssemblyISD::CALL
+                           ? WebAssembly::CALL_RESULTS
+                           : WebAssembly::RET_CALL_RESULTS;
+
+    SDValue Link(CallParams, 0);
+    MachineSDNode *CallResults =
+        CurDAG->getMachineNode(Results, DL, Node->getVTList(), Link);
+    ReplaceNode(Node, CallResults);
+    return;
   }
 
   default:
@@ -220,7 +269,6 @@ void WebAssemblyDAGToDAGISel::Select(SDNode *Node) {
 bool WebAssemblyDAGToDAGISel::SelectInlineAsmMemoryOperand(
     const SDValue &Op, unsigned ConstraintID, std::vector<SDValue> &OutOps) {
   switch (ConstraintID) {
-  case InlineAsm::Constraint_i:
   case InlineAsm::Constraint_m:
     // We just support simple memory operands that just have a single address
     // operand and need no special handling.

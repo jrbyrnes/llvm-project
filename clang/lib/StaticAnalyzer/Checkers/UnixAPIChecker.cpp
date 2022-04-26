@@ -20,6 +20,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -42,7 +43,7 @@ class UnixAPIMisuseChecker : public Checker< check::PreStmt<CallExpr> > {
   mutable Optional<uint64_t> Val_O_CREAT;
 
 public:
-  DefaultBool CheckMisuse, CheckPortability;
+  bool CheckMisuse = false, CheckPortability = false;
 
   void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;
 
@@ -109,7 +110,7 @@ void UnixAPIMisuseChecker::checkPreStmt(const CallExpr *CE,
   // Don't treat functions in namespaces with the same name a Unix function
   // as a call to the Unix function.
   const DeclContext *NamespaceCtx = FD->getEnclosingNamespaceContext();
-  if (NamespaceCtx && isa<NamespaceDecl>(NamespaceCtx))
+  if (isa_and_nonnull<NamespaceDecl>(NamespaceCtx))
     return;
 
   StringRef FName = C.getCalleeName(FD);
@@ -181,8 +182,7 @@ void UnixAPIMisuseChecker::CheckOpenVariant(CheckerContext &C,
   ProgramStateRef state = C.getState();
 
   if (CE->getNumArgs() < MinArgCount) {
-    // The frontend should issue a warning for this case, so this is a sanity
-    // check.
+    // The frontend should issue a warning for this case. Just return.
     return;
   } else if (CE->getNumArgs() == MaxArgCount) {
     const Expr *Arg = CE->getArg(CreateModeArgIndex);
@@ -365,7 +365,7 @@ void UnixAPIPortabilityChecker::BasicAllocationCheck(CheckerContext &C,
                                                      const unsigned numArgs,
                                                      const unsigned sizeArg,
                                                      const char *fn) const {
-  // Sanity check for the correct number of arguments
+  // Check for the correct number of arguments.
   if (CE->getNumArgs() != numArgs)
     return;
 
@@ -465,7 +465,7 @@ void UnixAPIPortabilityChecker::checkPreStmt(const CallExpr *CE,
   // Don't treat functions in namespaces with the same name a Unix function
   // as a call to the Unix function.
   const DeclContext *NamespaceCtx = FD->getEnclosingNamespaceContext();
-  if (NamespaceCtx && isa<NamespaceDecl>(NamespaceCtx))
+  if (isa_and_nonnull<NamespaceDecl>(NamespaceCtx))
     return;
 
   StringRef FName = C.getCalleeName(FD);
@@ -503,7 +503,7 @@ void UnixAPIPortabilityChecker::checkPreStmt(const CallExpr *CE,
     mgr.registerChecker<CHECKERNAME>();                                        \
   }                                                                            \
                                                                                \
-  bool ento::shouldRegister##CHECKERNAME(const LangOptions &LO) {              \
+  bool ento::shouldRegister##CHECKERNAME(const CheckerManager &mgr) {              \
     return true;                                                               \
   }
 

@@ -7,17 +7,15 @@ declare void @prevent_merging()
 define i32 @test1(i32* %array, i32 %length, i32 %n) {
 ; CHECK-LABEL: @test1(
 ; CHECK-NEXT:  loop.preheader:
-; CHECK-NEXT:    [[TMP0:%.*]] = icmp ugt i32 [[N:%.*]], 1
-; CHECK-NEXT:    [[UMAX:%.*]] = select i1 [[TMP0]], i32 [[N]], i32 1
-; CHECK-NEXT:    [[TMP1:%.*]] = add i32 [[UMAX]], -1
-; CHECK-NEXT:    [[TMP2:%.*]] = icmp ult i32 [[LENGTH:%.*]], [[TMP1]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP2]], i32 [[LENGTH]], i32 [[TMP1]]
-; CHECK-NEXT:    [[TMP3:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
+; CHECK-NEXT:    [[UMAX:%.*]] = call i32 @llvm.umax.i32(i32 [[N:%.*]], i32 1)
+; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[UMAX]], -1
+; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH:%.*]], i32 [[TMP0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP3]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP1]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -78,7 +76,7 @@ define i32 @neg_store(i32* %array, i32 %length, i32 %n) {
 ; CHECK-NEXT:    [[ARRAY_I_PTR:%.*]] = getelementptr inbounds i32, i32* [[ARRAY:%.*]], i64 [[I_I64]]
 ; CHECK-NEXT:    [[ARRAY_I:%.*]] = load i32, i32* [[ARRAY_I_PTR]], align 4
 ; CHECK-NEXT:    [[LOOP_ACC_NEXT]] = add i32 [[LOOP_ACC]], [[ARRAY_I]]
-; CHECK-NEXT:    store i32 0, i32* [[ARRAY_I_PTR]]
+; CHECK-NEXT:    store i32 0, i32* [[ARRAY_I_PTR]], align 4
 ; CHECK-NEXT:    [[I_NEXT]] = add nuw i32 [[I]], 1
 ; CHECK-NEXT:    [[CONTINUE:%.*]] = icmp ult i32 [[I_NEXT]], [[N:%.*]]
 ; CHECK-NEXT:    br i1 [[CONTINUE]], label [[LOOP]], label [[EXIT:%.*]]
@@ -172,19 +170,18 @@ exit:                                             ; preds = %guarded, %entry
 
 
 
-; Base case, but in LFTR form (just for sanity checking)
+; Base case, but in LFTR form (just for basic correctness checking)
 define i32 @test2(i32* %array, i32 %length, i32 %n) {
 ; CHECK-LABEL: @test2(
 ; CHECK-NEXT:  loop.preheader:
 ; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[N:%.*]], -1
-; CHECK-NEXT:    [[TMP1:%.*]] = icmp ult i32 [[LENGTH:%.*]], [[TMP0]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP1]], i32 [[LENGTH]], i32 [[TMP0]]
-; CHECK-NEXT:    [[TMP2:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
+; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH:%.*]], i32 [[TMP0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP2]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP1]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -231,21 +228,17 @@ exit:                                             ; preds = %guarded, %entry
 define i32 @two_range_checks(i32* %array.1, i32 %length.1, i32* %array.2, i32 %length.2, i32 %n) {
 ; CHECK-LABEL: @two_range_checks(
 ; CHECK-NEXT:  loop.preheader:
-; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[LENGTH_2:%.*]], [[LENGTH_1:%.*]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP0]], i32 [[LENGTH_2]], i32 [[LENGTH_1]]
-; CHECK-NEXT:    [[TMP1:%.*]] = icmp ult i32 [[LENGTH_2]], [[LENGTH_1]]
-; CHECK-NEXT:    [[UMIN1:%.*]] = select i1 [[TMP1]], i32 [[LENGTH_2]], i32 [[LENGTH_1]]
-; CHECK-NEXT:    [[TMP2:%.*]] = icmp ugt i32 [[N:%.*]], 1
-; CHECK-NEXT:    [[UMAX:%.*]] = select i1 [[TMP2]], i32 [[N]], i32 1
-; CHECK-NEXT:    [[TMP3:%.*]] = add i32 [[UMAX]], -1
-; CHECK-NEXT:    [[TMP4:%.*]] = icmp ult i32 [[UMIN1]], [[TMP3]]
-; CHECK-NEXT:    [[UMIN2:%.*]] = select i1 [[TMP4]], i32 [[UMIN1]], i32 [[TMP3]]
-; CHECK-NEXT:    [[TMP5:%.*]] = icmp ne i32 [[UMIN]], [[UMIN2]]
+; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH_2:%.*]], i32 [[LENGTH_1:%.*]])
+; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH_2]], i32 [[LENGTH_1]])
+; CHECK-NEXT:    [[UMAX:%.*]] = call i32 @llvm.umax.i32(i32 [[N:%.*]], i32 1)
+; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[UMAX]], -1
+; CHECK-NEXT:    [[UMIN2:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN1]], i32 [[TMP0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[UMIN]], [[UMIN2]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP5]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP1]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -299,25 +292,19 @@ exit:                                             ; preds = %guarded, %entry
 define i32 @three_range_checks(i32* %array.1, i32 %length.1, i32* %array.2, i32 %length.2, i32* %array.3, i32 %length.3, i32 %n) {
 ; CHECK-LABEL: @three_range_checks(
 ; CHECK-NEXT:  loop.preheader:
-; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[LENGTH_3:%.*]], [[LENGTH_2:%.*]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP0]], i32 [[LENGTH_3]], i32 [[LENGTH_2]]
-; CHECK-NEXT:    [[TMP1:%.*]] = icmp ult i32 [[UMIN]], [[LENGTH_1:%.*]]
-; CHECK-NEXT:    [[UMIN1:%.*]] = select i1 [[TMP1]], i32 [[UMIN]], i32 [[LENGTH_1]]
-; CHECK-NEXT:    [[TMP2:%.*]] = icmp ult i32 [[LENGTH_3]], [[LENGTH_2]]
-; CHECK-NEXT:    [[UMIN2:%.*]] = select i1 [[TMP2]], i32 [[LENGTH_3]], i32 [[LENGTH_2]]
-; CHECK-NEXT:    [[TMP3:%.*]] = icmp ult i32 [[UMIN2]], [[LENGTH_1]]
-; CHECK-NEXT:    [[UMIN3:%.*]] = select i1 [[TMP3]], i32 [[UMIN2]], i32 [[LENGTH_1]]
-; CHECK-NEXT:    [[TMP4:%.*]] = icmp ugt i32 [[N:%.*]], 1
-; CHECK-NEXT:    [[UMAX:%.*]] = select i1 [[TMP4]], i32 [[N]], i32 1
-; CHECK-NEXT:    [[TMP5:%.*]] = add i32 [[UMAX]], -1
-; CHECK-NEXT:    [[TMP6:%.*]] = icmp ult i32 [[UMIN3]], [[TMP5]]
-; CHECK-NEXT:    [[UMIN4:%.*]] = select i1 [[TMP6]], i32 [[UMIN3]], i32 [[TMP5]]
-; CHECK-NEXT:    [[TMP7:%.*]] = icmp ne i32 [[UMIN1]], [[UMIN4]]
+; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH_3:%.*]], i32 [[LENGTH_2:%.*]])
+; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN]], i32 [[LENGTH_1:%.*]])
+; CHECK-NEXT:    [[UMIN2:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH_3]], i32 [[LENGTH_2]])
+; CHECK-NEXT:    [[UMIN3:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN2]], i32 [[LENGTH_1]])
+; CHECK-NEXT:    [[UMAX:%.*]] = call i32 @llvm.umax.i32(i32 [[N:%.*]], i32 1)
+; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[UMAX]], -1
+; CHECK-NEXT:    [[UMIN4:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN3]], i32 [[TMP0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[UMIN1]], [[UMIN4]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP7]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP1]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -380,20 +367,17 @@ exit:                                             ; preds = %guarded, %entry
 define i32 @distinct_checks(i32* %array.1, i32 %length.1, i32* %array.2, i32 %length.2, i32* %array.3, i32 %length.3, i32 %n) {
 ; CHECK-LABEL: @distinct_checks(
 ; CHECK-NEXT:  loop.preheader:
-; CHECK-NEXT:    [[TMP0:%.*]] = icmp ult i32 [[LENGTH_2:%.*]], [[LENGTH_1:%.*]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP0]], i32 [[LENGTH_2]], i32 [[LENGTH_1]]
-; CHECK-NEXT:    [[TMP1:%.*]] = icmp ugt i32 [[N:%.*]], 1
-; CHECK-NEXT:    [[UMAX:%.*]] = select i1 [[TMP1]], i32 [[N]], i32 1
-; CHECK-NEXT:    [[TMP2:%.*]] = add i32 [[UMAX]], -1
-; CHECK-NEXT:    [[TMP3:%.*]] = icmp ult i32 [[UMIN]], [[TMP2]]
-; CHECK-NEXT:    [[UMIN1:%.*]] = select i1 [[TMP3]], i32 [[UMIN]], i32 [[TMP2]]
-; CHECK-NEXT:    [[TMP4:%.*]] = icmp ne i32 [[LENGTH_1]], [[UMIN1]]
-; CHECK-NEXT:    [[TMP5:%.*]] = icmp ne i32 [[LENGTH_2]], [[UMIN1]]
+; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH_2:%.*]], i32 [[LENGTH_1:%.*]])
+; CHECK-NEXT:    [[UMAX:%.*]] = call i32 @llvm.umax.i32(i32 [[N:%.*]], i32 1)
+; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[UMAX]], -1
+; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN]], i32 [[TMP0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[LENGTH_1]], [[UMIN1]]
+; CHECK-NEXT:    [[TMP2:%.*]] = icmp ne i32 [[LENGTH_2]], [[UMIN1]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED1:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED1]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP4]], label [[GUARDED:%.*]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP1]], label [[GUARDED:%.*]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -402,7 +386,7 @@ define i32 @distinct_checks(i32* %array.1, i32 %length.1, i32* %array.2, i32 %le
 ; CHECK-NEXT:    [[ARRAY_1_I_PTR:%.*]] = getelementptr inbounds i32, i32* [[ARRAY_1:%.*]], i64 [[I_I64]]
 ; CHECK-NEXT:    [[ARRAY_1_I:%.*]] = load i32, i32* [[ARRAY_1_I_PTR]], align 4
 ; CHECK-NEXT:    [[LOOP_ACC_1:%.*]] = add i32 [[LOOP_ACC]], [[ARRAY_1_I]]
-; CHECK-NEXT:    br i1 [[TMP5]], label [[GUARDED1]], label [[DEOPT2:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP2]], label [[GUARDED1]], label [[DEOPT2:%.*]], !prof !0
 ; CHECK:       deopt2:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -458,18 +442,15 @@ exit:
 define i32 @duplicate_checks(i32* %array.1, i32* %array.2, i32* %array.3, i32 %length, i32 %n) {
 ; CHECK-LABEL: @duplicate_checks(
 ; CHECK-NEXT:  loop.preheader:
-; CHECK-NEXT:    [[TMP0:%.*]] = icmp ugt i32 [[N:%.*]], 1
-; CHECK-NEXT:    [[UMAX:%.*]] = select i1 [[TMP0]], i32 [[N]], i32 1
-; CHECK-NEXT:    [[TMP1:%.*]] = add i32 [[UMAX]], -1
-; CHECK-NEXT:    [[TMP2:%.*]] = icmp ult i32 [[LENGTH:%.*]], [[TMP1]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP2]], i32 [[LENGTH]], i32 [[TMP1]]
-; CHECK-NEXT:    [[TMP3:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
-; CHECK-NEXT:    [[TMP4:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
+; CHECK-NEXT:    [[UMAX:%.*]] = call i32 @llvm.umax.i32(i32 [[N:%.*]], i32 1)
+; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[UMAX]], -1
+; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[LENGTH:%.*]], i32 [[TMP0]])
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp ne i32 [[LENGTH]], [[UMIN]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED1:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED1]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP3]], label [[GUARDED:%.*]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP1]], label [[GUARDED:%.*]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -478,7 +459,7 @@ define i32 @duplicate_checks(i32* %array.1, i32* %array.2, i32* %array.3, i32 %l
 ; CHECK-NEXT:    [[ARRAY_1_I_PTR:%.*]] = getelementptr inbounds i32, i32* [[ARRAY_1:%.*]], i64 [[I_I64]]
 ; CHECK-NEXT:    [[ARRAY_1_I:%.*]] = load i32, i32* [[ARRAY_1_I_PTR]], align 4
 ; CHECK-NEXT:    [[LOOP_ACC_1:%.*]] = add i32 [[LOOP_ACC]], [[ARRAY_1_I]]
-; CHECK-NEXT:    br i1 [[TMP4]], label [[GUARDED1]], label [[DEOPT2:%.*]], !prof !0
+; CHECK-NEXT:    br i1 true, label [[GUARDED1]], label [[DEOPT2:%.*]], !prof !0
 ; CHECK:       deopt2:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -625,7 +606,7 @@ define i32 @unconditional_latch_with_side_effect(i32* %a, i32 %length) {
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
 ; CHECK:       guarded:
-; CHECK-NEXT:    store volatile i32 0, i32* [[A:%.*]]
+; CHECK-NEXT:    store volatile i32 0, i32* [[A:%.*]], align 4
 ; CHECK-NEXT:    [[I_NEXT]] = add i32 [[I]], 1
 ; CHECK-NEXT:    br label [[LOOP]]
 ;
@@ -654,19 +635,17 @@ define i32 @different_ivs(i32* %array, i32 %length, i32 %n) {
 ; CHECK-LABEL: @different_ivs(
 ; CHECK-NEXT:  loop.preheader:
 ; CHECK-NEXT:    [[N64:%.*]] = zext i32 [[N:%.*]] to i64
-; CHECK-NEXT:    [[TMP0:%.*]] = icmp ugt i64 [[N64]], 1
-; CHECK-NEXT:    [[UMAX:%.*]] = select i1 [[TMP0]], i64 [[N64]], i64 1
-; CHECK-NEXT:    [[TMP1:%.*]] = add nsw i64 [[UMAX]], -1
-; CHECK-NEXT:    [[TMP2:%.*]] = zext i32 [[LENGTH:%.*]] to i64
-; CHECK-NEXT:    [[TMP3:%.*]] = icmp ult i64 [[TMP1]], [[TMP2]]
-; CHECK-NEXT:    [[UMIN:%.*]] = select i1 [[TMP3]], i64 [[TMP1]], i64 [[TMP2]]
-; CHECK-NEXT:    [[TMP4:%.*]] = zext i32 [[LENGTH]] to i64
-; CHECK-NEXT:    [[TMP5:%.*]] = icmp ne i64 [[TMP4]], [[UMIN]]
+; CHECK-NEXT:    [[UMAX:%.*]] = call i64 @llvm.umax.i64(i64 [[N64]], i64 1)
+; CHECK-NEXT:    [[TMP0:%.*]] = add nsw i64 [[UMAX]], -1
+; CHECK-NEXT:    [[TMP1:%.*]] = zext i32 [[LENGTH:%.*]] to i64
+; CHECK-NEXT:    [[UMIN:%.*]] = call i64 @llvm.umin.i64(i64 [[TMP0]], i64 [[TMP1]])
+; CHECK-NEXT:    [[TMP2:%.*]] = zext i32 [[LENGTH]] to i64
+; CHECK-NEXT:    [[TMP3:%.*]] = icmp ne i64 [[TMP2]], [[UMIN]]
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
 ; CHECK-NEXT:    [[I:%.*]] = phi i64 [ [[I_NEXT:%.*]], [[GUARDED]] ], [ 0, [[LOOP_PREHEADER]] ]
-; CHECK-NEXT:    br i1 [[TMP5]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
+; CHECK-NEXT:    br i1 [[TMP3]], label [[GUARDED]], label [[DEOPT:%.*]], !prof !0
 ; CHECK:       deopt:
 ; CHECK-NEXT:    call void @prevent_merging()
 ; CHECK-NEXT:    ret i32 -1
@@ -781,6 +760,75 @@ exit:
   ret i32 %result
 }
 
+; If we have a dominating exit (exit1) which can't be itself rewritten, we
+; can't rewrite a later exit (exit2).  Doing so would cause the loop to exit
+; from the exit2 when it should have exited from exit1.
+define i32 @neg_dominating_exit(i32* %array, i32 %length, i32 %length2, i32 %n) {
+; CHECK-LABEL: @neg_dominating_exit(
+; CHECK-NEXT:  loop.preheader:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[LOOP_ACC:%.*]] = phi i32 [ [[LOOP_ACC_NEXT:%.*]], [[GUARDED2:%.*]] ], [ 0, [[LOOP_PREHEADER:%.*]] ]
+; CHECK-NEXT:    [[I:%.*]] = phi i32 [ [[I_NEXT:%.*]], [[GUARDED2]] ], [ 0, [[LOOP_PREHEADER]] ]
+; CHECK-NEXT:    [[WITHIN_BOUNDS:%.*]] = icmp ult i32 [[I]], [[LENGTH:%.*]]
+; CHECK-NEXT:    br i1 [[WITHIN_BOUNDS]], label [[GUARDED:%.*]], label [[DEOPT:%.*]], !prof !0
+; CHECK:       deopt:
+; CHECK-NEXT:    [[RESULT:%.*]] = phi i32 [ [[LOOP_ACC]], [[LOOP]] ]
+; CHECK-NEXT:    call void @prevent_merging()
+; CHECK-NEXT:    ret i32 [[RESULT]]
+; CHECK:       guarded:
+; CHECK-NEXT:    [[WITHIN_BOUNDS2:%.*]] = icmp ult i32 [[I]], [[LENGTH2:%.*]]
+; CHECK-NEXT:    br i1 [[WITHIN_BOUNDS2]], label [[GUARDED2]], label [[DEOPT2:%.*]], !prof !0
+; CHECK:       deopt2:
+; CHECK-NEXT:    call void @prevent_merging()
+; CHECK-NEXT:    ret i32 -1
+; CHECK:       guarded2:
+; CHECK-NEXT:    [[I_I64:%.*]] = zext i32 [[I]] to i64
+; CHECK-NEXT:    [[ARRAY_I_PTR:%.*]] = getelementptr inbounds i32, i32* [[ARRAY:%.*]], i64 [[I_I64]]
+; CHECK-NEXT:    [[ARRAY_I:%.*]] = load i32, i32* [[ARRAY_I_PTR]], align 4
+; CHECK-NEXT:    [[LOOP_ACC_NEXT]] = add i32 [[LOOP_ACC]], [[ARRAY_I]]
+; CHECK-NEXT:    [[I_NEXT]] = add nuw i32 [[I]], 1
+; CHECK-NEXT:    [[CONTINUE:%.*]] = icmp ult i32 [[I_NEXT]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[CONTINUE]], label [[LOOP]], label [[EXIT:%.*]]
+; CHECK:       exit:
+; CHECK-NEXT:    [[RESULT2:%.*]] = phi i32 [ [[LOOP_ACC_NEXT]], [[GUARDED2]] ]
+; CHECK-NEXT:    ret i32 [[RESULT2]]
+;
+loop.preheader:                                   ; preds = %entry
+  br label %loop
+
+loop:                                             ; preds = %guarded, %loop.preheader
+  %loop.acc = phi i32 [ %loop.acc.next, %guarded2 ], [ 0, %loop.preheader ]
+  %i = phi i32 [ %i.next, %guarded2 ], [ 0, %loop.preheader ]
+  %within.bounds = icmp ult i32 %i, %length
+  br i1 %within.bounds, label %guarded, label %deopt, !prof !0
+
+deopt:                                            ; preds = %loop
+  %result = phi i32 [ %loop.acc, %loop ]
+  call void @prevent_merging()
+  ret i32 %result
+
+guarded:                                          ; preds = %loop
+  %within.bounds2 = icmp ult i32 %i, %length2
+  br i1 %within.bounds2, label %guarded2, label %deopt2, !prof !0
+
+deopt2:                                            ; preds = %loop
+  call void @prevent_merging()
+  ret i32 -1
+
+guarded2:                                          ; preds = %loop
+  %i.i64 = zext i32 %i to i64
+  %array.i.ptr = getelementptr inbounds i32, i32* %array, i64 %i.i64
+  %array.i = load i32, i32* %array.i.ptr, align 4
+  %loop.acc.next = add i32 %loop.acc, %array.i
+  %i.next = add nuw i32 %i, 1
+  %continue = icmp ult i32 %i.next, %n
+  br i1 %continue, label %loop, label %exit
+
+exit:                                             ; preds = %guarded, %entry
+  %result2 = phi i32 [ %loop.acc.next, %guarded2 ]
+  ret i32 %result2
+}
 
 
 declare i32 @llvm.experimental.deoptimize.i32(...)

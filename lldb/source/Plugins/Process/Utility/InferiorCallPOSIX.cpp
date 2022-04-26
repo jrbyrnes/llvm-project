@@ -1,4 +1,4 @@
-//===-- InferiorCallPOSIX.cpp -----------------------------------*- C++ -*-===//
+//===-- InferiorCallPOSIX.cpp ---------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,19 +8,20 @@
 
 #include "InferiorCallPOSIX.h"
 #include "lldb/Core/Address.h"
+#include "lldb/Core/Module.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Core/ValueObject.h"
 #include "lldb/Expression/DiagnosticManager.h"
 #include "lldb/Host/Config.h"
-#include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Symbol/SymbolContext.h"
+#include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Platform.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/ThreadPlanCallFunction.h"
 
-#ifndef LLDB_DISABLE_POSIX
+#if LLDB_ENABLE_POSIX
 #include <sys/mman.h>
 #else
 // define them
@@ -41,13 +42,14 @@ bool lldb_private::InferiorCallMmap(Process *process, addr_t &allocated_addr,
   if (thread == nullptr)
     return false;
 
-  const bool append = true;
-  const bool include_symbols = true;
-  const bool include_inlines = false;
+  ModuleFunctionSearchOptions function_options;
+  function_options.include_symbols = true;
+  function_options.include_inlines = false;
+
   SymbolContextList sc_list;
-  const uint32_t count = process->GetTarget().GetImages().FindFunctions(
-      ConstString("mmap"), eFunctionNameTypeFull, include_symbols,
-      include_inlines, append, sc_list);
+  process->GetTarget().GetImages().FindFunctions(
+      ConstString("mmap"), eFunctionNameTypeFull, function_options, sc_list);
+  const uint32_t count = sc_list.GetSize();
   if (count > 0) {
     SymbolContext sc;
     if (sc_list.GetContextAtIndex(0, sc)) {
@@ -135,13 +137,14 @@ bool lldb_private::InferiorCallMunmap(Process *process, addr_t addr,
   if (thread == nullptr)
     return false;
 
-  const bool append = true;
-  const bool include_symbols = true;
-  const bool include_inlines = false;
+  ModuleFunctionSearchOptions function_options;
+  function_options.include_symbols = true;
+  function_options.include_inlines = false;
+
   SymbolContextList sc_list;
-  const uint32_t count = process->GetTarget().GetImages().FindFunctions(
-      ConstString("munmap"), eFunctionNameTypeFull, include_symbols,
-      include_inlines, append, sc_list);
+  process->GetTarget().GetImages().FindFunctions(
+      ConstString("munmap"), eFunctionNameTypeFull, function_options, sc_list);
+  const uint32_t count = sc_list.GetSize();
   if (count > 0) {
     SymbolContext sc;
     if (sc_list.GetContextAtIndex(0, sc)) {

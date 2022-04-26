@@ -6,13 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_ObjectFilePECOFF_h_
-#define liblldb_ObjectFilePECOFF_h_
+#ifndef LLDB_SOURCE_PLUGINS_OBJECTFILE_PECOFF_OBJECTFILEPECOFF_H
+#define LLDB_SOURCE_PLUGINS_OBJECTFILE_PECOFF_OBJECTFILEPECOFF_H
 
 #include <vector>
 
 #include "lldb/Symbol/ObjectFile.h"
-#include "llvm/Object/Binary.h"
+#include "llvm/Object/COFF.h"
 
 class ObjectFilePECOFF : public lldb_private::ObjectFile {
 public:
@@ -41,13 +41,13 @@ public:
     MachineWcemIpsv2 = 0x169
   };
 
-  ObjectFilePECOFF(const lldb::ModuleSP &module_sp, lldb::DataBufferSP &data_sp,
+  ObjectFilePECOFF(const lldb::ModuleSP &module_sp, lldb::DataBufferSP data_sp,
                    lldb::offset_t data_offset,
                    const lldb_private::FileSpec *file,
                    lldb::offset_t file_offset, lldb::offset_t length);
 
   ObjectFilePECOFF(const lldb::ModuleSP &module_sp,
-                   lldb::DataBufferSP &header_data_sp,
+                   lldb::WritableDataBufferSP header_data_sp,
                    const lldb::ProcessSP &process_sp, lldb::addr_t header_addr);
 
   ~ObjectFilePECOFF() override;
@@ -57,17 +57,17 @@ public:
 
   static void Terminate();
 
-  static lldb_private::ConstString GetPluginNameStatic();
+  static llvm::StringRef GetPluginNameStatic() { return "pe-coff"; }
 
-  static const char *GetPluginDescriptionStatic();
+  static llvm::StringRef GetPluginDescriptionStatic();
 
   static ObjectFile *
-  CreateInstance(const lldb::ModuleSP &module_sp, lldb::DataBufferSP &data_sp,
+  CreateInstance(const lldb::ModuleSP &module_sp, lldb::DataBufferSP data_sp,
                  lldb::offset_t data_offset, const lldb_private::FileSpec *file,
                  lldb::offset_t offset, lldb::offset_t length);
 
   static lldb_private::ObjectFile *CreateMemoryInstance(
-      const lldb::ModuleSP &module_sp, lldb::DataBufferSP &data_sp,
+      const lldb::ModuleSP &module_sp, lldb::WritableDataBufferSP data_sp,
       const lldb::ProcessSP &process_sp, lldb::addr_t header_addr);
 
   static size_t GetModuleSpecifications(const lldb_private::FileSpec &file,
@@ -79,9 +79,10 @@ public:
 
   static bool SaveCore(const lldb::ProcessSP &process_sp,
                        const lldb_private::FileSpec &outfile,
+                       lldb::SaveCoreStyle &core_style,
                        lldb_private::Status &error);
 
-  static bool MagicBytesMatch(lldb::DataBufferSP &data_sp);
+  static bool MagicBytesMatch(lldb::DataBufferSP data_sp);
 
   static lldb::SymbolType MapSymbolType(uint16_t coff_symbol_type);
 
@@ -106,7 +107,7 @@ public:
   //    virtual lldb_private::AddressClass
   //    GetAddressClass (lldb::addr_t file_addr);
 
-  lldb_private::Symtab *GetSymtab() override;
+  void ParseSymtab(lldb_private::Symtab &symtab) override;
 
   bool IsStripped() override;
 
@@ -129,9 +130,7 @@ public:
   ObjectFile::Strata CalculateStrata() override;
 
   // PluginInterface protocol
-  lldb_private::ConstString GetPluginName() override;
-
-  uint32_t GetPluginVersion() override;
+  llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
 
   bool IsWindowsSubsystem();
 
@@ -283,6 +282,8 @@ protected:
   void DumpDependentModules(lldb_private::Stream *s);
 
   llvm::StringRef GetSectionName(const section_header_t &sect);
+  static lldb::SectionType GetSectionType(llvm::StringRef sect_name,
+                                          const section_header_t &sect);
 
   typedef std::vector<section_header_t> SectionHeaderColl;
   typedef SectionHeaderColl::iterator SectionHeaderCollIter;
@@ -291,7 +292,6 @@ protected:
 private:
   bool CreateBinary();
 
-private:
   dos_header_t m_dos_header;
   coff_header_t m_coff_header;
   coff_opt_header_t m_coff_header_opt;
@@ -299,9 +299,8 @@ private:
   lldb::addr_t m_image_base;
   lldb_private::Address m_entry_point_address;
   llvm::Optional<lldb_private::FileSpecList> m_deps_filespec;
-  typedef llvm::object::OwningBinary<llvm::object::Binary> OWNBINType;
-  llvm::Optional<OWNBINType> m_owningbin;
+  std::unique_ptr<llvm::object::COFFObjectFile> m_binary;
   lldb_private::UUID m_uuid;
 };
 
-#endif // liblldb_ObjectFilePECOFF_h_
+#endif // LLDB_SOURCE_PLUGINS_OBJECTFILE_PECOFF_OBJECTFILEPECOFF_H

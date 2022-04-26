@@ -1,6 +1,4 @@
-; RUN: opt < %s -mtriple=x86_64-unknown-linux -pgo-instr-gen -do-comdat-renaming=true -S | FileCheck %s
 ; RUN: opt < %s -mtriple=x86_64-unknown-linux -passes=pgo-instr-gen -do-comdat-renaming=true -S | FileCheck %s
-; RUN: opt < %s -mtriple=x86_64-pc-win32-coff -pgo-instr-gen -do-comdat-renaming=true -S | FileCheck %s
 ; RUN: opt < %s -mtriple=x86_64-pc-win32-coff -passes=pgo-instr-gen -do-comdat-renaming=true -S | FileCheck %s
 
 ; Rename Comdat group and its function.
@@ -9,6 +7,14 @@ $f = comdat any
 define linkonce_odr void @f() comdat($f) {
   ret void
 }
+
+; Not rename Comdat with an alias (an alias is an address-taken user).
+$f_with_alias = comdat any
+; CHECK: $f_with_alias = comdat any
+define linkonce_odr void @f_with_alias() comdat {
+  ret void
+}
+@f_alias = alias void (), void ()* @f_with_alias
 
 ; Not rename Comdat with right linkage.
 $nf = comdat any

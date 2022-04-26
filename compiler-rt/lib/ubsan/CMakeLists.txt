@@ -44,6 +44,9 @@ set(UBSAN_CFLAGS ${SANITIZER_COMMON_CFLAGS})
 append_rtti_flag(OFF UBSAN_CFLAGS)
 append_list_if(SANITIZER_CAN_USE_CXXABI -DUBSAN_CAN_USE_CXXABI UBSAN_CFLAGS)
 
+# Too many existing bugs, needs cleanup.
+append_list_if(COMPILER_RT_HAS_WNO_FORMAT -Wno-format UBSAN_CFLAGS)
+
 set(UBSAN_STANDALONE_CFLAGS ${SANITIZER_COMMON_CFLAGS})
 append_rtti_flag(OFF UBSAN_STANDALONE_CFLAGS)
 append_list_if(SANITIZER_CAN_USE_CXXABI -DUBSAN_CAN_USE_CXXABI UBSAN_STANDALONE_CFLAGS)
@@ -51,6 +54,13 @@ append_list_if(SANITIZER_CAN_USE_CXXABI -DUBSAN_CAN_USE_CXXABI UBSAN_STANDALONE_
 set(UBSAN_CXXFLAGS ${SANITIZER_COMMON_CFLAGS})
 append_rtti_flag(ON UBSAN_CXXFLAGS)
 append_list_if(SANITIZER_CAN_USE_CXXABI -DUBSAN_CAN_USE_CXXABI UBSAN_CXXFLAGS)
+
+# Silence warnings in system headers with MSVC.
+if(NOT CLANG_CL)
+  append_list_if(COMPILER_RT_HAS_EXTERNAL_FLAG "/experimental:external /external:W0 /external:anglebrackets" UBSAN_CXXFLAGS)
+endif()
+
+set(UBSAN_LINK_FLAGS ${SANITIZER_COMMON_LINK_FLAGS})
 
 set(UBSAN_DYNAMIC_LIBS ${SANITIZER_CXX_ABI_LIBRARIES} ${SANITIZER_COMMON_LINK_LIBS})
 
@@ -78,7 +88,7 @@ if(APPLE)
   if(COMPILER_RT_HAS_UBSAN)
     # Initializer of standalone UBSan runtime.
     add_compiler_rt_object_libraries(RTUbsan_standalone
-      OS ${SANITIZER_COMMON_SUPPORTED_OS}
+      OS ${UBSAN_SUPPORTED_OS}
       ARCHS ${UBSAN_SUPPORTED_ARCH}
       SOURCES ${UBSAN_STANDALONE_SOURCES}
       ADDITIONAL_HEADERS ${UBSAN_HEADERS}
@@ -89,7 +99,7 @@ if(APPLE)
 
     add_compiler_rt_runtime(clang_rt.ubsan
       SHARED
-      OS ${SANITIZER_COMMON_SUPPORTED_OS}
+      OS ${UBSAN_SUPPORTED_OS}
       ARCHS ${UBSAN_SUPPORTED_ARCH}
       OBJECT_LIBS RTUbsan
                   RTUbsan_standalone
@@ -103,7 +113,7 @@ if(APPLE)
 
     add_compiler_rt_runtime(clang_rt.ubsan
       STATIC
-      OS ${SANITIZER_COMMON_SUPPORTED_OS}
+      OS ${UBSAN_SUPPORTED_OS}
       ARCHS ${UBSAN_SUPPORTED_ARCH}
       OBJECT_LIBS RTUbsan
                   RTUbsan_standalone
@@ -143,14 +153,16 @@ else()
     add_compiler_rt_object_libraries(UbsanWeakInterception
       ${SANITIZER_COMMON_SUPPORTED_OS}
       ARCHS ${UBSAN_SUPPORTED_ARCH}
-      SOURCES ubsan_win_weak_interception.cpp
+      SOURCES
+        ubsan_win_weak_interception.cpp
       CFLAGS ${UBSAN_CFLAGS} -DSANITIZER_DYNAMIC
       DEFS ${UBSAN_COMMON_DEFINITIONS})
 
     add_compiler_rt_object_libraries(UbsanDllThunk
       ${SANITIZER_COMMON_SUPPORTED_OS}
       ARCHS ${UBSAN_SUPPORTED_ARCH}
-      SOURCES ubsan_win_dll_thunk.cpp
+      SOURCES
+        ubsan_win_dll_thunk.cpp
       CFLAGS ${UBSAN_CFLAGS} -DSANITIZER_DLL_THUNK
       DEFS ${UBSAN_COMMON_DEFINITIONS})
 
@@ -163,7 +175,8 @@ else()
     add_compiler_rt_object_libraries(UbsanDynamicRuntimeThunk
       ${SANITIZER_COMMON_SUPPORTED_OS}
       ARCHS ${UBSAN_SUPPORTED_ARCH}
-      SOURCES ubsan_win_dynamic_runtime_thunk.cpp
+      SOURCES
+        ubsan_win_dynamic_runtime_thunk.cpp
       CFLAGS ${UBSAN_CFLAGS} ${DYNAMIC_RUNTIME_THUNK_CFLAGS}
       DEFS ${UBSAN_COMMON_DEFINITIONS})
   endif()
@@ -198,22 +211,47 @@ else()
       CFLAGS ${UBSAN_CXXFLAGS}
       PARENT_TARGET ubsan)
 
-    if (FUCHSIA OR UNIX)
-      add_compiler_rt_runtime(clang_rt.ubsan_standalone
-        SHARED
+    if (COMPILER_RT_HAS_VERSION_SCRIPT)
+      file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dummy.cpp "")
+      add_compiler_rt_object_libraries(RTUbsan_dynamic_version_script_dummy
         ARCHS ${UBSAN_SUPPORTED_ARCH}
-        OBJECT_LIBS RTSanitizerCommon
-              RTSanitizerCommonLibc
-              RTSanitizerCommonCoverage
-              RTSanitizerCommonSymbolizer
-              RTUbsan
-              RTUbsan_cxx
-              RTUbsan_standalone
-              RTInterception
-        CFLAGS ${UBSAN_CFLAGS}
-        LINK_FLAGS ${SANITIZER_COMMON_LINK_FLAGS}
-        LINK_LIBS ${UBSAN_DYNAMIC_LIBS}
-        PARENT_TARGET ubsan)
+        SOURCES ${CMAKE_CURRENT_BINARY_DIR}/dummy.cpp
+        CFLAGS ${UBSAN_CFLAGS})
+
+      foreach(arch ${UBSAN_SUPPORTED_ARCH})
+        add_sanitizer_rt_version_list(clang_rt.ubsan_standalone-dynamic-${arch}
+                                      LIBS clang_rt.ubsan_standalone-${arch}
+                                           clang_rt.ubsan_standalone_cxx-${arch}
+                                      EXTRA ubsan.syms.extra)
+        set(VERSION_SCRIPT_FLAG
+            -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/clang_rt.ubsan_standalone-dynamic-${arch}.vers)
+        # The Solaris 11.4 linker supports a subset of GNU ld version scripts,
+        # but requires a special option to enable it.
+        if (COMPILER_RT_HAS_GNU_VERSION_SCRIPT_COMPAT)
+            list(APPEND VERSION_SCRIPT_FLAG -Wl,-z,gnu-version-script-compat)
+        endif()
+        set_property(SOURCE
+          ${CMAKE_CURRENT_BINARY_DIR}/dummy.cpp
+          APPEND PROPERTY
+          OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/clang_rt.ubsan_standalone-dynamic-${arch}.vers)
+
+        add_compiler_rt_runtime(clang_rt.ubsan_standalone
+          SHARED
+          ARCHS ${arch}
+          OBJECT_LIBS RTSanitizerCommon
+                RTSanitizerCommonLibc
+                RTSanitizerCommonCoverage
+                RTSanitizerCommonSymbolizer
+                RTUbsan
+                RTUbsan_cxx
+                RTUbsan_standalone
+                RTInterception
+                RTUbsan_dynamic_version_script_dummy
+          CFLAGS ${UBSAN_CFLAGS}
+          LINK_FLAGS ${UBSAN_LINK_FLAGS} ${VERSION_SCRIPT_FLAG}
+          LINK_LIBS ${UBSAN_DYNAMIC_LIBS}
+          PARENT_TARGET ubsan)
+      endforeach()
 
       set(ARCHS_FOR_SYMBOLS ${UBSAN_SUPPORTED_ARCH})
       list(REMOVE_ITEM ARCHS_FOR_SYMBOLS i386)

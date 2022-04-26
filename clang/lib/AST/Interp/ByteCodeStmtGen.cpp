@@ -14,12 +14,10 @@
 #include "PrimType.h"
 #include "Program.h"
 #include "State.h"
+#include "clang/Basic/LLVM.h"
 
 using namespace clang;
 using namespace clang::interp;
-
-template <typename T> using Expected = llvm::Expected<T>;
-template <typename T> using Optional = llvm::Optional<T>;
 
 namespace clang {
 namespace interp {
@@ -190,6 +188,12 @@ bool ByteCodeStmtGen<Emitter>::visitReturnStmt(const ReturnStmt *RS) {
 template <class Emitter>
 bool ByteCodeStmtGen<Emitter>::visitIfStmt(const IfStmt *IS) {
   BlockScope<Emitter> IfScope(this);
+
+  if (IS->isNonNegatedConsteval())
+    return visitStmt(IS->getThen());
+  if (IS->isNegatedConsteval())
+    return IS->getElse() ? visitStmt(IS->getElse()) : true;
+
   if (auto *CondInit = IS->getInit())
     if (!visitStmt(IS->getInit()))
       return false;

@@ -40,13 +40,31 @@ struct S {
 };
 
 struct T {
+  typedef int value_type;
   struct iterator {
-    int& operator*();
-    const int& operator*()const;
+    value_type &operator*();
+    const value_type &operator*() const;
     iterator& operator ++();
     bool operator!=(const iterator &other);
-    void insert(int);
-    int X;
+    void insert(value_type);
+    value_type X;
+  };
+  iterator begin();
+  iterator end();
+};
+
+struct Q {
+  typedef int value_type;
+  struct const_iterator {
+    value_type &operator*();
+    const value_type &operator*() const;
+    const_iterator &operator++();
+    bool operator!=(const const_iterator &other);
+    void insert(value_type);
+    value_type X;
+  };
+  struct iterator {
+    operator const_iterator() const;
   };
   iterator begin();
   iterator end();

@@ -17,25 +17,32 @@
 namespace lld {
 namespace wasm {
 
+// For --unresolved-symbols.
+enum class UnresolvedPolicy { ReportError, Warn, Ignore, ImportDynamic };
+
 // This struct contains the global configuration for the linker.
 // Most fields are direct mapping from the command line options
 // and such fields have the same name as the corresponding options.
 // Most fields are initialized by the driver.
 struct Configuration {
-  bool allowUndefined;
+  bool bsymbolic;
   bool checkFeatures;
   bool compressRelocations;
   bool demangle;
   bool disableVerify;
+  bool experimentalPic;
   bool emitRelocs;
   bool exportAll;
   bool exportDynamic;
   bool exportTable;
+  bool extendedConst;
   bool growableTable;
   bool gcSections;
   bool importMemory;
   bool sharedMemory;
   bool importTable;
+  bool importUndefined;
+  llvm::Optional<bool> is64;
   bool mergeDataSegments;
   bool pie;
   bool printGcSections;
@@ -46,36 +53,48 @@ struct Configuration {
   bool stripDebug;
   bool stackFirst;
   bool trace;
-  uint32_t globalBase;
-  uint32_t initialMemory;
-  uint32_t maxMemory;
-  uint32_t zStackSize;
+  uint64_t globalBase;
+  uint64_t initialMemory;
+  uint64_t maxMemory;
+  uint64_t zStackSize;
   unsigned ltoPartitions;
   unsigned ltoo;
   unsigned optimize;
-  unsigned thinLTOJobs;
+  llvm::StringRef thinLTOJobs;
+  bool ltoDebugPassManager;
+  UnresolvedPolicy unresolvedSymbols;
 
   llvm::StringRef entry;
+  llvm::StringRef mapFile;
   llvm::StringRef outputFile;
   llvm::StringRef thinLTOCacheDir;
 
   llvm::StringSet<> allowUndefinedSymbols;
   llvm::StringSet<> exportedSymbols;
+  std::vector<llvm::StringRef> requiredExports;
   std::vector<llvm::StringRef> searchPaths;
   llvm::CachePruningPolicy thinLTOCachePolicy;
   llvm::Optional<std::vector<std::string>> features;
 
   // The following config options do not directly correspond to any
-  // particualr command line options.
+  // particular command line options.
 
   // True if we are creating position-independent code.
   bool isPic;
 
+  // True if we have an MVP input that uses __indirect_function_table and which
+  // requires it to be allocated to table number 0.
+  bool legacyFunctionTable = false;
+
   // The table offset at which to place function addresses.  We reserve zero
-  // for the null function pointer.  This gets set to 1 for exectuables and 0
+  // for the null function pointer.  This gets set to 1 for executables and 0
   // for shared libraries (since they always added to a dynamic offset at
   // runtime).
   uint32_t tableBase = 0;
+
+  // Will be set to true if bss data segments should be emitted. In most cases
+  // this is not necessary.
+  bool emitBssSegments = false;
 };
 
 // The only instance of Configuration struct.

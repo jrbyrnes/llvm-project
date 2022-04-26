@@ -106,6 +106,7 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Target/TargetMachine.h"
 #include <cassert>
 
@@ -303,7 +304,7 @@ bool AArch64SpeculationHardening::instrumentControlFlow(
     // sure if that would actually result in a big performance difference
     // though. Maybe RegisterScavenger::findSurvivorBackwards has some logic
     // already to do this - but it's unclear if that could easily be used here.
-    unsigned TmpReg = RS.FindUnusedReg(&AArch64::GPR64commonRegClass);
+    Register TmpReg = RS.FindUnusedReg(&AArch64::GPR64commonRegClass);
     LLVM_DEBUG(dbgs() << "RS finds "
                       << ((TmpReg == 0) ? "no register " : "register ");
                if (TmpReg != 0) dbgs() << printReg(TmpReg, TRI) << " ";

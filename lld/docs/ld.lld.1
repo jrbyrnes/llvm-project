@@ -72,10 +72,22 @@ field to the specified name.
 Link against shared libraries.
 .It Fl -Bstatic , Fl -static , Fl -dn
 Do not link against shared libraries.
-.It Fl -Bsymbolic
-Bind defined symbols locally.
-.It Fl -Bsymbolic-functions
-Bind defined function symbols locally.
+.It Fl Bno-symbolic
+Don't bind default visibility defined symbols locally for
+.Fl shared
+(default).
+.It Fl Bsymbolic
+Bind default visibility defined symbols locally for
+.Fl shared.
+Also set the
+.Dv DF_SYMBOLIC
+flag.
+.It Fl Bsymbolic-functions
+Bind default visibility defined function symbols locally for
+.Fl shared.
+.It Fl Bsymbolic-non-weak-functions
+Bind default visibility defined STB_GLOBAL function symbols locally for
+.Fl shared.
 .It Fl -build-id Ns = Ns Ar value
 Generate a build ID note.
 .Ar value
@@ -123,10 +135,15 @@ may be
 .Cm none
 or
 .Cm zlib .
+The default compression level is 1 (fastest) as the debug info usually
+compresses well at that level, but if you want to compress it more,
+you can specify
+.Fl O2
+to set the compression level to 6.
 .It Fl -cref
-Output cross reference table.
-.It Fl -define-common , Fl d
-Assign space to common symbols.
+Output cross reference table. If
+.Fl Map
+is specified, print to the map file.
 .It Fl -defsym Ns = Ns Ar symbol Ns = Ns Ar expression
 Define a symbol alias.
 .Ar expression
@@ -150,8 +167,15 @@ Specify the dynamic linker to be used for a dynamically linked executable.
 This is recorded in an ELF segment of type
 .Dv PT_INTERP .
 .It Fl -dynamic-list Ns = Ns Ar file
-Read a list of dynamic symbols from
-.Ar file .
+Similar to
+.Cm --export-dynamic-symbol-list .
+When creating a shared object, implies
+.Cm -Bsymbolic
+but does not set DF_SYMBOLIC
+.It Fl -EB
+Select the big-endian format in the OUTPUT_FORMAT command.
+.It Fl -EL
+Select the little-endian format in the OUTPUT_FORMAT command.
 .It Fl -eh-frame-hdr
 Request creation of
 .Li .eh_frame_hdr
@@ -172,6 +196,19 @@ Maximum number of errors to emit before stopping.
 A value of zero indicates that there is no limit.
 .It Fl -error-unresolved-symbols
 Report unresolved symbols as errors.
+.It Fl -error-handing-script Ns = Ns Ar script_path
+Call script
+.Ar script_path
+upon some error, with
+.Ar tag
+as first argument, and an extra parameter as second argument. The script is
+expected to return 0 on success. Any other value is considered a generic error.
+.Ar tag
+may be
+.Cm missing-lib
+followed by the name of the missing library.
+.Cm undefined-symbol
+followed by the name of the undefined symbol.
 .It Fl -execute-only
 Mark executable sections unreadable.
 This option is currently only supported on AArch64.
@@ -179,10 +216,20 @@ This option is currently only supported on AArch64.
 Exclude static libraries from automatic export.
 .It Fl -export-dynamic , Fl E
 Put symbols in the dynamic symbol table.
-.It Fl -export-dynamic-symbol Ns = Ns Ar symbol
-Include
-.Ar symbol
-in the dynamic symbol table.
+.It Fl -export-dynamic-symbol Ns = Ns Ar glob
+(executable) Put matched non-local defined symbols to the dynamic symbol table.
+(shared object) References to matched non-local STV_DEFAULT symbols shouldn't be bound to definitions within the shared object even if they would otherwise be due to
+.Cm -Bsymbolic
+,
+.Cm -Bsymbolic-functions
+or
+.Cm --dynamic-list
+.It Fl -export-dynamic-symbol-list Ns = Ns Ar file
+Read a list of dynamic symbol patterns from
+.Ar file .
+Apply
+.Cm --export-dynamic-symbol
+on each pattern.
 .It Fl -fatal-warnings
 Treat warnings as errors.
 .It Fl -filter Ns = Ns Ar value , Fl F Ar value
@@ -191,8 +238,6 @@ Set the
 field to the specified value.
 .It Fl -fini Ns = Ns Ar symbol
 Specify a finalizer function.
-.It Fl -force-bti
-Force enable AArch64 BTI instruction in PLT, warn if Input ELF file does not have GNU_PROPERTY_AARCH64_FEATURE_1_BTI property.
 .It Fl -format Ns = Ns Ar input-format , Fl b Ar input-format
 Specify the format of the inputs following this option.
 .Ar input-format
@@ -279,14 +324,14 @@ Always set
 for shared libraries.
 .It Fl -no-color-diagnostics
 Do not use colors in diagnostics.
-.It Fl -no-define-common
-Do not assign space to common symbols.
 .It Fl -no-demangle
 Do not demangle symbol names.
 .It Fl -no-dynamic-linker
 Inhibit output of an
 .Li .interp
 section.
+.It Fl -no-fortran-common
+Do not search archive members for definitions to override COMMON symbols.
 .It Fl -no-gc-sections
 Disable garbage collection of unused sections.
 .It Fl -no-gnu-unique
@@ -297,10 +342,10 @@ Disable merging .ARM.exidx entries.
 Page align sections.
 .It Fl -no-omagic
 Do not set the text data sections to be writable, page align sections.
+.It Fl -no-relax
+Disable target-specific relaxations. For x86-64 this disables R_X86_64_GOTPCRELX and R_X86_64_REX_GOTPCRELX GOT optimization.
 .It Fl -no-rosegment
 Do not put read-only non-executable sections in their own segment.
-.It Fl -no-threads
-Do not run the linker multi-threaded.
 .It Fl -no-undefined-version
 Report version scripts that refer undefined symbols.
 .It Fl -no-undefined
@@ -332,7 +377,9 @@ Disable string merging.
 .It Cm 1
 Enable string merging.
 .It Cm 2
-Enable string tail merging.
+Enable string tail merging. If
+.Fl -compress-debug-sections
+is given, compress debug sections at compression level 6 instead of 1.
 .El
 .Pp
 .Fl O Ns Cm 1
@@ -401,18 +448,33 @@ If
 .Fl -use-android-relr-tags
 is specified, use SHT_ANDROID_RELR instead of SHT_RELR.
 .Pp
-.It Fl -pac-plt
-AArch64 only, use pointer authentication in PLT.
 .It Fl -pic-veneer
 Always generate position independent thunks.
 .It Fl -pie , Fl -pic-executable
 Create a position independent executable.
+.It Fl -power10-stubs Ns = Ns Cm mode
+Whether to use Power10 instructions in call stubs for R_PPC64_REL24_NOTOC and TOC/NOTOC interworking.
+.Ar mode
+may be:
+.Pp
+.Bl -tag -width 2n -compact
+.It Cm yes
+(default) Use.
+.It Cm auto
+Currently the same as yes.
+.It Cm no
+Don't use.
+.El
+
 .It Fl -print-gc-sections
 List removed unused sections.
 .It Fl -print-icf-sections
 List identical folded sections.
 .It Fl -print-map
 Print a link map to the standard output.
+.It Fl -print-archive-stats Ns = Ns Ar file
+Write archive usage statistics to the specified file.
+Print the numbers of members and fetched members for each archive.
 .It Fl -push-state
 Save the current state of
 .Fl -as-needed ,
@@ -420,7 +482,7 @@ Save the current state of
 and
 .Fl -whole-archive.
 .It Fl -pop-state
-Undo the effect of
+Restore the states saved by
 .Fl -push-state.
 .It Fl -relocatable , Fl r
 Create relocatable object file.
@@ -453,6 +515,9 @@ were concatenated in the order they appeared on the command line.
 Set address of section.
 .It Fl -shared , Fl -Bsharable
 Build a shared object.
+.It Fl -shuffle-sections Ns = Ns Ar seed
+Shuffle matched sections using the given seed before mapping them to the output sections.
+If -1, reverse the section order. If 0, use a random seed.
 .It Fl -soname Ns = Ns Ar value , Fl h Ar value
 Set
 .Dv DT_SONAME
@@ -467,6 +532,8 @@ Start a grouping of objects that should be treated as if they were together
 in an archive.
 .It Fl -strip-all , Fl s
 Strip all symbols.
+Implies
+.Fl -strip-debug .
 .It Fl -strip-debug , Fl S
 Strip debugging information.
 .It Fl -symbol-ordering-file Ns = Ns Ar file
@@ -520,9 +587,19 @@ Path to ThinLTO cached object file directory.
 Pruning policy for the ThinLTO cache.
 .It Fl -thinlto-jobs Ns = Ns Ar value
 Number of ThinLTO jobs.
-.It Fl -threads
-Run the linker multi-threaded.
-This option is enabled by default.
+.It Fl -threads Ns = Ns Ar N
+Number of threads.
+.Cm all
+(default) means all of concurrent threads supported.
+.Cm 1
+disables multi-threading.
+.It Fl -time-trace
+Record time trace.
+.It Fl -time-trace-file Ns = Ns Ar file
+Write time trace output to
+.Ar file .
+.It Fl -time-trace-granularity Ns = Ns Ar value
+Minimum time granularity (in microseconds) traced by time profiler.
 .It Fl -trace
 Print the names of the input files.
 .It Fl -trace-symbol Ns = Ns Ar symbol , Fl y Ar symbol
@@ -548,6 +625,8 @@ matches the characters within brackets.
 All symbols that match
 a given pattern are handled as if they were given as arguments of
 .Fl -undefined .
+.It Fl -unique
+Creates a separate output section for every orphan input section.
 .It Fl -unresolved-symbols Ns = Ns Ar value
 Determine how to handle unresolved symbols.
 .It Fl -use-android-relr-tags
@@ -566,6 +645,10 @@ Read version script from
 Warn about reverse or cyclic dependencies to or between static archives.
 This can be used to ensure linker invocation remains compatible with
 traditional Unix-like linkers.
+.It Fl -warn-backrefs-exclude Ns = Ns Ar glob
+Glob describing an archive (or an object file within --start-lib)
+which should be ignored for
+.Fl -warn-backrefs
 .It Fl -warn-common
 Warn about duplicate common symbols.
 .It Fl -warn-ifunc-textrel
@@ -587,17 +670,50 @@ linkers, and may be removed in the future.
 Report unresolved symbols as warnings.
 .It Fl -whole-archive
 Force load of all members in a static library.
+.It Fl -why-extract Ns = Ns Ar file
+Print to a file about why archive members are extracted.
 .It Fl -wrap Ns = Ns Ar symbol
-Use wrapper functions for symbol.
+Redirect
+.Ar symbol
+references to
+.Ar __wrap_symbol
+and
+.Ar __real_symbol
+references to
+.Ar symbol.
 .It Fl z Ar option
 Linker option extensions.
 .Bl -tag -width indent -compact
+.Pp
+.It Cm dead-reloc-in-nonalloc Ns = Ns Ar section_glob=value
+Resolve a relocation in a matched non-SHF_ALLOC section referencing a discarded symbol to
+.Ar value
+Accepts globs, in the event of a section matching more than one option, the last
+option takes precedence. An order of least specific to most specific match is
+recommended.
 .Pp
 .It Cm execstack
 Make the main stack executable.
 Stack permissions are recorded in the
 .Dv PT_GNU_STACK
 segment.
+.Pp
+.It Cm bti-report Ns = Ns Ar [none|warning|error]
+Specify how to report the missing GNU_PROPERTY_AARCH64_FEATURE_1_BTI property.
+.Cm none
+is the default, linker will not report the missing property otherwise will be reported as a warning or an error.
+.Pp
+.It Cm cet-report Ns = Ns Ar [none|warning|error]
+Specify how to report the missing GNU_PROPERTY_X86_FEATURE_1_IBT or GNU_PROPERTY_X86_FEATURE_1_SHSTK properties.
+.Cm none
+is the default, linker will not report the missing property otherwise will be reported as a warning or an error.
+.Pp
+.It Cm force-bti
+Force enable AArch64 BTI instruction in PLT, warn if Input ELF file does not have GNU_PROPERTY_AARCH64_FEATURE_1_BTI property.
+.Pp
+.It Cm force-ibt
+Force enable Intel Indirect Branch Tracking in PLT, warn if an input ELF file
+does not have GNU_PROPERTY_X86_FEATURE_1_IBT property.
 .Pp
 .It Cm global
 Sets the
@@ -655,8 +771,13 @@ Set the
 flag to indicate that the object may not be opened by
 .Xr dlopen 3 .
 .Pp
+.It Cm nognustack
+Do not emit the
+.Dv PT_GNU_STACK
+segment.
+.Pp
 .It Cm norelro
-Do not indicate that portions of the object shold be mapped read-only
+Do not indicate that portions of the object should be mapped read-only
 after initial relocation processing.
 The object will omit the
 .Dv PT_GNU_RELRO
@@ -683,6 +804,21 @@ flag to indicate that the object requires
 $ORIGIN
 processing.
 .Pp
+.It Cm pac-plt
+AArch64 only, use pointer authentication in PLT.
+.Pp
+.It Cm pack-relative-relocs
+Similar to
+.Cm -pack-dyn-relocs=relr
+, but synthesizes the GLIBC_ABI_DT_RELR version dependency if there is a GLIBC_2.* version dependency.
+glibc ld.so rejects loading a dynamically linked object without the GLIBC_ABI_DT_RELR version dependency.
+.Pp
+.It Cm rel
+Use REL format for dynamic relocations.
+.Pp
+.It Cm rela
+Use RELA format for dynamic relocations.
+.Pp
 .It Cm retpolineplt
 Emit retpoline format PLT entries as a mitigation for CVE-2017-5715.
 .Pp
@@ -705,6 +841,9 @@ allows overlap between two executable segments, or two non-executable segments.
 .Cm separate-loadable-segments
 disallows overlap.
 .Pp
+.It Cm shstk
+x86 only, use shadow stack.
+.Pp
 .It Cm stack-size Ns = Ns Ar size
 Set the main thread's stack size to
 .Ar size .
@@ -712,6 +851,12 @@ The stack size is recorded as the size of the
 .Ar size .
 .Dv PT_GNU_STACK
 program segment.
+.Pp
+.It Cm start-stop-gc
+Don't let __start_/__stop_ references retain the associated C identifier name sections (default).
+.Pp
+.It Cm nostart-stop-gc
+Let __start_/__stop_ references retain the associated C identifier name sections.
 .Pp
 .It Cm text
 Do not allow relocations against read-only segments.

@@ -115,6 +115,11 @@ class Compilation {
   /// Optional redirection for stdin, stdout, stderr.
   std::vector<Optional<StringRef>> Redirects;
 
+  /// Callback called after compilation job has been finished.
+  /// Arguments of the callback are the compilation job as an instance of
+  /// class Command and the exit status of the corresponding child process.
+  std::function<void(const Command &, int)> PostCallback;
+
   /// Whether we're compiling for diagnostic purposes.
   bool ForDiagnostics = false;
 
@@ -138,6 +143,8 @@ public:
     return ActiveOffloadMask & Kind;
   }
 
+  unsigned getActiveOffloadKinds() const { return ActiveOffloadMask; }
+
   /// Iterator that visits device toolchains of a given kind.
   using const_offload_toolchains_iterator =
       const std::multimap<Action::OffloadKind,
@@ -148,6 +155,11 @@ public:
 
   template <Action::OffloadKind Kind>
   const_offload_toolchains_range getOffloadToolChains() const {
+    return OrderedOffloadingToolchains.equal_range(Kind);
+  }
+
+  const_offload_toolchains_range
+  getOffloadToolChains(Action::OffloadKind Kind) const {
     return OrderedOffloadingToolchains.equal_range(Kind);
   }
 
@@ -210,6 +222,14 @@ public:
 
   const ArgStringMap &getFailureResultFiles() const {
     return FailureResultFiles;
+  }
+
+  /// Installs a handler that is executed when a compilation job is finished.
+  /// The arguments of the callback specify the compilation job as an instance
+  /// of class Command and the exit status of the child process executed that
+  /// job.
+  void setPostCallback(const std::function<void(const Command &, int)> &CB) {
+    PostCallback = CB;
   }
 
   /// Returns the sysroot path.
@@ -296,6 +316,10 @@ public:
 
   /// Return whether an error during the parsing of the input args.
   bool containsError() const { return ContainsError; }
+
+  /// Force driver to fail before toolchain is created. This is necessary when
+  /// error happens in action builder.
+  void setContainsError() { ContainsError = true; }
 
   /// Redirect - Redirect output of this compilation. Can only be done once.
   ///

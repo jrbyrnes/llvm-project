@@ -121,7 +121,7 @@ const MappingDesc kMemoryLayout[] = {
     // The mappings below are used only for 48-bits VMA.
     // TODO(unknown): 48-bit mapping ony covers the usual PIE, non-PIE
     // segments and some more segments totalizing 262144GB of VMA (which cover
-    // only 0.32% of all 48-bit VMA). Memory avaliability can be increase by
+    // only 0.32% of all 48-bit VMA). Memory availability can be increase by
     // adding multiple application segments like 39 and 42 mapping.
     {0x0040000000000ULL, 0x0041000000000ULL, MappingDesc::INVALID, "invalid"},
     {0x0041000000000ULL, 0x0042000000000ULL, MappingDesc::APP, "app-10"},
@@ -181,6 +181,20 @@ const MappingDesc kMemoryLayout[] = {
 #define MEM_TO_SHADOW(mem) (LINEARIZE_MEM((mem)) + 0x080000000000ULL)
 #define SHADOW_TO_ORIGIN(shadow) (((uptr)(shadow)) + 0x140000000000ULL)
 
+#elif SANITIZER_LINUX && SANITIZER_S390_64
+const MappingDesc kMemoryLayout[] = {
+    {0x000000000000ULL, 0x040000000000ULL, MappingDesc::APP, "low memory"},
+    {0x040000000000ULL, 0x080000000000ULL, MappingDesc::INVALID, "invalid"},
+    {0x080000000000ULL, 0x180000000000ULL, MappingDesc::SHADOW, "shadow"},
+    {0x180000000000ULL, 0x1C0000000000ULL, MappingDesc::INVALID, "invalid"},
+    {0x1C0000000000ULL, 0x2C0000000000ULL, MappingDesc::ORIGIN, "origin"},
+    {0x2C0000000000ULL, 0x440000000000ULL, MappingDesc::INVALID, "invalid"},
+    {0x440000000000ULL, 0x500000000000ULL, MappingDesc::APP, "high memory"}};
+
+#define MEM_TO_SHADOW(mem) \
+  ((((uptr)(mem)) & ~0xC00000000000ULL) + 0x080000000000ULL)
+#define SHADOW_TO_ORIGIN(shadow) (((uptr)(shadow)) + 0x140000000000ULL)
+
 #elif SANITIZER_FREEBSD && SANITIZER_WORDSIZE == 64
 
 // Low memory: main binary, MAP_32BIT mappings and modules
@@ -205,7 +219,7 @@ const MappingDesc kMemoryLayout[] = {
 #elif SANITIZER_NETBSD || (SANITIZER_LINUX && SANITIZER_WORDSIZE == 64)
 
 #ifdef MSAN_LINUX_X86_64_OLD_MAPPING
-// Requries PIE binary and ASLR enabled.
+// Requires PIE binary and ASLR enabled.
 // Main thread stack and DSOs at 0x7f0000000000 (sometimes 0x7e0000000000).
 // Heap at 0x600000000000.
 const MappingDesc kMemoryLayout[] = {
@@ -282,7 +296,6 @@ char *GetProcSelfMaps();
 void InitializeInterceptors();
 
 void MsanAllocatorInit();
-void MsanAllocatorThreadFinish();
 void MsanDeallocate(StackTrace *stack, void *ptr);
 
 void *msan_malloc(uptr size, StackTrace *stack);
@@ -301,14 +314,7 @@ void InstallAtExitHandler();
 
 const char *GetStackOriginDescr(u32 id, uptr *pc);
 
-void EnterSymbolizer();
-void ExitSymbolizer();
-bool IsInSymbolizer();
-
-struct SymbolizerScope {
-  SymbolizerScope() { EnterSymbolizer(); }
-  ~SymbolizerScope() { ExitSymbolizer(); }
-};
+bool IsInSymbolizerOrUnwider();
 
 void PrintWarning(uptr pc, uptr bp);
 void PrintWarningWithOrigin(uptr pc, uptr bp, u32 origin);
@@ -352,15 +358,6 @@ const int STACK_TRACE_TAG_POISON = StackTrace::TAG_CUSTOM + 1;
     stack.Unwind(pc, bp, nullptr, common_flags()->fast_unwind_on_fatal); \
   }
 
-#define GET_FATAL_STACK_TRACE_HERE \
-  GET_FATAL_STACK_TRACE_PC_BP(StackTrace::GetCurrentPc(), GET_CURRENT_FRAME())
-
-#define PRINT_CURRENT_STACK_CHECK() \
-  {                                 \
-    GET_FATAL_STACK_TRACE_HERE;     \
-    stack.Print();                  \
-  }
-
 class ScopedThreadLocalStateBackup {
  public:
   ScopedThreadLocalStateBackup() { Backup(); }
@@ -377,22 +374,5 @@ void MsanTSDSet(void *tsd);
 void MsanTSDDtor(void *tsd);
 
 }  // namespace __msan
-
-#define MSAN_MALLOC_HOOK(ptr, size)       \
-  do {                                    \
-    if (&__sanitizer_malloc_hook) {       \
-      UnpoisonParam(2);                   \
-      __sanitizer_malloc_hook(ptr, size); \
-    }                                     \
-    RunMallocHooks(ptr, size);            \
-  } while (false)
-#define MSAN_FREE_HOOK(ptr)       \
-  do {                            \
-    if (&__sanitizer_free_hook) { \
-      UnpoisonParam(1);           \
-      __sanitizer_free_hook(ptr); \
-    }                             \
-    RunFreeHooks(ptr);            \
-  } while (false)
 
 #endif  // MSAN_H

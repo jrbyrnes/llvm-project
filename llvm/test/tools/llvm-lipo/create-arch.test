@@ -1,5 +1,5 @@
-# RUN: yaml2obj %p/Inputs/i386-slice.yaml > %t-i386.o
-# RUN: yaml2obj %p/Inputs/x86_64-slice.yaml > %t-x86_64.o
+# RUN: yaml2obj %p/Inputs/i386-slice.yaml -o %t-i386.o
+# RUN: yaml2obj %p/Inputs/x86_64-slice.yaml -o %t-x86_64.o
 
 # RUN: llvm-lipo %t-i386.o %t-x86_64.o -create -output %t-universal.o
 # RUN: llvm-lipo %t-i386.o -arch x86_64 %t-x86_64.o -create -output %t-universal-1.o
@@ -13,5 +13,5 @@
 # # RUN: not llvm-lipo -arch i3866 %t-32.o -create -o /dev/null 2>&1 | FileCheck --check-prefix=INVALID_ARCH %s
 # INVALID_ARCH: error: Invalid architecture: i3866
 #
-# RUN: not llvm-lipo -arch i386 %t-33.o -create -o /dev/null 2>&1 | FileCheck --check-prefix=INVALID_FILE %s
-# INVALID_FILE: {{[nN]}}o such file or directory
+# RUN: not llvm-lipo -arch i386 %t-33.o -create -o /dev/null 2>&1 | FileCheck -DMSG=%errc_ENOENT --check-prefix=INVALID_FILE %s
+# INVALID_FILE: [[MSG]]

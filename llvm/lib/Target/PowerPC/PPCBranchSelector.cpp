@@ -31,6 +31,9 @@ using namespace llvm;
 #define DEBUG_TYPE "ppc-branch-select"
 
 STATISTIC(NumExpanded, "Number of branches expanded to long format");
+STATISTIC(NumPrefixed, "Number of prefixed instructions");
+STATISTIC(NumPrefixedAligned,
+          "Number of prefixed instructions that have been aligned");
 
 namespace {
   struct PPCBSel : public MachineFunctionPass {
@@ -82,7 +85,7 @@ FunctionPass *llvm::createPPCBranchSelectionPass() {
 unsigned PPCBSel::GetAlignmentAdjustment(MachineBasicBlock &MBB,
                                          unsigned Offset) {
   const Align Alignment = MBB.getAlignment();
-  if (Alignment == Align::None())
+  if (Alignment == Align(1))
     return 0;
 
   const Align ParentAlign = MBB.getParent()->getAlignment();
@@ -117,16 +120,13 @@ unsigned PPCBSel::ComputeBlockSizes(MachineFunction &Fn) {
       static_cast<const PPCInstrInfo *>(Fn.getSubtarget().getInstrInfo());
   unsigned FuncSize = GetInitialOffset(Fn);
 
-  for (MachineFunction::iterator MFI = Fn.begin(), E = Fn.end(); MFI != E;
-       ++MFI) {
-    MachineBasicBlock *MBB = &*MFI;
-
+  for (MachineBasicBlock &MBB : Fn) {
     // The end of the previous block may have extra nops if this block has an
     // alignment requirement.
-    if (MBB->getNumber() > 0) {
-      unsigned AlignExtra = GetAlignmentAdjustment(*MBB, FuncSize);
+    if (MBB.getNumber() > 0) {
+      unsigned AlignExtra = GetAlignmentAdjustment(MBB, FuncSize);
 
-      auto &BS = BlockSizes[MBB->getNumber()-1];
+      auto &BS = BlockSizes[MBB.getNumber()-1];
       BS.first += AlignExtra;
       BS.second = AlignExtra;
 
@@ -134,13 +134,41 @@ unsigned PPCBSel::ComputeBlockSizes(MachineFunction &Fn) {
     }
 
     unsigned BlockSize = 0;
-    for (MachineInstr &MI : *MBB) {
-      BlockSize += TII->getInstSizeInBytes(MI);
+    unsigned UnalignedBytesRemaining = 0;
+    for (MachineInstr &MI : MBB) {
+      unsigned MINumBytes = TII->getInstSizeInBytes(MI);
       if (MI.isInlineAsm() && (FirstImpreciseBlock < 0))
-        FirstImpreciseBlock = MBB->getNumber();
+        FirstImpreciseBlock = MBB.getNumber();
+      if (TII->isPrefixed(MI.getOpcode())) {
+        NumPrefixed++;
+
+        // All 8 byte instructions may require alignment. Each 8 byte
+        // instruction may be aligned by another 4 bytes.
+        // This means that an 8 byte instruction may require 12 bytes
+        // (8 for the instruction itself and 4 for the alignment nop).
+        // This will happen if an 8 byte instruction can be aligned to 64 bytes
+        // by only adding a 4 byte nop.
+        // We don't know the alignment at this point in the code so we have to
+        // adopt a more pessimistic approach. If an instruction may need
+        // alignment we assume that it does need alignment and add 4 bytes to
+        // it. As a result we may end up with more long branches than before
+        // but we are in the safe position where if we need a long branch we
+        // have one.
+        // The if statement checks to make sure that two 8 byte instructions
+        // are at least 64 bytes away from each other. It is not possible for
+        // two instructions that both need alignment to be within 64 bytes of
+        // each other.
+        if (!UnalignedBytesRemaining) {
+          BlockSize += 4;
+          UnalignedBytesRemaining = 60;
+          NumPrefixedAligned++;
+        }
+      }
+      UnalignedBytesRemaining -= std::min(UnalignedBytesRemaining, MINumBytes);
+      BlockSize += MINumBytes;
     }
 
-    BlockSizes[MBB->getNumber()].first = BlockSize;
+    BlockSizes[MBB.getNumber()].first = BlockSize;
     FuncSize += BlockSize;
   }
 
@@ -150,16 +178,13 @@ unsigned PPCBSel::ComputeBlockSizes(MachineFunction &Fn) {
 /// Modify the basic block align adjustment.
 void PPCBSel::modifyAdjustment(MachineFunction &Fn) {
   unsigned Offset = GetInitialOffset(Fn);
-  for (MachineFunction::iterator MFI = Fn.begin(), E = Fn.end(); MFI != E;
-       ++MFI) {
-    MachineBasicBlock *MBB = &*MFI;
-
-    if (MBB->getNumber() > 0) {
-      auto &BS = BlockSizes[MBB->getNumber()-1];
+  for (MachineBasicBlock &MBB : Fn) {
+    if (MBB.getNumber() > 0) {
+      auto &BS = BlockSizes[MBB.getNumber()-1];
       BS.first -= BS.second;
       Offset -= BS.second;
 
-      unsigned AlignExtra = GetAlignmentAdjustment(*MBB, Offset);
+      unsigned AlignExtra = GetAlignmentAdjustment(MBB, Offset);
 
       BS.first += AlignExtra;
       BS.second = AlignExtra;
@@ -167,7 +192,7 @@ void PPCBSel::modifyAdjustment(MachineFunction &Fn) {
       Offset += AlignExtra;
     }
 
-    Offset += BlockSizes[MBB->getNumber()].first;
+    Offset += BlockSizes[MBB.getNumber()].first;
   }
 }
 
@@ -384,5 +409,5 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   }
 
   BlockSizes.clear();
-  return true;
+  return EverMadeChange;
 }

@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 %s -fsyntax-only -triple i386-unknown-unknown -verify
-// RUN: %clang_cc1 %s -fsyntax-only -triple i386-unknown-unknown -fms-compatibility -DWIN -verify
+// RUN: %clang_cc1 %s -fsyntax-only -Wno-strict-prototypes -triple i386-unknown-unknown -verify
+// RUN: %clang_cc1 %s -fsyntax-only -Wno-strict-prototypes -triple i386-unknown-unknown -fms-compatibility -DWIN -verify
 
 void __attribute__((fastcall)) foo(float *a) {
 }
@@ -31,7 +31,7 @@ void (__attribute__((fastcall)) *pfoo)(float*) = foo;
 
 void (__attribute__((stdcall)) *pbar)(float*) = bar;
 
-void (__attribute__((cdecl)) *ptest1)(void) = test1; // expected-warning {{incompatible pointer types}}
+void (__attribute__((cdecl)) *ptest1)(void) = test1; // expected-warning {{incompatible function pointer types}}
 
 void (*pctest0)() = ctest0;
 

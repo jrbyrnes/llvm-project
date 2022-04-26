@@ -18,8 +18,7 @@ set(INTERCEPTION_TEST_CFLAGS_COMMON
   -I${COMPILER_RT_SOURCE_DIR}/lib/interception
   -fno-rtti
   -O2
-  -Werror=sign-compare
-  -Wno-non-virtual-dtor)
+  -Werror=sign-compare)
 
 set(INTERCEPTION_TEST_LINK_FLAGS_COMMON
   ${COMPILER_RT_UNITTEST_LINK_FLAGS})
@@ -96,7 +95,7 @@ macro(add_interception_tests_for_arch arch)
     RUNTIME ${INTERCEPTION_COMMON_LIB}
     SOURCES ${INTERCEPTION_UNITTESTS} ${COMPILER_RT_GTEST_SOURCE}
     COMPILE_DEPS ${INTERCEPTION_TEST_HEADERS}
-    DEPS gtest
+    DEPS llvm_gtest
     CFLAGS ${INTERCEPTION_TEST_CFLAGS_COMMON}
     LINK_FLAGS ${INTERCEPTION_TEST_LINK_FLAGS_COMMON})
 endmacro()

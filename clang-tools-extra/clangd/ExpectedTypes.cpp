@@ -13,7 +13,6 @@
 #include "clang/Index/USRGeneration.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "llvm/ADT/None.h"
-#include "llvm/ADT/STLExtras.h"
 
 namespace clang {
 namespace clangd {
@@ -44,18 +43,16 @@ static const Type *toEquivClass(ASTContext &Ctx, QualType T) {
 static llvm::Optional<QualType>
 typeOfCompletion(const CodeCompletionResult &R) {
   const NamedDecl *D = R.Declaration;
-  if (!D)
-    return llvm::None;
   // Templates do not have a type on their own, look at the templated decl.
-  if (auto *Template = dyn_cast<TemplateDecl>(D))
+  if (auto *Template = dyn_cast_or_null<TemplateDecl>(D))
     D = Template->getTemplatedDecl();
-  auto *VD = dyn_cast<ValueDecl>(D);
+  auto *VD = dyn_cast_or_null<ValueDecl>(D);
   if (!VD)
     return llvm::None; // We handle only variables and functions below.
   auto T = VD->getType();
   if (T.isNull())
     return llvm::None;
-  if (auto FuncT = T->getAs<FunctionType>()) {
+  if (auto *FuncT = T->getAs<FunctionType>()) {
     // Functions are a special case. They are completed as 'foo()' and we want
     // to match their return type rather than the function type itself.
     // FIXME(ibiryukov): in some cases, we might want to avoid completing `()`
@@ -75,7 +72,7 @@ llvm::Optional<OpaqueType> OpaqueType::encode(ASTContext &Ctx, QualType T) {
   llvm::SmallString<128> Encoded;
   if (index::generateUSRForType(QualType(C, 0), Ctx, Encoded))
     return None;
-  return OpaqueType(Encoded.str());
+  return OpaqueType(std::string(Encoded.str()));
 }
 
 OpaqueType::OpaqueType(std::string Data) : Data(std::move(Data)) {}

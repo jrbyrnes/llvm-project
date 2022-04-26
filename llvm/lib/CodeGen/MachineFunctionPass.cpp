@@ -11,13 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/MachineFunctionPass.h"
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/DominanceFrontier.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/IVUsers.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 #include "llvm/CodeGen/MachineFunction.h"

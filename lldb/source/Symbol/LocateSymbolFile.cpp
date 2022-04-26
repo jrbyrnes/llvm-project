@@ -1,4 +1,4 @@
-//===-- LocateSymbolFile.cpp ------------------------------------*- C++ -*-===//
+//===-- LocateSymbolFile.cpp ----------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,12 +10,15 @@
 
 #include "lldb/Core/ModuleList.h"
 #include "lldb/Core/ModuleSpec.h"
+#include "lldb/Core/Progress.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Utility/ArchSpec.h"
 #include "lldb/Utility/DataBuffer.h"
 #include "lldb/Utility/DataExtractor.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
+#include "lldb/Utility/Reproducer.h"
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/Timer.h"
 #include "lldb/Utility/UUID.h"
@@ -127,7 +130,8 @@ static bool LookForDsymNextToExecutablePath(const ModuleSpec &mod_spec,
 
   if (FileSystem::Instance().Exists(dsym_yaa_fspec)) {
     ModuleSpec mutable_mod_spec = mod_spec;
-    if (Symbols::DownloadObjectAndSymbolFile(mutable_mod_spec, true) &&
+    Status error;
+    if (Symbols::DownloadObjectAndSymbolFile(mutable_mod_spec, error, true) &&
         FileSystem::Instance().Exists(mutable_mod_spec.GetSymbolFileSpec())) {
       dsym_fspec = mutable_mod_spec.GetSymbolFileSpec();
       return true;
@@ -151,7 +155,7 @@ static bool LookForDsymNextToExecutablePath(const ModuleSpec &mod_spec,
 
 static bool LocateDSYMInVincinityOfExecutable(const ModuleSpec &module_spec,
                                               FileSpec &dsym_fspec) {
-  Log *log = lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_HOST);
+  Log *log = GetLog(LLDBLog::Host);
   const FileSpec &exec_fspec = module_spec.GetFileSpec();
   if (exec_fspec) {
     if (::LookForDsymNextToExecutablePath(module_spec, exec_fspec,
@@ -208,9 +212,7 @@ static FileSpec LocateExecutableSymbolFileDsym(const ModuleSpec &module_spec) {
   const ArchSpec *arch = module_spec.GetArchitecturePtr();
   const UUID *uuid = module_spec.GetUUIDPtr();
 
-  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
-  Timer scoped_timer(
-      func_cat,
+  LLDB_SCOPED_TIMERF(
       "LocateExecutableSymbolFileDsym (file = %s, arch = %s, uuid = %p)",
       exec_fspec ? exec_fspec->GetFilename().AsCString("<NULL>") : "<NULL>",
       arch ? arch->GetArchitectureName() : "<NULL>", (const void *)uuid);
@@ -225,29 +227,30 @@ static FileSpec LocateExecutableSymbolFileDsym(const ModuleSpec &module_spec) {
   } else {
     dsym_module_spec.GetSymbolFileSpec() = symbol_fspec;
   }
+
   return dsym_module_spec.GetSymbolFileSpec();
 }
 
 ModuleSpec Symbols::LocateExecutableObjectFile(const ModuleSpec &module_spec) {
   ModuleSpec result;
-  const FileSpec *exec_fspec = module_spec.GetFileSpecPtr();
+  const FileSpec &exec_fspec = module_spec.GetFileSpec();
   const ArchSpec *arch = module_spec.GetArchitecturePtr();
   const UUID *uuid = module_spec.GetUUIDPtr();
-  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
-  Timer scoped_timer(
-      func_cat, "LocateExecutableObjectFile (file = %s, arch = %s, uuid = %p)",
-      exec_fspec ? exec_fspec->GetFilename().AsCString("<NULL>") : "<NULL>",
+  LLDB_SCOPED_TIMERF(
+      "LocateExecutableObjectFile (file = %s, arch = %s, uuid = %p)",
+      exec_fspec ? exec_fspec.GetFilename().AsCString("<NULL>") : "<NULL>",
       arch ? arch->GetArchitectureName() : "<NULL>", (const void *)uuid);
 
   ModuleSpecList module_specs;
   ModuleSpec matched_module_spec;
   if (exec_fspec &&
-      ObjectFile::GetModuleSpecifications(*exec_fspec, 0, 0, module_specs) &&
+      ObjectFile::GetModuleSpecifications(exec_fspec, 0, 0, module_specs) &&
       module_specs.FindMatchingModuleSpec(module_spec, matched_module_spec)) {
     result.GetFileSpec() = exec_fspec;
   } else {
     LocateMacOSXFilesUsingDebugSymbols(module_spec, result);
   }
+
   return result;
 }
 
@@ -260,6 +263,10 @@ Symbols::LocateExecutableSymbolFile(const ModuleSpec &module_spec,
   if (symbol_file_spec.IsAbsolute() &&
       FileSystem::Instance().Exists(symbol_file_spec))
     return symbol_file_spec;
+
+  Progress progress(llvm::formatv(
+      "Locating external symbol file for {0}",
+      module_spec.GetFileSpec().GetFilename().AsCString("<Unknown>")));
 
   FileSpecList debug_file_search_paths = default_search_paths;
 
@@ -384,7 +391,7 @@ FileSpec Symbols::FindSymbolFileInBundle(const FileSpec &symfile_bundle,
 }
 
 bool Symbols::DownloadObjectAndSymbolFile(ModuleSpec &module_spec,
-                                          bool force_lookup) {
+                                          Status &error, bool force_lookup) {
   // Fill in the module_spec.GetFileSpec() for the object file and/or the
   // module_spec.GetSymbolFileSpec() for the debug symbols file.
   return false;

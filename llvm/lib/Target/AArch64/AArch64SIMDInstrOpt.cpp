@@ -219,10 +219,11 @@ shouldReplaceInst(MachineFunction *MF, const MCInstrDesc *InstDesc,
                   SmallVectorImpl<const MCInstrDesc*> &InstDescRepl) {
   // Check if replacement decision is already available in the cached table.
   // if so, return it.
-  std::string Subtarget = SchedModel.getSubtargetInfo()->getCPU();
+  std::string Subtarget = std::string(SchedModel.getSubtargetInfo()->getCPU());
   auto InstID = std::make_pair(InstDesc->getOpcode(), Subtarget);
-  if (SIMDInstrTable.find(InstID) != SIMDInstrTable.end())
-    return SIMDInstrTable[InstID];
+  auto It = SIMDInstrTable.find(InstID);
+  if (It != SIMDInstrTable.end())
+    return It->second;
 
   unsigned SCIdx = InstDesc->getSchedClass();
   const MCSchedClassDesc *SCDesc =
@@ -288,9 +289,11 @@ bool AArch64SIMDInstrOpt::shouldExitEarly(MachineFunction *MF, Subpass SP) {
 
   // For this optimization, check for all concerned instructions.
   case Interleave:
-    std::string Subtarget = SchedModel.getSubtargetInfo()->getCPU();
-    if (InterlEarlyExit.find(Subtarget) != InterlEarlyExit.end())
-      return InterlEarlyExit[Subtarget];
+    std::string Subtarget =
+        std::string(SchedModel.getSubtargetInfo()->getCPU());
+    auto It = InterlEarlyExit.find(Subtarget);
+    if (It != InterlEarlyExit.end())
+      return It->second;
 
     for (auto &I : IRT) {
       OriginalMCID = &TII->get(I.OrigOpc);
@@ -630,7 +633,7 @@ bool AArch64SIMDInstrOpt::optimizeLdStInterleave(MachineInstr &MI) {
 /// Return true when the instruction is processed successfully.
 bool AArch64SIMDInstrOpt::processSeqRegInst(MachineInstr *DefiningMI,
      unsigned* StReg, unsigned* StRegKill, unsigned NumArg) const {
-  assert (DefiningMI != NULL);
+  assert(DefiningMI != nullptr);
   if (DefiningMI->getOpcode() != AArch64::REG_SEQUENCE)
     return false;
 
@@ -638,7 +641,7 @@ bool AArch64SIMDInstrOpt::processSeqRegInst(MachineInstr *DefiningMI,
     StReg[i]     = DefiningMI->getOperand(2*i+1).getReg();
     StRegKill[i] = getKillRegState(DefiningMI->getOperand(2*i+1).isKill());
 
-    // Sanity check for the other arguments.
+    // Validation check for the other arguments.
     if (DefiningMI->getOperand(2*i+2).isImm()) {
       switch (DefiningMI->getOperand(2*i+2).getImm()) {
       default:
@@ -708,9 +711,7 @@ bool AArch64SIMDInstrOpt::runOnMachineFunction(MachineFunction &MF) {
     if (!shouldExitEarly(&MF, OptimizationKind)) {
       SmallVector<MachineInstr *, 8> RemoveMIs;
       for (MachineBasicBlock &MBB : MF) {
-        for (MachineBasicBlock::iterator MII = MBB.begin(), MIE = MBB.end();
-             MII != MIE;) {
-          MachineInstr &MI = *MII;
+        for (MachineInstr &MI : MBB) {
           bool InstRewrite;
           if (OptimizationKind == VectorElem)
             InstRewrite = optimizeVectElement(MI) ;
@@ -722,7 +723,6 @@ bool AArch64SIMDInstrOpt::runOnMachineFunction(MachineFunction &MF) {
             RemoveMIs.push_back(&MI);
             Changed = true;
           }
-          ++MII;
         }
       }
       for (MachineInstr *MI : RemoveMIs)

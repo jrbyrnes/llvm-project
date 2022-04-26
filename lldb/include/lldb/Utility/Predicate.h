@@ -6,11 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_Predicate_h_
-#define liblldb_Predicate_h_
+#ifndef LLDB_UTILITY_PREDICATE_H
+#define LLDB_UTILITY_PREDICATE_H
 
-#include <stdint.h>
-#include <time.h>
+#include <cstdint>
+#include <ctime>
 
 #include <condition_variable>
 #include <mutex>
@@ -44,7 +44,7 @@ public:
   ///
   /// Initializes the mutex, condition and value with their default
   /// constructors.
-  Predicate() : m_value(), m_mutex(), m_condition() {}
+  Predicate() : m_value() {}
 
   /// Construct with initial T value \a initial_value.
   ///
@@ -53,8 +53,7 @@ public:
   ///
   /// \param[in] initial_value
   ///     The initial value for our T object.
-  Predicate(T initial_value)
-      : m_value(initial_value), m_mutex(), m_condition() {}
+  Predicate(T initial_value) : m_value(initial_value) {}
 
   /// Destructor.
   ///
@@ -221,9 +220,10 @@ private:
       m_condition.notify_all();
   }
 
-  DISALLOW_COPY_AND_ASSIGN(Predicate);
+  Predicate(const Predicate &) = delete;
+  const Predicate &operator=(const Predicate &) = delete;
 };
 
 } // namespace lldb_private
 
-#endif // liblldb_Predicate_h_
+#endif // LLDB_UTILITY_PREDICATE_H

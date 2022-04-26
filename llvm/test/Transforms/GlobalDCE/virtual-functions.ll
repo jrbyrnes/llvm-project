@@ -1,4 +1,4 @@
-; RUN: opt < %s -globaldce -S | FileCheck %s
+; RUN: opt < %s -passes=globaldce -S | FileCheck %s
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 
@@ -48,8 +48,11 @@ entry:
   ret i32 %call1
 }
 
+!llvm.module.flags = !{!4}
+
 !0 = !{i64 16, !"_ZTS1A"}
 !1 = !{i64 16, !"_ZTSM1AFivE.virtual"}
 !2 = !{i64 24, !"_ZTSM1AFivE.virtual"}
 !3 = !{i64 2}
+!4 = !{i32 1, !"Virtual Function Elim", i32 1}
 !9 = !{}

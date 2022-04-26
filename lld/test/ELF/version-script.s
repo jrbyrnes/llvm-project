@@ -22,13 +22,13 @@
 
 # RUN: echo "VERSION_1.0 { global: foo1; local: *; };" > %t5.script
 # RUN: echo "{ global: foo3; local: *; };" >> %t5.script
-# RUN: not ld.lld --version-script %t5.script -shared %t.o %t2.so -o %t5.so 2>&1 | \
+# RUN: not ld.lld --version-script %t5.script -shared %t.o %t2.so -o /dev/null 2>&1 | \
 # RUN:   FileCheck -check-prefix=ERR1 %s
 # ERR1: anonymous version definition is used in combination with other version definitions
 
 # RUN: echo "{ global: foo1; local: *; };" > %t5.script
 # RUN: echo "VERSION_2.0 { global: foo3; local: *; };" >> %t5.script
-# RUN: not ld.lld --version-script %t5.script -shared %t.o %t2.so -o %t5.so 2>&1 | \
+# RUN: not ld.lld --version-script %t5.script -shared %t.o %t2.so -o /dev/null 2>&1 | \
 # RUN:   FileCheck -check-prefix=ERR2 %s
 # ERR2: EOF expected, but got VERSION_2.0
 
@@ -64,11 +64,11 @@
 # RUN: ld.lld --hash-style=sysv --version-script %t2.script -shared %t.o %t2.so -o %t.so
 # RUN: llvm-readelf --dyn-syms %t.so | FileCheck --check-prefix=ALL %s
 
-# ALL:      _start{{$}}
+# ALL:      foo1{{$}}
 # ALL-NEXT: bar{{$}}
-# ALL-NEXT: foo1{{$}}
 # ALL-NEXT: foo2{{$}}
 # ALL-NEXT: foo3{{$}}
+# ALL-NEXT: _start{{$}}
 # ALL-NOT:  {{.}}
 
 # RUN: echo "VERSION_1.0 { global: foo1; foo1; local: *; };" > %t8.script

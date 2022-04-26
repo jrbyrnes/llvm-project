@@ -11,14 +11,13 @@ declare { i32, i1 } @llvm.usub.with.overflow.i32(i32, i32) #0
 define void @draw_llvm_vs_variant0(<4 x float> %x) {
 ; CHECK-LABEL: draw_llvm_vs_variant0:
 ; CHECK:       # %bb.0: # %entry
-; CHECK-NEXT:    lfd f0, 0(r3)
-; CHECK-NEXT:    xxpermdi v3, f0, f0, 2
-; CHECK-NEXT:    vmrglh v3, v3, v3
+; CHECK-NEXT:    lxsd v3, 0(r3)
+; CHECK-NEXT:    vmrghh v3, v3, v3
 ; CHECK-NEXT:    vextsh2w v3, v3
 ; CHECK-NEXT:    xvcvsxwsp vs0, v3
 ; CHECK-NEXT:    xxspltw vs0, vs0, 2
 ; CHECK-NEXT:    xvmaddasp vs0, v2, v2
-; CHECK-NEXT:    stxvx vs0, 0, r3
+; CHECK-NEXT:    stxv vs0, 0(r3)
 ; CHECK-NEXT:    blr
 entry:
   %.size = load i32, i32* undef

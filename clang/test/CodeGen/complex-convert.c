@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -emit-llvm -o - %s | FileCheck %s
+// RUN: %clang_cc1 -no-opaque-pointers -emit-llvm -o - %s | FileCheck %s
 
 // Test conversions between complex integer types and standard integer
 // types.  Tests binary operator conversion and assignment conversion
@@ -722,3 +722,8 @@ void foo(signed char sc, unsigned char uc, signed long long sll,
   // CHECK-NEXT: store i[[LLSIZE]] %[[VAR441]], i[[LLSIZE]]* %[[VAR443]]
 }
 
+// This code used to cause a crash; test that it no longer does so.
+_Complex int a;
+void pr44624(void) {
+  (_Complex double) a;
+}

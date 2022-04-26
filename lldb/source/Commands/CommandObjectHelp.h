@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_CommandObjectHelp_h_
-#define liblldb_CommandObjectHelp_h_
+#ifndef LLDB_SOURCE_COMMANDS_COMMANDOBJECTHELP_H
+#define LLDB_SOURCE_COMMANDS_COMMANDOBJECTHELP_H
 
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Interpreter/CommandObject.h"
@@ -32,9 +32,9 @@ public:
 
   class CommandOptions : public Options {
   public:
-    CommandOptions() : Options() {}
+    CommandOptions() {}
 
-    ~CommandOptions() override {}
+    ~CommandOptions() override = default;
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
                           ExecutionContext *execution_context) override {
@@ -84,4 +84,4 @@ private:
 
 } // namespace lldb_private
 
-#endif // liblldb_CommandObjectHelp_h_
+#endif // LLDB_SOURCE_COMMANDS_COMMANDOBJECTHELP_H

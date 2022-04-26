@@ -1,4 +1,4 @@
-//===-- CommandObjectHelp.cpp -----------------------------------*- C++ -*-===//
+//===-- CommandObjectHelp.cpp ---------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,9 +8,7 @@
 
 #include "CommandObjectHelp.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
-#include "lldb/Interpreter/CommandObjectMultiword.h"
 #include "lldb/Interpreter/CommandReturnObject.h"
-#include "lldb/Interpreter/Options.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -27,32 +25,34 @@ void CommandObjectHelp::GenerateAdditionalHelpAvenuesMessage(
   std::string command_str = command.str();
   std::string prefix_str = prefix.str();
   std::string subcommand_str = subcommand.str();
-  const std::string &lookup_str = !subcommand_str.empty() ? subcommand_str : command_str;
+  const std::string &lookup_str =
+      !subcommand_str.empty() ? subcommand_str : command_str;
   s->Printf("'%s' is not a known command.\n", command_str.c_str());
   s->Printf("Try '%shelp' to see a current list of commands.\n",
             prefix.str().c_str());
   if (include_upropos) {
     s->Printf("Try '%sapropos %s' for a list of related commands.\n",
-      prefix_str.c_str(), lookup_str.c_str());
+              prefix_str.c_str(), lookup_str.c_str());
   }
   if (include_type_lookup) {
     s->Printf("Try '%stype lookup %s' for information on types, methods, "
               "functions, modules, etc.",
-      prefix_str.c_str(), lookup_str.c_str());
+              prefix_str.c_str(), lookup_str.c_str());
   }
 }
 
 CommandObjectHelp::CommandObjectHelp(CommandInterpreter &interpreter)
-    : CommandObjectParsed(interpreter, "help", "Show a list of all debugger "
-                                               "commands, or give details "
-                                               "about a specific command.",
-                          "help [<cmd-name>]"),
-      m_options() {
+    : CommandObjectParsed(interpreter, "help",
+                          "Show a list of all debugger "
+                          "commands, or give details "
+                          "about a specific command.",
+                          "help [<cmd-name>]") {
   CommandArgumentEntry arg;
   CommandArgumentData command_arg;
 
-  // Define the first (and only) variant of this arg.
-  command_arg.arg_type = eArgTypeCommandName;
+  // A list of command names forming a path to the command we want help on.
+  // No names is allowed - in which case we dump the top-level help.
+  command_arg.arg_type = eArgTypeCommand;
   command_arg.arg_repetition = eArgRepeatStar;
 
   // There is only one variant this argument could be; put it into the argument
@@ -85,8 +85,10 @@ bool CommandObjectHelp::DoExecute(Args &command, CommandReturnObject &result) {
     uint32_t cmd_types = CommandInterpreter::eCommandTypesBuiltin;
     if (m_options.m_show_aliases)
       cmd_types |= CommandInterpreter::eCommandTypesAliases;
-    if (m_options.m_show_user_defined)
+    if (m_options.m_show_user_defined) {
       cmd_types |= CommandInterpreter::eCommandTypesUserDef;
+      cmd_types |= CommandInterpreter::eCommandTypesUserMW;
+    }
     if (m_options.m_show_hidden)
       cmd_types |= CommandInterpreter::eCommandTypesHidden;
 
@@ -107,7 +109,7 @@ bool CommandObjectHelp::DoExecute(Args &command, CommandReturnObject &result) {
       // object that corresponds to the help command entered.
       std::string sub_command;
       for (auto &entry : command.entries().drop_front()) {
-        sub_command = entry.ref();
+        sub_command = std::string(entry.ref());
         matches.Clear();
         if (sub_cmd_obj->IsAlias())
           sub_cmd_obj =
@@ -139,7 +141,6 @@ bool CommandObjectHelp::DoExecute(Args &command, CommandReturnObject &result) {
           }
           s.Printf("\n");
           result.AppendError(s.GetString());
-          result.SetStatus(eReturnStatusFailed);
           return false;
         } else if (!sub_cmd_obj) {
           StreamString error_msg_stream;
@@ -147,7 +148,6 @@ bool CommandObjectHelp::DoExecute(Args &command, CommandReturnObject &result) {
               &error_msg_stream, cmd_string.c_str(),
               m_interpreter.GetCommandPrefix(), sub_command.c_str());
           result.AppendError(error_msg_stream.GetString());
-          result.SetStatus(eReturnStatusFailed);
           return false;
         } else {
           GenerateAdditionalHelpAvenuesMessage(
@@ -193,7 +193,6 @@ bool CommandObjectHelp::DoExecute(Args &command, CommandReturnObject &result) {
                                              m_interpreter.GetCommandPrefix(),
                                              "");
         result.AppendError(error_msg_stream.GetString());
-        result.SetStatus(eReturnStatusFailed);
       }
     }
   }

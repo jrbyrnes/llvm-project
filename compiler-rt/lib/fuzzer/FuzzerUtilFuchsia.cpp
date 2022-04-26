@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 // Misc utils implementation using Fuchsia/Zircon APIs.
 //===----------------------------------------------------------------------===//
-#include "FuzzerDefs.h"
+#include "FuzzerPlatform.h"
 
 #if LIBFUZZER_FUCHSIA
 
@@ -18,6 +18,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <fcntl.h>
+#include <lib/fdio/fdio.h>
 #include <lib/fdio/spawn.h>
 #include <string>
 #include <sys/select.h>
@@ -32,6 +33,8 @@
 #include <zircon/syscalls/exception.h>
 #include <zircon/syscalls/object.h>
 #include <zircon/types.h>
+
+#include <vector>
 
 namespace fuzzer {
 
@@ -49,6 +52,12 @@ void CrashTrampolineAsm() __asm__("CrashTrampolineAsm");
 
 namespace {
 
+// The signal handler thread uses Zircon exceptions to resume crashed threads
+// into libFuzzer's POSIX signal handlers. The associated event is used to
+// signal when the thread is running, and when it should stop.
+std::thread SignalHandler;
+zx_handle_t SignalHandlerEvent = ZX_HANDLE_INVALID;
+
 // Helper function to handle Zircon syscall failures.
 void ExitOnErr(zx_status_t Status, const char *Syscall) {
   if (Status != ZX_OK) {
@@ -63,17 +72,6 @@ void AlarmHandler(int Seconds) {
     SleepSeconds(Seconds);
     Fuzzer::StaticAlarmCallback();
   }
-}
-
-void InterruptHandler() {
-  fd_set readfds;
-  // Ctrl-C sends ETX in Zircon.
-  do {
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-    select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, nullptr);
-  } while(!FD_ISSET(STDIN_FILENO, &readfds) || getchar() != 0x03);
-  Fuzzer::StaticInterruptCallback();
 }
 
 // For the crash handler, we need to call Fuzzer::StaticCrashSignalCallback
@@ -140,7 +138,6 @@ void InterruptHandler() {
   OP_NUM(27)                             \
   OP_NUM(28)                             \
   OP_NUM(29)                             \
-  OP_NUM(30)                             \
   OP_REG(sp)
 
 #else
@@ -148,14 +145,17 @@ void InterruptHandler() {
 #endif
 
 // Produces a CFI directive for the named or numbered register.
+// The value used refers to an assembler immediate operand with the same name
+// as the register (see ASM_OPERAND_REG).
 #define CFI_OFFSET_REG(reg) ".cfi_offset " #reg ", %c[" #reg "]\n"
-#define CFI_OFFSET_NUM(num) CFI_OFFSET_REG(r##num)
+#define CFI_OFFSET_NUM(num) CFI_OFFSET_REG(x##num)
 
-// Produces an assembler input operand for the named or numbered register.
-#define ASM_OPERAND_REG(reg) \
+// Produces an assembler immediate operand for the named or numbered register.
+// This operand contains the offset of the register relative to the CFA.
+#define ASM_OPERAND_REG(reg)                                                   \
   [reg] "i"(offsetof(zx_thread_state_general_regs_t, reg)),
-#define ASM_OPERAND_NUM(num)                                 \
-  [r##num] "i"(offsetof(zx_thread_state_general_regs_t, r[num])),
+#define ASM_OPERAND_NUM(num)                                                   \
+  [x##num] "i"(offsetof(zx_thread_state_general_regs_t, r[num])),
 
 // Trampoline to bridge from the assembly below to the static C++ crash
 // callback.
@@ -167,46 +167,57 @@ static void StaticCrashHandler() {
   }
 }
 
-// Creates the trampoline with the necessary CFI information to unwind through
-// to the crashing call stack.  The attribute is necessary because the function
+// This trampoline function has the necessary CFI information to unwind
+// and get a backtrace:
+//  * The stack contains a copy of all the registers at the point of crash,
+//    the code has CFI directives specifying how to restore them.
+//  * A call to StaticCrashHandler, which will print the stacktrace and exit
+//    the fuzzer, generating a crash artifact.
+//
+// The __attribute__((used)) is necessary because the function
 // is never called; it's just a container around the assembly to allow it to
 // use operands for compile-time computed constants.
 __attribute__((used))
 void MakeTrampoline() {
-  __asm__(".cfi_endproc\n"
-    ".pushsection .text.CrashTrampolineAsm\n"
-    ".type CrashTrampolineAsm,STT_FUNC\n"
-"CrashTrampolineAsm:\n"
-    ".cfi_startproc simple\n"
-    ".cfi_signal_frame\n"
+  __asm__(
+      ".cfi_endproc\n"
+      ".pushsection .text.CrashTrampolineAsm\n"
+      ".type CrashTrampolineAsm,STT_FUNC\n"
+      "CrashTrampolineAsm:\n"
+      ".cfi_startproc simple\n"
+      ".cfi_signal_frame\n"
 #if defined(__x86_64__)
-    ".cfi_return_column rip\n"
-    ".cfi_def_cfa rsp, 0\n"
-    FOREACH_REGISTER(CFI_OFFSET_REG, CFI_OFFSET_NUM)
-    "call %c[StaticCrashHandler]\n"
-    "ud2\n"
+      ".cfi_return_column rip\n"
+      ".cfi_def_cfa rsp, 0\n"
+      FOREACH_REGISTER(CFI_OFFSET_REG, CFI_OFFSET_NUM)
+      "call %c[StaticCrashHandler]\n"
+      "ud2\n"
 #elif defined(__aarch64__)
-    ".cfi_return_column 33\n"
-    ".cfi_def_cfa sp, 0\n"
-    ".cfi_offset 33, %c[pc]\n"
-    FOREACH_REGISTER(CFI_OFFSET_REG, CFI_OFFSET_NUM)
-    "bl %[StaticCrashHandler]\n"
+      ".cfi_return_column 33\n"
+      ".cfi_def_cfa sp, 0\n"
+      FOREACH_REGISTER(CFI_OFFSET_REG, CFI_OFFSET_NUM)
+      ".cfi_offset 33, %c[pc]\n"
+      ".cfi_offset 30, %c[lr]\n"
+      "bl %c[StaticCrashHandler]\n"
+      "brk 1\n"
 #else
 #error "Unsupported architecture for fuzzing on Fuchsia"
 #endif
-    ".cfi_endproc\n"
-    ".size CrashTrampolineAsm, . - CrashTrampolineAsm\n"
-    ".popsection\n"
-    ".cfi_startproc\n"
-    : // No outputs
-    : FOREACH_REGISTER(ASM_OPERAND_REG, ASM_OPERAND_NUM)
+     ".cfi_endproc\n"
+     ".size CrashTrampolineAsm, . - CrashTrampolineAsm\n"
+     ".popsection\n"
+     ".cfi_startproc\n"
+      : // No outputs
+      : FOREACH_REGISTER(ASM_OPERAND_REG, ASM_OPERAND_NUM)
 #if defined(__aarch64__)
-      ASM_OPERAND_REG(pc)
+        ASM_OPERAND_REG(pc) ASM_OPERAND_REG(lr)
 #endif
-      [StaticCrashHandler] "i" (StaticCrashHandler));
+        [StaticCrashHandler] "i"(StaticCrashHandler));
 }
 
-void CrashHandler(zx_handle_t *Event) {
+void CrashHandler() {
+  assert(SignalHandlerEvent != ZX_HANDLE_INVALID);
+
   // This structure is used to ensure we close handles to objects we create in
   // this handler.
   struct ScopedHandle {
@@ -224,16 +235,30 @@ void CrashHandler(zx_handle_t *Event) {
                 Self, ZX_EXCEPTION_CHANNEL_DEBUGGER, &Channel.Handle),
             "_zx_task_create_exception_channel");
 
-  ExitOnErr(_zx_object_signal(*Event, 0, ZX_USER_SIGNAL_0),
+  ExitOnErr(_zx_object_signal(SignalHandlerEvent, 0, ZX_USER_SIGNAL_0),
             "_zx_object_signal");
 
   // This thread lives as long as the process in order to keep handling
   // crashes.  In practice, the first crashed thread to reach the end of the
   // StaticCrashHandler will end the process.
   while (true) {
-    ExitOnErr(_zx_object_wait_one(Channel.Handle, ZX_CHANNEL_READABLE,
-                                  ZX_TIME_INFINITE, nullptr),
-              "_zx_object_wait_one");
+    zx_wait_item_t WaitItems[] = {
+        {
+            .handle = SignalHandlerEvent,
+            .waitfor = ZX_SIGNAL_HANDLE_CLOSED,
+            .pending = 0,
+        },
+        {
+            .handle = Channel.Handle,
+            .waitfor = ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED,
+            .pending = 0,
+        },
+    };
+    auto Status = _zx_object_wait_many(
+        WaitItems, sizeof(WaitItems) / sizeof(WaitItems[0]), ZX_TIME_INFINITE);
+    if (Status != ZX_OK || (WaitItems[1].pending & ZX_CHANNEL_READABLE) == 0) {
+      break;
+    }
 
     zx_exception_info_t ExceptionInfo;
     ScopedHandle Exception;
@@ -303,6 +328,13 @@ void CrashHandler(zx_handle_t *Event) {
   }
 }
 
+void StopSignalHandler() {
+  _zx_handle_close(SignalHandlerEvent);
+  if (SignalHandler.joinable()) {
+    SignalHandler.join();
+  }
+}
+
 } // namespace
 
 // Platform specific functions.
@@ -319,16 +351,12 @@ void SetSignalHandler(const FuzzingOptions &Options) {
   Printf("%s", Buf);
 
   // Set up alarm handler if needed.
-  if (Options.UnitTimeoutSec > 0) {
+  if (Options.HandleAlrm && Options.UnitTimeoutSec > 0) {
     std::thread T(AlarmHandler, Options.UnitTimeoutSec / 2 + 1);
     T.detach();
   }
 
-  // Set up interrupt handler if needed.
-  if (Options.HandleInt || Options.HandleTerm) {
-    std::thread T(InterruptHandler);
-    T.detach();
-  }
+  // Options.HandleInt and Options.HandleTerm are not supported on Fuchsia
 
   // Early exit if no crash handler needed.
   if (!Options.HandleSegv && !Options.HandleBus && !Options.HandleIll &&
@@ -336,16 +364,14 @@ void SetSignalHandler(const FuzzingOptions &Options) {
     return;
 
   // Set up the crash handler and wait until it is ready before proceeding.
-  zx_handle_t Event;
-  ExitOnErr(_zx_event_create(0, &Event), "_zx_event_create");
+  ExitOnErr(_zx_event_create(0, &SignalHandlerEvent), "_zx_event_create");
 
-  std::thread T(CrashHandler, &Event);
-  zx_status_t Status =
-      _zx_object_wait_one(Event, ZX_USER_SIGNAL_0, ZX_TIME_INFINITE, nullptr);
-  _zx_handle_close(Event);
+  SignalHandler = std::thread(CrashHandler);
+  zx_status_t Status = _zx_object_wait_one(SignalHandlerEvent, ZX_USER_SIGNAL_0,
+                                           ZX_TIME_INFINITE, nullptr);
   ExitOnErr(Status, "_zx_object_wait_one");
 
-  T.detach();
+  std::atexit(StopSignalHandler);
 }
 
 void SleepSeconds(int Seconds) {
@@ -391,6 +417,17 @@ RunOnDestruction<Fn> at_scope_exit(Fn fn) {
   return RunOnDestruction<Fn>(fn);
 }
 
+static fdio_spawn_action_t clone_fd_action(int localFd, int targetFd) {
+  return {
+      .action = FDIO_SPAWN_ACTION_CLONE_FD,
+      .fd =
+          {
+              .local_fd = localFd,
+              .target_fd = targetFd,
+          },
+  };
+}
+
 int ExecuteCommand(const Command &Cmd) {
   zx_status_t rc;
 
@@ -407,18 +444,28 @@ int ExecuteCommand(const Command &Cmd) {
   // that lacks a mutable working directory. Fortunately, when this is the case
   // a mutable output directory must be specified using "-artifact_prefix=...",
   // so write the log file(s) there.
+  // However, we don't want to apply this logic for absolute paths.
   int FdOut = STDOUT_FILENO;
+  bool discardStdout = false;
+  bool discardStderr = false;
+
   if (Cmd.hasOutputFile()) {
-    std::string Path;
-    if (Cmd.hasFlag("artifact_prefix"))
-      Path = Cmd.getFlagValue("artifact_prefix") + "/" + Cmd.getOutputFile();
-    else
-      Path = Cmd.getOutputFile();
-    FdOut = open(Path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0);
-    if (FdOut == -1) {
-      Printf("libFuzzer: failed to open %s: %s\n", Path.c_str(),
-             strerror(errno));
-      return ZX_ERR_IO;
+    std::string Path = Cmd.getOutputFile();
+    if (Path == getDevNull()) {
+      // On Fuchsia, there's no "/dev/null" like-file, so we
+      // just don't copy the FDs into the spawned process.
+      discardStdout = true;
+    } else {
+      bool IsAbsolutePath = Path.length() > 1 && Path[0] == '/';
+      if (!IsAbsolutePath && Cmd.hasFlag("artifact_prefix"))
+        Path = Cmd.getFlagValue("artifact_prefix") + "/" + Path;
+
+      FdOut = open(Path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0);
+      if (FdOut == -1) {
+        Printf("libFuzzer: failed to open %s: %s\n", Path.c_str(),
+               strerror(errno));
+        return ZX_ERR_IO;
+      }
     }
   }
   auto CloseFdOut = at_scope_exit([FdOut]() {
@@ -428,43 +475,29 @@ int ExecuteCommand(const Command &Cmd) {
 
   // Determine stderr
   int FdErr = STDERR_FILENO;
-  if (Cmd.isOutAndErrCombined())
+  if (Cmd.isOutAndErrCombined()) {
     FdErr = FdOut;
+    if (discardStdout)
+      discardStderr = true;
+  }
 
   // Clone the file descriptors into the new process
-  fdio_spawn_action_t SpawnAction[] = {
-      {
-          .action = FDIO_SPAWN_ACTION_CLONE_FD,
-          .fd =
-              {
-                  .local_fd = STDIN_FILENO,
-                  .target_fd = STDIN_FILENO,
-              },
-      },
-      {
-          .action = FDIO_SPAWN_ACTION_CLONE_FD,
-          .fd =
-              {
-                  .local_fd = FdOut,
-                  .target_fd = STDOUT_FILENO,
-              },
-      },
-      {
-          .action = FDIO_SPAWN_ACTION_CLONE_FD,
-          .fd =
-              {
-                  .local_fd = FdErr,
-                  .target_fd = STDERR_FILENO,
-              },
-      },
-  };
+  std::vector<fdio_spawn_action_t> SpawnActions;
+  SpawnActions.push_back(clone_fd_action(STDIN_FILENO, STDIN_FILENO));
+
+  if (!discardStdout)
+    SpawnActions.push_back(clone_fd_action(FdOut, STDOUT_FILENO));
+  if (!discardStderr)
+    SpawnActions.push_back(clone_fd_action(FdErr, STDERR_FILENO));
 
   // Start the process.
   char ErrorMsg[FDIO_SPAWN_ERR_MSG_MAX_LENGTH];
   zx_handle_t ProcessHandle = ZX_HANDLE_INVALID;
-  rc = fdio_spawn_etc(
-      ZX_HANDLE_INVALID, FDIO_SPAWN_CLONE_ALL & (~FDIO_SPAWN_CLONE_STDIO),
-      Argv[0], Argv.get(), nullptr, 3, SpawnAction, &ProcessHandle, ErrorMsg);
+  rc = fdio_spawn_etc(ZX_HANDLE_INVALID,
+                      FDIO_SPAWN_CLONE_ALL & (~FDIO_SPAWN_CLONE_STDIO), Argv[0],
+                      Argv.get(), nullptr, SpawnActions.size(),
+                      SpawnActions.data(), &ProcessHandle, ErrorMsg);
+
   if (rc != ZX_OK) {
     Printf("libFuzzer: failed to launch '%s': %s, %s\n", Argv[0], ErrorMsg,
            _zx_status_get_string(rc));
@@ -488,12 +521,34 @@ int ExecuteCommand(const Command &Cmd) {
     return rc;
   }
 
-  return Info.return_code;
+  return static_cast<int>(Info.return_code);
+}
+
+bool ExecuteCommand(const Command &BaseCmd, std::string *CmdOutput) {
+  auto LogFilePath = TempPath("SimPopenOut", ".txt");
+  Command Cmd(BaseCmd);
+  Cmd.setOutputFile(LogFilePath);
+  int Ret = ExecuteCommand(Cmd);
+  *CmdOutput = FileToString(LogFilePath);
+  RemoveFile(LogFilePath);
+  return Ret == 0;
 }
 
 const void *SearchMemory(const void *Data, size_t DataLen, const void *Patt,
                          size_t PattLen) {
   return memmem(Data, DataLen, Patt, PattLen);
+}
+
+// In fuchsia, accessing /dev/null is not supported. There's nothing
+// similar to a file that discards everything that is written to it.
+// The way of doing something similar in fuchsia is by using
+// fdio_null_create and binding that to a file descriptor.
+void DiscardOutput(int Fd) {
+  fdio_t *fdio_null = fdio_null_create();
+  if (fdio_null == nullptr) return;
+  int nullfd = fdio_bind_to_fd(fdio_null, -1, 0);
+  if (nullfd < 0) return;
+  dup2(nullfd, Fd);
 }
 
 } // namespace fuzzer

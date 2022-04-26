@@ -15,7 +15,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/Path.h"
 
-#define DEBUG_TYPE "llvm-jitlink"
+#define DEBUG_TYPE "llvm_jitlink"
 
 using namespace llvm;
 using namespace llvm::jitlink;
@@ -49,12 +49,6 @@ static Expected<Symbol &> getMachOGOTTarget(LinkGraph &G, Block &B) {
             "\" points to anonymous "
             "symbol",
         inconvertibleErrorCode());
-  if (TargetSym.isDefined() || TargetSym.isAbsolute())
-    return make_error<StringError>(
-        "GOT entry \"" + TargetSym.getName() + "\" in " + G.getName() + ", \"" +
-            TargetSym.getBlock().getSection().getName() +
-            "\" does not point to an external symbol",
-        inconvertibleErrorCode());
   return TargetSym;
 }
 
@@ -74,7 +68,7 @@ static Expected<Symbol &> getMachOStubTarget(LinkGraph &G, Block &B) {
 
 namespace llvm {
 
-Error registerMachOStubsAndGOT(Session &S, LinkGraph &G) {
+Error registerMachOGraphInfo(Session &S, LinkGraph &G) {
   auto FileName = sys::path::filename(G.getName());
   if (S.FileInfos.count(FileName)) {
     return make_error<StringError>("When -check is passed, file names must be "
@@ -90,12 +84,13 @@ Error registerMachOStubsAndGOT(Session &S, LinkGraph &G) {
   for (auto &Sec : G.sections()) {
     LLVM_DEBUG({
       dbgs() << "  Section \"" << Sec.getName() << "\": "
-             << (Sec.symbols_empty() ? "empty. skipping." : "processing...")
+             << (llvm::empty(Sec.symbols()) ? "empty. skipping."
+                                            : "processing...")
              << "\n";
     });
 
     // Skip empty sections.
-    if (Sec.symbols_empty())
+    if (llvm::empty(Sec.symbols()))
       continue;
 
     if (FileInfo.SectionInfos.count(Sec.getName()))
@@ -123,8 +118,8 @@ Error registerMachOStubsAndGOT(Session &S, LinkGraph &G) {
                                          inconvertibleErrorCode());
 
         if (auto TS = getMachOGOTTarget(G, Sym->getBlock()))
-          FileInfo.GOTEntryInfos[TS->getName()] = {Sym->getSymbolContent(),
-                                                   Sym->getAddress()};
+          FileInfo.GOTEntryInfos[TS->getName()] = {
+              Sym->getSymbolContent(), Sym->getAddress().getValue()};
         else
           return TS.takeError();
         SectionContainsContent = true;
@@ -135,24 +130,25 @@ Error registerMachOStubsAndGOT(Session &S, LinkGraph &G) {
 
         if (auto TS = getMachOStubTarget(G, Sym->getBlock()))
           FileInfo.StubInfos[TS->getName()] = {Sym->getSymbolContent(),
-                                               Sym->getAddress()};
+                                               Sym->getAddress().getValue()};
         else
           return TS.takeError();
         SectionContainsContent = true;
       } else if (Sym->hasName()) {
         if (Sym->isSymbolZeroFill()) {
-          S.SymbolInfos[Sym->getName()] = {Sym->getSize(), Sym->getAddress()};
+          S.SymbolInfos[Sym->getName()] = {Sym->getSize(),
+                                           Sym->getAddress().getValue()};
           SectionContainsZeroFill = true;
         } else {
           S.SymbolInfos[Sym->getName()] = {Sym->getSymbolContent(),
-                                           Sym->getAddress()};
+                                           Sym->getAddress().getValue()};
           SectionContainsContent = true;
         }
       }
     }
 
-    JITTargetAddress SecAddr = FirstSym->getAddress();
-    uint64_t SecSize =
+    auto SecAddr = FirstSym->getAddress();
+    auto SecSize =
         (LastSym->getBlock().getAddress() + LastSym->getBlock().getSize()) -
         SecAddr;
 
@@ -161,11 +157,11 @@ Error registerMachOStubsAndGOT(Session &S, LinkGraph &G) {
                                      "supported yet",
                                      inconvertibleErrorCode());
     if (SectionContainsZeroFill)
-      FileInfo.SectionInfos[Sec.getName()] = {SecSize, SecAddr};
+      FileInfo.SectionInfos[Sec.getName()] = {SecSize, SecAddr.getValue()};
     else
       FileInfo.SectionInfos[Sec.getName()] = {
-          StringRef(FirstSym->getBlock().getContent().data(), SecSize),
-          SecAddr};
+          ArrayRef<char>(FirstSym->getBlock().getContent().data(), SecSize),
+          SecAddr.getValue()};
   }
 
   return Error::success();

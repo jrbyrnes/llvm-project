@@ -8,24 +8,30 @@ lldb_tablegen(TargetPropertiesEnum.inc -gen-lldb-property-enum-defs
 
 add_lldb_library(lldbTarget
   ABI.cpp
+  AssertFrameRecognizer.cpp
+  DynamicRegisterInfo.cpp
   ExecutionContext.cpp
-  JITLoader.cpp
-  JITLoaderList.cpp
   InstrumentationRuntime.cpp
   InstrumentationRuntimeStopInfo.cpp
+  JITLoader.cpp
+  JITLoaderList.cpp
   Language.cpp
   LanguageRuntime.cpp
   Memory.cpp
   MemoryHistory.cpp
+  MemoryRegionInfo.cpp
+  MemoryTagMap.cpp
   ModuleCache.cpp
   OperatingSystem.cpp
   PathMappingList.cpp
   Platform.cpp
   Process.cpp
+  ProcessTrace.cpp
   Queue.cpp
   QueueItem.cpp
   QueueList.cpp
   RegisterContext.cpp
+  RegisterContextUnwind.cpp
   RegisterNumber.cpp
   RemoteAwarePlatform.cpp
   SectionLoadHistory.cpp
@@ -34,6 +40,7 @@ add_lldb_library(lldbTarget
   StackFrameList.cpp
   StackFrameRecognizer.cpp
   StackID.cpp
+  Statistics.cpp
   StopInfo.cpp
   StructuredDataPlugin.cpp
   SystemRuntime.cpp
@@ -60,9 +67,15 @@ add_lldb_library(lldbTarget
   ThreadPlanStepThrough.cpp
   ThreadPlanStepUntil.cpp
   ThreadPlanTracer.cpp
+  ThreadPlanStack.cpp
   ThreadSpec.cpp
+  Trace.cpp
+  TraceCursor.cpp
+  TraceExporter.cpp
+  TraceInstructionDumper.cpp
   UnixSignals.cpp
   UnwindAssembly.cpp
+  UnwindLLDB.cpp
 
   LINK_LIBS
     lldbBreakpoint
@@ -72,11 +85,11 @@ add_lldb_library(lldbTarget
     lldbInterpreter
     lldbSymbol
     lldbUtility
-    lldbPluginExpressionParserClang
     lldbPluginProcessUtility
 
   LINK_COMPONENTS
     Support
+    MC
   )
 
 add_dependencies(lldbTarget

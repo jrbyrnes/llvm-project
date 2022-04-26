@@ -12,10 +12,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_MCA_RESOURCE_MANAGER_H
-#define LLVM_MCA_RESOURCE_MANAGER_H
+#ifndef LLVM_MCA_HARDWAREUNITS_RESOURCEMANAGER_H
+#define LLVM_MCA_HARDWAREUNITS_RESOURCEMANAGER_H
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCSchedule.h"
@@ -50,7 +49,7 @@ class ResourceStrategy {
   ResourceStrategy &operator=(const ResourceStrategy &) = delete;
 
 public:
-  ResourceStrategy() {}
+  ResourceStrategy() = default;
   virtual ~ResourceStrategy();
 
   /// Selects a processor resource unit from a ReadyMask.
@@ -119,8 +118,8 @@ class DefaultResourceStrategy final : public ResourceStrategy {
 
 public:
   DefaultResourceStrategy(uint64_t UnitMask)
-      : ResourceStrategy(), ResourceUnitMask(UnitMask),
-        NextInSequenceMask(UnitMask), RemovedFromNextInSequence(0) {}
+      : ResourceUnitMask(UnitMask), NextInSequenceMask(UnitMask),
+        RemovedFromNextInSequence(0) {}
   virtual ~DefaultResourceStrategy() = default;
 
   uint64_t select(uint64_t ReadyMask) override;
@@ -445,4 +444,4 @@ public:
 } // namespace mca
 } // namespace llvm
 
-#endif // LLVM_MCA_RESOURCE_MANAGER_H
+#endif // LLVM_MCA_HARDWAREUNITS_RESOURCEMANAGER_H

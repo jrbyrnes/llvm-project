@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/HashBuilder.h"
 #include "llvm/Support/VersionTuple.h"
 #include <string>
 
@@ -446,6 +447,20 @@ public:
     llvm_unreachable("bad kind");
   }
 
+  /// Does this runtime supports direct dispatch
+  bool allowsDirectDispatch() const {
+    switch (getKind()) {
+    case FragileMacOSX: return false;
+    case MacOSX: return true;
+    case iOS: return true;
+    case WatchOS: return true;
+    case GCC: return false;
+    case GNUstep: return false;
+    case ObjFW: return false;
+    }
+    llvm_unreachable("bad kind");
+  }
+
   /// Try to parse an Objective-C runtime specification from the given
   /// string.
   ///
@@ -461,6 +476,16 @@ public:
 
   friend bool operator!=(const ObjCRuntime &left, const ObjCRuntime &right) {
     return !(left == right);
+  }
+
+  friend llvm::hash_code hash_value(const ObjCRuntime &OCR) {
+    return llvm::hash_combine(OCR.getKind(), OCR.getVersion());
+  }
+
+  template <typename HasherT, llvm::support::endianness Endianness>
+  friend void addHash(llvm::HashBuilderImpl<HasherT, Endianness> &HBuilder,
+                      const ObjCRuntime &OCR) {
+    HBuilder.add(OCR.getKind(), OCR.getVersion());
   }
 };
 

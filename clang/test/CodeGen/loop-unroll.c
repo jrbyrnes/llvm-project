@@ -1,7 +1,5 @@
 // RUN: %clang_cc1 -triple x86_64 -target-cpu x86-64 -S -O1 -funroll-loops -emit-llvm -o - %s | FileCheck %s -check-prefix=CHECK-ENABLE-UNROLL
 // RUN: %clang_cc1 -triple x86_64 -target-cpu x86-64 -S -O1 -fno-unroll-loops -emit-llvm -o - %s | FileCheck %s -check-prefix=CHECK-DISABLE-UNROLL
-// RUN: %clang_cc1 -triple x86_64 -target-cpu x86-64 -fexperimental-new-pass-manager -S -O1 -funroll-loops -emit-llvm -o - %s | FileCheck %s -check-prefix=CHECK-ENABLE-UNROLL
-// RUN: %clang_cc1 -triple x86_64 -target-cpu x86-64 -fexperimental-new-pass-manager -S -O1 -fno-unroll-loops -emit-llvm -o - %s | FileCheck %s -check-prefix=CHECK-DISABLE-UNROLL
 // REQUIRES: x86-registered-target
 
 // CHECK-ENABLE-UNROLL-LABEL: @for_test()
@@ -37,10 +35,12 @@
 // CHECK-DISABLE-UNROLL-NOT: fmul
 // CHECK-DISABLE-UNROLL-NOT: fadd
 // CHECK-DISABLE-UNROLL-NOT: store
+// Limit scope of checking so this does not match "fadd" within git version string
+// CHECK-DISABLE-UNROLL: !0 =
 
 int printf(const char * restrict format, ...);
 
-void for_test() {
+void for_test(void) {
   double A[1000], B[1000];
   int L = 500;
   for (int i = 0; i < L; i++) {

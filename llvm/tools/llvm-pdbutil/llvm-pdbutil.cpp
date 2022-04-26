@@ -15,8 +15,6 @@
 #include "BytesOutputStyle.h"
 #include "DumpOutputStyle.h"
 #include "ExplainOutputStyle.h"
-#include "InputFile.h"
-#include "LinePrinter.h"
 #include "OutputStyle.h"
 #include "PrettyClassDefinitionDumper.h"
 #include "PrettyCompilandDumper.h"
@@ -44,14 +42,18 @@
 #include "llvm/DebugInfo/CodeView/StringsAndChecksums.h"
 #include "llvm/DebugInfo/CodeView/TypeStreamMerger.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
+#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
+#include "llvm/DebugInfo/PDB/ConcreteSymbolEnumerator.h"
 #include "llvm/DebugInfo/PDB/IPDBEnumChildren.h"
 #include "llvm/DebugInfo/PDB/IPDBInjectedSource.h"
+#include "llvm/DebugInfo/PDB/IPDBLineNumber.h"
 #include "llvm/DebugInfo/PDB/IPDBRawSymbol.h"
 #include "llvm/DebugInfo/PDB/IPDBSession.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStreamBuilder.h"
+#include "llvm/DebugInfo/PDB/Native/InputFile.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFileBuilder.h"
@@ -67,6 +69,7 @@
 #include "llvm/DebugInfo/PDB/PDBSymbolFunc.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolPublicSymbol.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolThunk.h"
+#include "llvm/DebugInfo/PDB/PDBSymbolTypeBuiltin.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeEnum.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeFunctionArg.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeFunctionSig.h"
@@ -194,6 +197,8 @@ static cl::opt<bool> VTShapes("vtshapes", cl::desc("Dump virtual table shapes"),
 static cl::opt<bool> Typedefs("typedefs", cl::desc("Dump typedefs"),
                               cl::sub(DiaDumpSubcommand));
 } // namespace diadump
+
+FilterOptions Filters;
 
 namespace pretty {
 cl::list<std::string> InputFilenames(cl::Positional,
@@ -465,6 +470,10 @@ cl::opt<bool> DumpSymbolStats(
 cl::opt<bool> DumpTypeStats(
     "type-stats",
     cl::desc("Dump a detailed breakdown of type usage/size"),
+    cl::cat(MsfOptions), cl::sub(DumpSubcommand));
+cl::opt<bool> DumpIDStats(
+    "id-stats",
+    cl::desc("Dump a detailed breakdown of IPI types usage/size"),
     cl::cat(MsfOptions), cl::sub(DumpSubcommand));
 cl::opt<bool> DumpUdtStats(
     "udt-stats",
@@ -744,7 +753,7 @@ static ExitOnError ExitOnErr;
 static void yamlToPdb(StringRef Path) {
   BumpPtrAllocator Allocator;
   ErrorOr<std::unique_ptr<MemoryBuffer>> ErrorOrBuffer =
-      MemoryBuffer::getFileOrSTDIN(Path, /*FileSize=*/-1,
+      MemoryBuffer::getFileOrSTDIN(Path, /*IsText=*/false,
                                    /*RequiresNullTerminator=*/false);
 
   if (ErrorOrBuffer.getError()) {
@@ -864,7 +873,6 @@ static void pdb2Yaml(StringRef Path) {
   auto &File = loadPDB(Path, Session);
 
   auto O = std::make_unique<YAMLOutputStyle>(File);
-  O = std::make_unique<YAMLOutputStyle>(File);
 
   ExitOnErr(O->dump());
 }
@@ -888,9 +896,9 @@ static void dumpBytes(StringRef Path) {
 bool opts::pretty::shouldDumpSymLevel(SymLevel Search) {
   if (SymTypes.empty())
     return true;
-  if (llvm::find(SymTypes, Search) != SymTypes.end())
+  if (llvm::is_contained(SymTypes, Search))
     return true;
-  if (llvm::find(SymTypes, SymLevel::All) != SymTypes.end())
+  if (llvm::is_contained(SymTypes, SymLevel::All))
     return true;
   return false;
 }
@@ -1065,7 +1073,7 @@ static void dumpPretty(StringRef Path) {
   const bool UseColor = opts::pretty::ColorOutput == cl::BOU_UNSET
                             ? Stream.has_colors()
                             : opts::pretty::ColorOutput == cl::BOU_TRUE;
-  LinePrinter Printer(2, UseColor, Stream);
+  LinePrinter Printer(2, UseColor, Stream, opts::Filters);
 
   auto GlobalScope(Session->getGlobalScope());
   if (!GlobalScope)
@@ -1427,6 +1435,8 @@ int main(int Argc, const char **Argv) {
   InitLLVM X(Argc, Argv);
   ExitOnErr.setBanner("llvm-pdbutil: ");
 
+  cl::HideUnrelatedOptions(
+      {&opts::TypeCategory, &opts::FilterCategory, &opts::OtherOptions});
   cl::ParseCommandLineOptions(Argc, Argv, "LLVM PDB Dumper\n");
 
   if (opts::BytesSubcommand) {
@@ -1501,13 +1511,39 @@ int main(int Argc, const char **Argv) {
 
   llvm::sys::InitializeCOMRAII COM(llvm::sys::COMThreadingMode::MultiThreaded);
 
+  // Initialize the filters for LinePrinter.
+  auto propagate = [&](auto &Target, auto &Reference) {
+    for (std::string &Option : Reference)
+      Target.push_back(Option);
+  };
+
+  propagate(opts::Filters.ExcludeTypes, opts::pretty::ExcludeTypes);
+  propagate(opts::Filters.ExcludeTypes, opts::pretty::ExcludeTypes);
+  propagate(opts::Filters.ExcludeSymbols, opts::pretty::ExcludeSymbols);
+  propagate(opts::Filters.ExcludeCompilands, opts::pretty::ExcludeCompilands);
+  propagate(opts::Filters.IncludeTypes, opts::pretty::IncludeTypes);
+  propagate(opts::Filters.IncludeSymbols, opts::pretty::IncludeSymbols);
+  propagate(opts::Filters.IncludeCompilands, opts::pretty::IncludeCompilands);
+  opts::Filters.PaddingThreshold = opts::pretty::PaddingThreshold;
+  opts::Filters.SizeThreshold = opts::pretty::SizeThreshold;
+  opts::Filters.JustMyCode = opts::dump::JustMyCode;
+  if (opts::dump::DumpModi.getNumOccurrences() > 0) {
+    if (opts::dump::DumpModi.getNumOccurrences() != 1) {
+      errs() << "argument '-modi' specified more than once.\n";
+      errs().flush();
+      exit(1);
+    }
+    opts::Filters.NumOccurrences = opts::dump::DumpModi.getNumOccurrences();
+    opts::Filters.DumpModi = opts::dump::DumpModi;
+  }
+
   if (opts::PdbToYamlSubcommand) {
     pdb2Yaml(opts::pdb2yaml::InputFilename.front());
   } else if (opts::YamlToPdbSubcommand) {
     if (opts::yaml2pdb::YamlPdbOutputFile.empty()) {
       SmallString<16> OutputFilename(opts::yaml2pdb::InputFilename.getValue());
       sys::path::replace_extension(OutputFilename, ".pdb");
-      opts::yaml2pdb::YamlPdbOutputFile = OutputFilename.str();
+      opts::yaml2pdb::YamlPdbOutputFile = std::string(OutputFilename.str());
     }
     yamlToPdb(opts::yaml2pdb::InputFilename);
   } else if (opts::DiaDumpSubcommand) {
@@ -1539,14 +1575,14 @@ int main(int Argc, const char **Argv) {
     // it needs to be escaped again in the C++.  So matching a single \ in the
     // input requires 4 \es in the C++.
     if (opts::pretty::ExcludeCompilerGenerated) {
-      opts::pretty::ExcludeTypes.push_back("__vc_attributes");
-      opts::pretty::ExcludeCompilands.push_back("\\* Linker \\*");
+      opts::Filters.ExcludeTypes.push_back("__vc_attributes");
+      opts::Filters.ExcludeCompilands.push_back("\\* Linker \\*");
     }
     if (opts::pretty::ExcludeSystemLibraries) {
-      opts::pretty::ExcludeCompilands.push_back(
+      opts::Filters.ExcludeCompilands.push_back(
           "f:\\\\binaries\\\\Intermediate\\\\vctools\\\\crt_bld");
-      opts::pretty::ExcludeCompilands.push_back("f:\\\\dd\\\\vctools\\\\crt");
-      opts::pretty::ExcludeCompilands.push_back(
+      opts::Filters.ExcludeCompilands.push_back("f:\\\\dd\\\\vctools\\\\crt");
+      opts::Filters.ExcludeCompilands.push_back(
           "d:\\\\th.obj.x86fre\\\\minkernel");
     }
     llvm::for_each(opts::pretty::InputFilenames, dumpPretty);

@@ -9,7 +9,8 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CPPCOREGUIDELINES_PRO_TYPE_MEMBER_INIT_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CPPCOREGUIDELINES_PRO_TYPE_MEMBER_INIT_H
 
-#include "../ClangTidy.h"
+#include "../ClangTidyCheck.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace clang {
 namespace tidy {
@@ -33,6 +34,9 @@ namespace cppcoreguidelines {
 class ProTypeMemberInitCheck : public ClangTidyCheck {
 public:
   ProTypeMemberInitCheck(StringRef Name, ClangTidyContext *Context);
+  bool isLanguageVersionSupported(const LangOptions &LangOpts) const override {
+    return LangOpts.CPlusPlus;
+  }
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
   void storeOptions(ClangTidyOptions::OptionMap &Opts) override;
@@ -66,9 +70,13 @@ private:
   bool IgnoreArrays;
 
   // Whether fix-its for initialization of fundamental type use assignment
-  // instead of brace initalization. Only effective in C++11 mode. Default is
+  // instead of brace initialization. Only effective in C++11 mode. Default is
   // false.
   bool UseAssignment;
+
+  // Record the member variables that have been initialized to prevent repeated
+  // initialization.
+  llvm::DenseSet<const FieldDecl *> HasRecordClassMemberSet;
 };
 
 } // namespace cppcoreguidelines

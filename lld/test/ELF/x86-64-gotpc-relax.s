@@ -1,12 +1,28 @@
 # REQUIRES: x86
+## Test R_X86_64_GOTPCRELX and R_X86_64_REX_GOTPCRELX GOT optimization.
+
 # RUN: llvm-mc -filetype=obj -relax-relocations -triple=x86_64-unknown-linux %s -o %t.o
+# RUN: ld.lld %t.o -o %t1 --no-apply-dynamic-relocs
+# RUN: llvm-readobj -x .got.plt -r %t1 | FileCheck --check-prefixes=RELOC,NO-APPLY-DYNAMIC-RELOCS %s
+# RUN: ld.lld %t.o -o %t1 --apply-dynamic-relocs
+# RUN: llvm-readobj -x .got.plt -r %t1 | FileCheck --check-prefixes=RELOC,APPLY-DYNAMIC-RELOCS %s
 # RUN: ld.lld %t.o -o %t1
-# RUN: llvm-readobj -r %t1 | FileCheck --check-prefix=RELOC %s
 # RUN: llvm-objdump -d %t1 | FileCheck --check-prefix=DISASM %s
 
-## There is no relocations.
-# RELOC:    Relocations [
-# RELOC:    ]
+## --no-relax disables GOT optimization.
+# RUN: ld.lld --no-relax %t.o -o %t2
+# RUN: llvm-objdump -d %t2 | FileCheck --check-prefix=NORELAX %s
+
+## There is one R_X86_64_IRELATIVE relocations.
+# RELOC-LABEL: Relocations [
+# RELOC-NEXT:    Section (1) .rela.dyn {
+# RELOC-NEXT:      0x202220 R_X86_64_IRELATIVE - 0x201172
+# RELOC-NEXT:    }
+# RELOC-NEXT:  ]
+# RELOC-LABEL: Hex dump of section '.got.plt':
+# NO-APPLY-DYNAMIC-RELOCS-NEXT:  0x00202220 00000000 00000000
+# APPLY-DYNAMIC-RELOCS-NEXT:     0x00202220 72112000 00000000
+# RELOC-EMPTY:
 
 # 0x201173 + 7 - 10 = 0x201170
 # 0x20117a + 7 - 17 = 0x201170
@@ -14,13 +30,13 @@
 # 0x201188 + 7 - 30 = 0x201171
 # DISASM:      Disassembly of section .text:
 # DISASM-EMPTY:
-# DISASM-NEXT: foo:
+# DISASM-NEXT: <foo>:
 # DISASM-NEXT:   201170: 90 nop
-# DISASM:      hid:
+# DISASM:      <hid>:
 # DISASM-NEXT:   201171: 90 nop
-# DISASM:      ifunc:
+# DISASM:      <ifunc>:
 # DISASM-NEXT:   201172: c3 retq
-# DISASM:      _start:
+# DISASM:      <_start>:
 # DISASM-NEXT: leaq -10(%rip), %rax
 # DISASM-NEXT: leaq -17(%rip), %rax
 # DISASM-NEXT: leaq -23(%rip), %rax
@@ -33,22 +49,27 @@
 # DISASM-NEXT: leaq -72(%rip), %rax
 # DISASM-NEXT: movq 4192(%rip), %rax
 # DISASM-NEXT: movq 4185(%rip), %rax
-# DISASM-NEXT: callq -93 <foo>
-# DISASM-NEXT: callq -99 <foo>
-# DISASM-NEXT: callq -104 <hid>
-# DISASM-NEXT: callq -110 <hid>
+# DISASM-NEXT: callq 0x201170 <foo>
+# DISASM-NEXT: callq 0x201170 <foo>
+# DISASM-NEXT: callq 0x201171 <hid>
+# DISASM-NEXT: callq 0x201171 <hid>
 # DISASM-NEXT: callq *4155(%rip)
 # DISASM-NEXT: callq *4149(%rip)
-# DISASM-NEXT: jmp   -128 <foo>
+# DISASM-NEXT: jmp   0x201170 <foo>
 # DISASM-NEXT: nop
-# DISASM-NEXT: jmp   -134 <foo>
+# DISASM-NEXT: jmp   0x201170 <foo>
 # DISASM-NEXT: nop
-# DISASM-NEXT: jmp   -139 <hid>
+# DISASM-NEXT: jmp   0x201171 <hid>
 # DISASM-NEXT: nop
-# DISASM-NEXT: jmp   -145 <hid>
+# DISASM-NEXT: jmp   0x201171 <hid>
 # DISASM-NEXT: nop
 # DISASM-NEXT: jmpq  *4119(%rip)
 # DISASM-NEXT: jmpq  *4113(%rip)
+
+# NORELAX-LABEL: <_start>:
+# NORELAX-COUNT-12: movq
+# NORELAX-COUNT-6:  callq *
+# NORELAX-COUNT-6:  jmpq *
 
 .text
 .globl foo

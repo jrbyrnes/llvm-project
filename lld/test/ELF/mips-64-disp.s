@@ -9,24 +9,24 @@
 # RUN: llvm-objdump -d -t --no-show-raw-insn %t.exe | FileCheck %s
 # RUN: llvm-readelf -r -s -A %t.exe | FileCheck -check-prefix=GOT %s
 
-# CHECK:      __start:
+# CHECK:      <__start>:
 # CHECK-NEXT:    {{.*}}:  addiu   $2, $2, -32704
 # CHECK-EMPTY:
-# CHECK-NEXT: b4:
+# CHECK-NEXT: <b4>:
 # CHECK-NEXT:    {{.*}}:  addiu   $2, $2, -32736
 # CHECK-EMPTY:
-# CHECK-NEXT: b8:
+# CHECK-NEXT: <b8>:
 # CHECK-NEXT:    {{.*}}:  addiu   $2, $2, -32728
 # CHECK-EMPTY:
-# CHECK-NEXT: b12:
+# CHECK-NEXT: <b12>:
 # CHECK-NEXT:    {{.*}}:  addiu   $2, $2, -32720
 # CHECK-NEXT:    {{.*}}:  addiu   $2, $2, -32712
 
 # GOT: Symbol table '.symtab'
-# GOT: {{.*}} [[B12:[0-9a-f]+]] {{.*}} b12
 # GOT: {{.*}} [[B04:[0-9a-f]+]] {{.*}} b4
-# GOT: {{.*}} [[B08:[0-9a-f]+]] {{.*}} b8
 # GOT: {{.*}} [[FOO:[0-9a-f]+]] {{.*}} foo
+# GOT: {{.*}} [[B08:[0-9a-f]+]] {{.*}} b8
+# GOT: {{.*}} [[B12:[0-9a-f]+]] {{.*}} b12
 
 # GOT:      Primary GOT:
 # GOT-NEXT:  Canonical gp value:

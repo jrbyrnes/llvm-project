@@ -1,4 +1,4 @@
-//===-- ThreadPlanCallFunction.cpp ------------------------------*- C++ -*-===//
+//===-- ThreadPlanCallFunction.cpp ----------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -21,6 +21,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/ThreadPlanRunToAddress.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Stream.h"
 
@@ -33,7 +34,7 @@ using namespace lldb_private;
 bool ThreadPlanCallFunction::ConstructorSetup(
     Thread &thread, ABI *&abi, lldb::addr_t &start_load_addr,
     lldb::addr_t &function_load_addr) {
-  SetIsMasterPlan(true);
+  SetIsControllingPlan(true);
   SetOkayToDiscard(false);
   SetPrivate(true);
 
@@ -46,7 +47,7 @@ bool ThreadPlanCallFunction::ConstructorSetup(
   if (!abi)
     return false;
 
-  Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
 
   SetBreakpoints();
 
@@ -143,10 +144,10 @@ ThreadPlanCallFunction::~ThreadPlanCallFunction() {
 }
 
 void ThreadPlanCallFunction::ReportRegisterState(const char *message) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
   if (log && log->GetVerbose()) {
     StreamString strm;
-    RegisterContext *reg_ctx = m_thread.GetRegisterContext().get();
+    RegisterContext *reg_ctx = GetThread().GetRegisterContext().get();
 
     log->PutCString(message);
 
@@ -166,7 +167,7 @@ void ThreadPlanCallFunction::ReportRegisterState(const char *message) {
 }
 
 void ThreadPlanCallFunction::DoTakedown(bool success) {
-  Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
 
   if (!m_valid) {
     // Don't call DoTakedown if we were never valid to begin with.
@@ -178,19 +179,19 @@ void ThreadPlanCallFunction::DoTakedown(bool success) {
   }
 
   if (!m_takedown_done) {
+    Thread &thread = GetThread();
     if (success) {
       SetReturnValue();
     }
     LLDB_LOGF(log,
               "ThreadPlanCallFunction(%p): DoTakedown called for thread "
               "0x%4.4" PRIx64 ", m_valid: %d complete: %d.\n",
-              static_cast<void *>(this), m_thread.GetID(), m_valid,
-              IsPlanComplete());
+              static_cast<void *>(this), m_tid, m_valid, IsPlanComplete());
     m_takedown_done = true;
     m_stop_address =
-        m_thread.GetStackFrameAtIndex(0)->GetRegisterContext()->GetPC();
+        thread.GetStackFrameAtIndex(0)->GetRegisterContext()->GetPC();
     m_real_stop_info_sp = GetPrivateStopInfo();
-    if (!m_thread.RestoreRegisterStateFromCheckpoint(m_stored_thread_state)) {
+    if (!thread.RestoreRegisterStateFromCheckpoint(m_stored_thread_state)) {
       LLDB_LOGF(log,
                 "ThreadPlanCallFunction(%p): DoTakedown failed to restore "
                 "register state",
@@ -205,20 +206,18 @@ void ThreadPlanCallFunction::DoTakedown(bool success) {
     LLDB_LOGF(log,
               "ThreadPlanCallFunction(%p): DoTakedown called as no-op for "
               "thread 0x%4.4" PRIx64 ", m_valid: %d complete: %d.\n",
-              static_cast<void *>(this), m_thread.GetID(), m_valid,
-              IsPlanComplete());
+              static_cast<void *>(this), m_tid, m_valid, IsPlanComplete());
   }
 }
 
-void ThreadPlanCallFunction::WillPop() { DoTakedown(PlanSucceeded()); }
+void ThreadPlanCallFunction::DidPop() { DoTakedown(PlanSucceeded()); }
 
 void ThreadPlanCallFunction::GetDescription(Stream *s, DescriptionLevel level) {
   if (level == eDescriptionLevelBrief) {
     s->Printf("Function call thread plan");
   } else {
-    TargetSP target_sp(m_thread.CalculateTarget());
     s->Printf("Thread plan to call 0x%" PRIx64,
-              m_function_addr.GetLoadAddress(target_sp.get()));
+              m_function_addr.GetLoadAddress(&GetTarget()));
   }
 }
 
@@ -244,8 +243,7 @@ Vote ThreadPlanCallFunction::ShouldReportStop(Event *event_ptr) {
 }
 
 bool ThreadPlanCallFunction::DoPlanExplainsStop(Event *event_ptr) {
-  Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_STEP |
-                                                  LIBLLDB_LOG_PROCESS));
+  Log *log(GetLog(LLDBLog::Step | LLDBLog::Process));
   m_real_stop_info_sp = GetPrivateStopInfo();
 
   // If our subplan knows why we stopped, even if it's done (which would
@@ -262,9 +260,9 @@ bool ThreadPlanCallFunction::DoPlanExplainsStop(Event *event_ptr) {
     stop_reason = eStopReasonNone;
   else
     stop_reason = m_real_stop_info_sp->GetStopReason();
-  LLDB_LOGF(log,
-            "ThreadPlanCallFunction::PlanExplainsStop: Got stop reason - %s.",
-            Thread::StopReasonAsCString(stop_reason));
+  LLDB_LOG(log,
+           "ThreadPlanCallFunction::PlanExplainsStop: Got stop reason - {0}.",
+           Thread::StopReasonAsString(stop_reason));
 
   if (stop_reason == eStopReasonBreakpoint && BreakpointsExplainStop())
     return true;
@@ -283,11 +281,9 @@ bool ThreadPlanCallFunction::DoPlanExplainsStop(Event *event_ptr) {
   // m_ignore_breakpoints.
 
   if (stop_reason == eStopReasonBreakpoint) {
-    ProcessSP process_sp(m_thread.CalculateProcess());
     uint64_t break_site_id = m_real_stop_info_sp->GetValue();
     BreakpointSiteSP bp_site_sp;
-    if (process_sp)
-      bp_site_sp = process_sp->GetBreakpointSiteList().FindByID(break_site_id);
+    bp_site_sp = m_process.GetBreakpointSiteList().FindByID(break_site_id);
     if (bp_site_sp) {
       uint32_t num_owners = bp_site_sp->GetNumberOfOwners();
       bool is_internal = true;
@@ -374,10 +370,11 @@ void ThreadPlanCallFunction::DidPush() {
   GetThread().SetStopInfoToNothing();
 
 #ifndef SINGLE_STEP_EXPRESSIONS
-  m_subplan_sp = std::make_shared<ThreadPlanRunToAddress>(
-      m_thread, m_start_addr, m_stop_other_threads);
+  Thread &thread = GetThread();
+  m_subplan_sp = std::make_shared<ThreadPlanRunToAddress>(thread, m_start_addr, 
+                                                          m_stop_other_threads);
 
-  m_thread.QueueThreadPlan(m_subplan_sp, false);
+  thread.QueueThreadPlan(m_subplan_sp, false);
   m_subplan_sp->SetPrivate(true);
 #endif
 }
@@ -385,7 +382,7 @@ void ThreadPlanCallFunction::DidPush() {
 bool ThreadPlanCallFunction::WillStop() { return true; }
 
 bool ThreadPlanCallFunction::MischiefManaged() {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
 
   if (IsPlanComplete()) {
     LLDB_LOGF(log, "ThreadPlanCallFunction(%p): Completed call function plan.",
@@ -399,11 +396,10 @@ bool ThreadPlanCallFunction::MischiefManaged() {
 }
 
 void ThreadPlanCallFunction::SetBreakpoints() {
-  ProcessSP process_sp(m_thread.CalculateProcess());
-  if (m_trap_exceptions && process_sp) {
+  if (m_trap_exceptions) {
     m_cxx_language_runtime =
-        process_sp->GetLanguageRuntime(eLanguageTypeC_plus_plus);
-    m_objc_language_runtime = process_sp->GetLanguageRuntime(eLanguageTypeObjC);
+        m_process.GetLanguageRuntime(eLanguageTypeC_plus_plus);
+    m_objc_language_runtime = m_process.GetLanguageRuntime(eLanguageTypeObjC);
 
     if (m_cxx_language_runtime) {
       m_should_clear_cxx_exception_bp =
@@ -437,7 +433,7 @@ bool ThreadPlanCallFunction::BreakpointsExplainStop() {
         (m_objc_language_runtime &&
          m_objc_language_runtime->ExceptionBreakpointsExplainStop(
              stop_info_sp))) {
-      Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_STEP));
+      Log *log = GetLog(LLDBLog::Step);
       LLDB_LOGF(log, "ThreadPlanCallFunction::BreakpointsExplainStop - Hit an "
                      "exception breakpoint, setting plan complete.");
 
@@ -458,16 +454,15 @@ void ThreadPlanCallFunction::SetStopOthers(bool new_value) {
   m_subplan_sp->SetStopOthers(new_value);
 }
 
-bool ThreadPlanCallFunction::RestoreThreadState() {
-  return GetThread().RestoreThreadStateFromCheckpoint(m_stored_thread_state);
+void ThreadPlanCallFunction::RestoreThreadState() {
+  GetThread().RestoreThreadStateFromCheckpoint(m_stored_thread_state);
 }
 
 void ThreadPlanCallFunction::SetReturnValue() {
-  ProcessSP process_sp(m_thread.GetProcess());
-  const ABI *abi = process_sp ? process_sp->GetABI().get() : nullptr;
+  const ABI *abi = m_process.GetABI().get();
   if (abi && m_return_type.IsValid()) {
     const bool persistent = false;
     m_return_valobj_sp =
-        abi->GetReturnValueObject(m_thread, m_return_type, persistent);
+        abi->GetReturnValueObject(GetThread(), m_return_type, persistent);
   }
 }

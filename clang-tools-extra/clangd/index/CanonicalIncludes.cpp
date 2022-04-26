@@ -1,4 +1,4 @@
-//===-- CanonicalIncludes.h - remap #inclue headers--------------*- C++ -*-===//
+//===-- CanonicalIncludes.h - remap #include headers-------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,8 +8,9 @@
 
 #include "CanonicalIncludes.h"
 #include "Headers.h"
-#include "clang/Driver/Types.h"
+#include "clang/Basic/FileEntry.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/FileSystem/UniqueID.h"
 #include "llvm/Support/Path.h"
 #include <algorithm>
 
@@ -19,44 +20,40 @@ namespace {
 const char IWYUPragma[] = "// IWYU pragma: private, include ";
 } // namespace
 
-void CanonicalIncludes::addMapping(llvm::StringRef Path,
+void CanonicalIncludes::addMapping(FileEntryRef Header,
                                    llvm::StringRef CanonicalPath) {
-  FullPathMapping[Path] = CanonicalPath;
+  FullPathMapping[Header.getUniqueID()] = std::string(CanonicalPath);
 }
 
 /// The maximum number of path components in a key from StdSuffixHeaderMapping.
 /// Used to minimize the number of lookups in suffix path mappings.
 constexpr int MaxSuffixComponents = 3;
 
-llvm::StringRef
-CanonicalIncludes::mapHeader(llvm::StringRef Header,
-                             llvm::StringRef QualifiedName) const {
-  assert(!Header.empty());
-  if (StdSymbolMapping) {
-    auto SE = StdSymbolMapping->find(QualifiedName);
-    if (SE != StdSymbolMapping->end())
-      return SE->second;
-  }
-
-  auto MapIt = FullPathMapping.find(Header);
+llvm::StringRef CanonicalIncludes::mapHeader(FileEntryRef Header) const {
+  auto MapIt = FullPathMapping.find(Header.getUniqueID());
   if (MapIt != FullPathMapping.end())
     return MapIt->second;
 
   if (!StdSuffixHeaderMapping)
-    return Header;
+    return "";
 
   int Components = 1;
 
   // FIXME: check that this works on Windows and add tests.
-  for (auto It = llvm::sys::path::rbegin(Header),
-            End = llvm::sys::path::rend(Header);
+  auto Filename = Header.getName();
+  for (auto It = llvm::sys::path::rbegin(Filename),
+            End = llvm::sys::path::rend(Filename);
        It != End && Components <= MaxSuffixComponents; ++It, ++Components) {
-    auto SubPath = Header.substr(It->data() - Header.begin());
+    auto SubPath = Filename.substr(It->data() - Filename.begin());
     auto MappingIt = StdSuffixHeaderMapping->find(SubPath);
     if (MappingIt != StdSuffixHeaderMapping->end())
       return MappingIt->second;
   }
-  return Header;
+  return "";
+}
+
+llvm::StringRef CanonicalIncludes::mapSymbol(llvm::StringRef QName) const {
+  return StdSymbolMapping ? StdSymbolMapping->lookup(QName) : "";
 }
 
 std::unique_ptr<CommentHandler>
@@ -71,11 +68,12 @@ collectIWYUHeaderMaps(CanonicalIncludes *Includes) {
                                PP.getSourceManager(), PP.getLangOpts());
       if (!Text.consume_front(IWYUPragma))
         return false;
-      // FIXME(ioeric): resolve the header and store actual file path. For now,
-      // we simply assume the written header is suitable to be #included.
-      Includes->addMapping(PP.getSourceManager().getFilename(Range.getBegin()),
-                           isLiteralInclude(Text) ? Text.str()
-                                                  : ("\"" + Text + "\"").str());
+      auto &SM = PP.getSourceManager();
+      // We always insert using the spelling from the pragma.
+      if (auto *FE = SM.getFileEntryForID(SM.getFileID(Range.getBegin())))
+        Includes->addMapping(
+            FE->getLastRef(),
+            isLiteralInclude(Text) ? Text.str() : ("\"" + Text + "\"").str());
       return false;
     }
 
@@ -89,14 +87,20 @@ void CanonicalIncludes::addSystemHeadersMapping(const LangOptions &Language) {
   if (Language.CPlusPlus) {
     static const auto *Symbols = new llvm::StringMap<llvm::StringRef>({
 #define SYMBOL(Name, NameSpace, Header) {#NameSpace #Name, #Header},
-#include "StdSymbolMap.inc"
+#include "clang/Tooling/Inclusions/StdSymbolMap.inc"
+        // There are two std::move()s, this is by far the most common.
+        SYMBOL(move, std::, <utility>)
+        // There are multiple headers for size_t, pick one.
+        SYMBOL(size_t, std::, <cstddef>)
 #undef SYMBOL
     });
     StdSymbolMapping = Symbols;
   } else if (Language.C11) {
     static const auto *CSymbols = new llvm::StringMap<llvm::StringRef>({
 #define SYMBOL(Name, NameSpace, Header) {#Name, #Header},
-#include "CSymbolMap.inc"
+#include "clang/Tooling/Inclusions/CSymbolMap.inc"
+        // There are multiple headers for size_t, pick one.
+        SYMBOL(size_t, None, <stddef.h>)
 #undef SYMBOL
     });
     StdSymbolMapping = CSymbols;
@@ -418,6 +422,8 @@ void CanonicalIncludes::addSystemHeadersMapping(const LangOptions &Language) {
       {"bits/signum.h", "<csignal>"},
       {"bits/sigset.h", "<csignal>"},
       {"bits/sigstack.h", "<csignal>"},
+      {"bits/stdint-intn.h", "<cstdint>"},
+      {"bits/stdint-uintn.h", "<cstdint>"},
       {"bits/stdio_lim.h", "<cstdio>"},
       {"bits/sys_errlist.h", "<cstdio>"},
       {"bits/time.h", "<ctime>"},
@@ -772,7 +778,10 @@ void CanonicalIncludes::addSystemHeadersMapping(const LangOptions &Language) {
                   MaxSuffixComponents;
          }) != SystemHeaderMap->keys().end());
 
-  StdSuffixHeaderMapping = SystemHeaderMap;
+  // FIXME: Suffix mapping contains invalid entries for C, so only enable it for
+  // CPP.
+  if (Language.CPlusPlus)
+    StdSuffixHeaderMapping = SystemHeaderMap;
 }
 
 } // namespace clangd

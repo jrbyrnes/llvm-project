@@ -88,22 +88,20 @@ define i8 @test4(i8 %x) nounwind readnone {
 ;
 ; NO-POPCOUNT-LABEL: test4:
 ; NO-POPCOUNT:       # %bb.0:
-; NO-POPCOUNT-NEXT:    # kill: def $edi killed $edi def $rdi
 ; NO-POPCOUNT-NEXT:    andb $127, %dil
 ; NO-POPCOUNT-NEXT:    movl %edi, %eax
 ; NO-POPCOUNT-NEXT:    shrb %al
 ; NO-POPCOUNT-NEXT:    andb $21, %al
 ; NO-POPCOUNT-NEXT:    subb %al, %dil
-; NO-POPCOUNT-NEXT:    movl %edi, %eax
-; NO-POPCOUNT-NEXT:    andb $51, %al
+; NO-POPCOUNT-NEXT:    movl %edi, %ecx
+; NO-POPCOUNT-NEXT:    andb $51, %cl
 ; NO-POPCOUNT-NEXT:    shrb $2, %dil
 ; NO-POPCOUNT-NEXT:    andb $51, %dil
-; NO-POPCOUNT-NEXT:    addb %al, %dil
-; NO-POPCOUNT-NEXT:    movl %edi, %eax
+; NO-POPCOUNT-NEXT:    addb %dil, %cl
+; NO-POPCOUNT-NEXT:    movl %ecx, %eax
 ; NO-POPCOUNT-NEXT:    shrb $4, %al
-; NO-POPCOUNT-NEXT:    addl %edi, %eax
+; NO-POPCOUNT-NEXT:    addb %cl, %al
 ; NO-POPCOUNT-NEXT:    andb $15, %al
-; NO-POPCOUNT-NEXT:    # kill: def $al killed $al killed $eax
 ; NO-POPCOUNT-NEXT:    retq
   %x2 = and i8 %x, 127
   %count = tail call i8 @llvm.ctpop.i8(i8 %x2)
@@ -116,7 +114,7 @@ define i32 @ctpop_eq_one(i64 %x) nounwind readnone {
 ; POPCOUNT:       # %bb.0:
 ; POPCOUNT-NEXT:    popcntq %rdi, %rcx
 ; POPCOUNT-NEXT:    xorl %eax, %eax
-; POPCOUNT-NEXT:    cmpq $1, %rcx
+; POPCOUNT-NEXT:    cmpl $1, %ecx
 ; POPCOUNT-NEXT:    sete %al
 ; POPCOUNT-NEXT:    retq
 ;
@@ -141,7 +139,7 @@ define i32 @ctpop_ne_one(i64 %x) nounwind readnone {
 ; POPCOUNT:       # %bb.0:
 ; POPCOUNT-NEXT:    popcntq %rdi, %rcx
 ; POPCOUNT-NEXT:    xorl %eax, %eax
-; POPCOUNT-NEXT:    cmpq $1, %rcx
+; POPCOUNT-NEXT:    cmpl $1, %ecx
 ; POPCOUNT-NEXT:    setne %al
 ; POPCOUNT-NEXT:    retq
 ;
@@ -160,3 +158,41 @@ define i32 @ctpop_ne_one(i64 %x) nounwind readnone {
   %conv = zext i1 %cmp to i32
   ret i32 %conv
 }
+
+define i1 @ctpop_trunc_non_power2(i255 %x) nounwind {
+; CHECK-LABEL: ctpop_trunc_non_power2:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    pushq %rbx
+; CHECK-NEXT:    movabsq $9223372036854775807, %r8 # imm = 0x7FFFFFFFFFFFFFFF
+; CHECK-NEXT:    movq %rcx, %r9
+; CHECK-NEXT:    andq %r8, %r9
+; CHECK-NEXT:    movq %rdi, %r11
+; CHECK-NEXT:    addq $-1, %r11
+; CHECK-NEXT:    movq %rsi, %r10
+; CHECK-NEXT:    adcq $-1, %r10
+; CHECK-NEXT:    movq %rdx, %rax
+; CHECK-NEXT:    adcq $-1, %rax
+; CHECK-NEXT:    movq %rcx, %rbx
+; CHECK-NEXT:    adcq %r8, %rbx
+; CHECK-NEXT:    andq %rdi, %r11
+; CHECK-NEXT:    andq %rdx, %rax
+; CHECK-NEXT:    orq %r11, %rax
+; CHECK-NEXT:    andq %rsi, %r10
+; CHECK-NEXT:    andq %r8, %rbx
+; CHECK-NEXT:    andq %rcx, %rbx
+; CHECK-NEXT:    orq %r10, %rbx
+; CHECK-NEXT:    orq %rax, %rbx
+; CHECK-NEXT:    sete %cl
+; CHECK-NEXT:    orq %rdx, %rdi
+; CHECK-NEXT:    orq %rsi, %r9
+; CHECK-NEXT:    orq %rdi, %r9
+; CHECK-NEXT:    setne %al
+; CHECK-NEXT:    andb %cl, %al
+; CHECK-NEXT:    popq %rbx
+; CHECK-NEXT:    retq
+  %a = call i255 @llvm.ctpop.i255(i255 %x)
+  %b = trunc i255 %a to i8 ; largest value from ctpop is 255, fits in 8 bits.
+  %c = icmp eq i8 %b, 1
+  ret i1 %c
+}
+declare i255 @llvm.ctpop.i255(i255)

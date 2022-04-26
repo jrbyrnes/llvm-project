@@ -27,6 +27,7 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsMips.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -152,7 +153,7 @@ void MipsSEDAGToDAGISel::emitMCountABI(MachineInstr &MI, MachineBasicBlock &MBB,
 }
 
 void MipsSEDAGToDAGISel::processFunctionAfterISel(MachineFunction &MF) {
-  MF.getInfo<MipsFunctionInfo>()->initGlobalBaseReg();
+  MF.getInfo<MipsFunctionInfo>()->initGlobalBaseReg(MF);
 
   MachineRegisterInfo *MRI = &MF.getRegInfo();
 
@@ -234,8 +235,8 @@ void MipsSEDAGToDAGISel::selectAddE(SDNode *Node, const SDLoc &DL) const {
 
   SDValue OuFlag = CurDAG->getTargetConstant(20, DL, MVT::i32);
 
-  SDNode *DSPCtrlField =
-      CurDAG->getMachineNode(Mips::RDDSP, DL, MVT::i32, MVT::Glue, CstOne, InFlag);
+  SDNode *DSPCtrlField = CurDAG->getMachineNode(Mips::RDDSP, DL, MVT::i32,
+                                                MVT::Glue, CstOne, InFlag);
 
   SDNode *Carry = CurDAG->getMachineNode(
       Mips::EXT, DL, MVT::i32, SDValue(DSPCtrlField, 0), OuFlag, CstOne);
@@ -253,7 +254,8 @@ void MipsSEDAGToDAGISel::selectAddE(SDNode *Node, const SDLoc &DL) const {
   SDValue Zero = CurDAG->getRegister(Mips::ZERO, MVT::i32);
 
   SDValue InsOps[4] = {Zero, OuFlag, CstOne, SDValue(DSPCFWithCarry, 0)};
-  SDNode *DSPCtrlFinal = CurDAG->getMachineNode(Mips::INS, DL, MVT::i32, InsOps);
+  SDNode *DSPCtrlFinal =
+      CurDAG->getMachineNode(Mips::INS, DL, MVT::i32, InsOps);
 
   SDNode *WrDSP = CurDAG->getMachineNode(Mips::WRDSP, DL, MVT::Glue,
                                          SDValue(DSPCtrlFinal, 0), CstOne);
@@ -280,7 +282,7 @@ bool MipsSEDAGToDAGISel::selectAddrFrameIndexOffset(
     SDValue Addr, SDValue &Base, SDValue &Offset, unsigned OffsetBits,
     unsigned ShiftAmount = 0) const {
   if (CurDAG->isBaseWithConstantOffset(Addr)) {
-    ConstantSDNode *CN = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+    auto *CN = cast<ConstantSDNode>(Addr.getOperand(1));
     if (isIntN(OffsetBits + ShiftAmount, CN->getSExtValue())) {
       EVT ValTy = Addr.getValueType();
 
@@ -831,7 +833,9 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
   }
 
   case ISD::INTRINSIC_W_CHAIN: {
-    switch (cast<ConstantSDNode>(Node->getOperand(1))->getZExtValue()) {
+    const unsigned IntrinsicOpcode =
+        cast<ConstantSDNode>(Node->getOperand(1))->getZExtValue();
+    switch (IntrinsicOpcode) {
     default:
       break;
 
@@ -841,6 +845,41 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
       SDValue Reg = CurDAG->getCopyFromReg(ChainIn, DL,
                                            getMSACtrlReg(RegIdx), MVT::i32);
       ReplaceNode(Node, Reg.getNode());
+      return true;
+    }
+    case Intrinsic::mips_ldr_d:
+    case Intrinsic::mips_ldr_w: {
+      unsigned Op = (IntrinsicOpcode == Intrinsic::mips_ldr_d) ? Mips::LDR_D
+                                                               : Mips::LDR_W;
+
+      SDLoc DL(Node);
+      assert(Node->getNumOperands() == 4 && "Unexpected number of operands.");
+      const SDValue &Chain = Node->getOperand(0);
+      const SDValue &Intrinsic = Node->getOperand(1);
+      const SDValue &Pointer = Node->getOperand(2);
+      const SDValue &Constant = Node->getOperand(3);
+
+      assert(Chain.getValueType() == MVT::Other);
+      (void)Intrinsic;
+      assert(Intrinsic.getOpcode() == ISD::TargetConstant &&
+             Constant.getOpcode() == ISD::Constant &&
+             "Invalid instruction operand.");
+
+      // Convert Constant to TargetConstant.
+      const ConstantInt *Val =
+          cast<ConstantSDNode>(Constant)->getConstantIntValue();
+      SDValue Imm =
+          CurDAG->getTargetConstant(*Val, DL, Constant.getValueType());
+
+      SmallVector<SDValue, 3> Ops{Pointer, Imm, Chain};
+
+      assert(Node->getNumValues() == 2);
+      assert(Node->getValueType(0).is128BitVector());
+      assert(Node->getValueType(1) == MVT::Other);
+      SmallVector<EVT, 2> ResTys{Node->getValueType(0), Node->getValueType(1)};
+
+      ReplaceNode(Node, CurDAG->getMachineNode(Op, DL, ResTys, Ops));
+
       return true;
     }
     }
@@ -864,7 +903,9 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
   }
 
   case ISD::INTRINSIC_VOID: {
-    switch (cast<ConstantSDNode>(Node->getOperand(1))->getZExtValue()) {
+    const unsigned IntrinsicOpcode =
+        cast<ConstantSDNode>(Node->getOperand(1))->getZExtValue();
+    switch (IntrinsicOpcode) {
     default:
       break;
 
@@ -875,6 +916,40 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
       SDValue ChainOut = CurDAG->getCopyToReg(ChainIn, DL,
                                               getMSACtrlReg(RegIdx), Value);
       ReplaceNode(Node, ChainOut.getNode());
+      return true;
+    }
+    case Intrinsic::mips_str_d:
+    case Intrinsic::mips_str_w: {
+      unsigned Op = (IntrinsicOpcode == Intrinsic::mips_str_d) ? Mips::STR_D
+                                                               : Mips::STR_W;
+
+      SDLoc DL(Node);
+      assert(Node->getNumOperands() == 5 && "Unexpected number of operands.");
+      const SDValue &Chain = Node->getOperand(0);
+      const SDValue &Intrinsic = Node->getOperand(1);
+      const SDValue &Vec = Node->getOperand(2);
+      const SDValue &Pointer = Node->getOperand(3);
+      const SDValue &Constant = Node->getOperand(4);
+
+      assert(Chain.getValueType() == MVT::Other);
+      (void)Intrinsic;
+      assert(Intrinsic.getOpcode() == ISD::TargetConstant &&
+             Constant.getOpcode() == ISD::Constant &&
+             "Invalid instruction operand.");
+
+      // Convert Constant to TargetConstant.
+      const ConstantInt *Val =
+          cast<ConstantSDNode>(Constant)->getConstantIntValue();
+      SDValue Imm =
+          CurDAG->getTargetConstant(*Val, DL, Constant.getValueType());
+
+      SmallVector<SDValue, 4> Ops{Vec, Pointer, Imm, Chain};
+
+      assert(Node->getNumValues() == 1);
+      assert(Node->getValueType(0) == MVT::Other);
+      SmallVector<EVT, 1> ResTys{Node->getValueType(0)};
+
+      ReplaceNode(Node, CurDAG->getMachineNode(Op, DL, ResTys, Ops));
       return true;
     }
     }
@@ -889,7 +964,7 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
   // match the instruction.
   case MipsISD::Ins: {
 
-    // Sanity checking for the node operands.
+    // Validating the node operands.
     if (Node->getValueType(0) != MVT::i32 && Node->getValueType(0) != MVT::i64)
       return false;
 
@@ -952,12 +1027,13 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
     }
 
     SDNode *Rdhwr =
-        CurDAG->getMachineNode(RdhwrOpc, DL, Node->getValueType(0),
+        CurDAG->getMachineNode(RdhwrOpc, DL, Node->getValueType(0), MVT::Glue,
                                CurDAG->getRegister(Mips::HWR29, MVT::i32),
                                CurDAG->getTargetConstant(0, DL, MVT::i32));
     SDValue Chain = CurDAG->getCopyToReg(CurDAG->getEntryNode(), DL, DestReg,
-                                         SDValue(Rdhwr, 0));
-    SDValue ResNode = CurDAG->getCopyFromReg(Chain, DL, DestReg, PtrVT);
+                                         SDValue(Rdhwr, 0), SDValue(Rdhwr, 1));
+    SDValue ResNode = CurDAG->getCopyFromReg(Chain, DL, DestReg, PtrVT,
+                                             Chain.getValue(1));
     ReplaceNode(Node, ResNode.getNode());
     return true;
   }
@@ -1074,7 +1150,8 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
                                      Hi ? SDValue(Res, 0) : ZeroVal, LoVal);
 
       assert((Hi || Lo) && "Zero case reached 32 bit case splat synthesis!");
-      Res = CurDAG->getMachineNode(Mips::FILL_W, DL, MVT::v4i32, SDValue(Res, 0));
+      Res =
+          CurDAG->getMachineNode(Mips::FILL_W, DL, MVT::v4i32, SDValue(Res, 0));
 
     } else if (SplatValue.isSignedIntN(32) && SplatBitSize == 64 &&
                (ABI.IsN32() || ABI.IsN64())) {
@@ -1117,8 +1194,8 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
       //   $res4 = insert.w $res3[1], $res    fill.d $res
       //   splat.d $res4, 0
       //
-      // The ability to use dinsu is guaranteed as MSA requires MIPSR5. This saves
-      // having to materialize the value by shifts and ors.
+      // The ability to use dinsu is guaranteed as MSA requires MIPSR5.
+      // This saves having to materialize the value by shifts and ors.
       //
       // FIXME: Implement the preferred sequence for MIPS64R6:
       //
@@ -1239,7 +1316,8 @@ bool MipsSEDAGToDAGISel::trySelect(SDNode *Node) {
           llvm_unreachable(
               "Zero splat value handled by non-zero 64bit splat synthesis!");
 
-        Res = CurDAG->getMachineNode(Mips::FILL_D, DL, MVT::v2i64, SDValue(Res, 0));
+        Res = CurDAG->getMachineNode(Mips::FILL_D, DL, MVT::v2i64,
+                                     SDValue(Res, 0));
       } else
         llvm_unreachable("Unknown ABI in MipsISelDAGToDAG!");
 
@@ -1278,10 +1356,6 @@ SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
   default:
     llvm_unreachable("Unexpected asm memory constraint");
   // All memory constraints can at least accept raw pointers.
-  case InlineAsm::Constraint_i:
-    OutOps.push_back(Op);
-    OutOps.push_back(CurDAG->getTargetConstant(0, SDLoc(Op), MVT::i32));
-    return false;
   case InlineAsm::Constraint_m:
   case InlineAsm::Constraint_o:
     if (selectAddrRegImm16(Op, Base, Offset)) {

@@ -10,12 +10,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ValueProfileCollector.h"
 #include "ValueProfilePlugins.inc"
-#include "llvm/IR/InstIterator.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/InitializePasses.h"
-
-#include <cassert>
+#include "llvm/ProfileData/InstrProf.h"
 
 using namespace llvm;
 
@@ -38,7 +35,7 @@ using PluginChainFinal = PluginChain<VP_PLUGIN_LIST>;
 
 template <> class PluginChain<> {
 public:
-  PluginChain(Function &F) {}
+  PluginChain(Function &F, TargetLibraryInfo &TLI) {}
   void get(InstrProfValueKind K, std::vector<CandidateInfo> &Candidates) {}
 };
 
@@ -48,7 +45,8 @@ class PluginChain<PluginT, Ts...> : public PluginChain<Ts...> {
   using Base = PluginChain<Ts...>;
 
 public:
-  PluginChain(Function &F) : PluginChain<Ts...>(F), Plugin(F) {}
+  PluginChain(Function &F, TargetLibraryInfo &TLI)
+      : PluginChain<Ts...>(F, TLI), Plugin(F, TLI) {}
 
   void get(InstrProfValueKind K, std::vector<CandidateInfo> &Candidates) {
     if (K == PluginT::Kind)
@@ -65,8 +63,9 @@ public:
   using PluginChainFinal::PluginChainFinal;
 };
 
-ValueProfileCollector::ValueProfileCollector(Function &F)
-    : PImpl(new ValueProfileCollectorImpl(F)) {}
+ValueProfileCollector::ValueProfileCollector(Function &F,
+                                             TargetLibraryInfo &TLI)
+    : PImpl(new ValueProfileCollectorImpl(F, TLI)) {}
 
 ValueProfileCollector::~ValueProfileCollector() = default;
 

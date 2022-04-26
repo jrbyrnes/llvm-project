@@ -28,25 +28,26 @@
 #include "OutputSections.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
+#include "SyntheticSections.h"
 #include "lld/Common/ErrorHandler.h"
 #include "llvm/Object/ELF.h"
 
 using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::ELF;
+using namespace lld;
+using namespace lld::elf;
 
-namespace lld {
-std::string toString(elf::RelType type) {
+const TargetInfo *elf::target;
+
+std::string lld::toString(RelType type) {
   StringRef s = getELFRelocationTypeName(elf::config->emachine, type);
   if (s == "Unknown")
     return ("Unknown (" + Twine(type) + ")").str();
-  return s;
+  return std::string(s);
 }
 
-namespace elf {
-const TargetInfo *target;
-
-TargetInfo *getTarget() {
+TargetInfo *elf::getTarget() {
   switch (config->emachine) {
   case EM_386:
   case EM_IAMCU:
@@ -90,47 +91,46 @@ TargetInfo *getTarget() {
   llvm_unreachable("unknown target machine");
 }
 
-template <class ELFT> static ErrorPlace getErrPlace(const uint8_t *loc) {
-  if (!Out::bufferStart)
-    return {};
-
+ErrorPlace elf::getErrorPlace(const uint8_t *loc) {
+  assert(loc != nullptr);
   for (InputSectionBase *d : inputSections) {
     auto *isec = cast<InputSection>(d);
-    if (!isec->getParent())
+    if (!isec->getParent() || (isec->type & SHT_NOBITS))
       continue;
 
-    uint8_t *isecLoc = Out::bufferStart + isec->getParent()->offset + isec->outSecOff;
-    if (isecLoc <= loc && loc < isecLoc + isec->getSize())
-      return {isec, isec->template getLocation<ELFT>(loc - isecLoc) + ": "};
+    const uint8_t *isecLoc =
+        Out::bufferStart
+            ? (Out::bufferStart + isec->getParent()->offset + isec->outSecOff)
+            : isec->data().data();
+    if (isecLoc == nullptr) {
+      assert(isa<SyntheticSection>(isec) && "No data but not synthetic?");
+      continue;
+    }
+    if (isecLoc <= loc && loc < isecLoc + isec->getSize()) {
+      std::string objLoc = isec->getLocation(loc - isecLoc);
+      // Return object file location and source file location.
+      // TODO: Refactor getSrcMsg not to take a variable.
+      Undefined dummy(nullptr, "", STB_LOCAL, 0, 0);
+      return {isec, objLoc + ": ",
+              isec->file ? isec->getSrcMsg(dummy, loc - isecLoc) : ""};
+    }
   }
   return {};
-}
-
-ErrorPlace getErrorPlace(const uint8_t *loc) {
-  switch (config->ekind) {
-  case ELF32LEKind:
-    return getErrPlace<ELF32LE>(loc);
-  case ELF32BEKind:
-    return getErrPlace<ELF32BE>(loc);
-  case ELF64LEKind:
-    return getErrPlace<ELF64LE>(loc);
-  case ELF64BEKind:
-    return getErrPlace<ELF64BE>(loc);
-  default:
-    llvm_unreachable("unknown ELF type");
-  }
 }
 
 TargetInfo::~TargetInfo() {}
 
 int64_t TargetInfo::getImplicitAddend(const uint8_t *buf, RelType type) const {
+  internalLinkerError(getErrorLocation(buf),
+                      "cannot read addend for relocation " + toString(type));
   return 0;
 }
 
 bool TargetInfo::usesOnlyLowPageBits(RelType type) const { return false; }
 
 bool TargetInfo::needsThunk(RelExpr expr, RelType type, const InputFile *file,
-                            uint64_t branchAddr, const Symbol &s) const {
+                            uint64_t branchAddr, const Symbol &s,
+                            int64_t a) const {
   return false;
 }
 
@@ -143,45 +143,43 @@ bool TargetInfo::inBranchRange(RelType type, uint64_t src, uint64_t dst) const {
   return true;
 }
 
-void TargetInfo::writeIgotPlt(uint8_t *buf, const Symbol &s) const {
-  writeGotPlt(buf, s);
-}
-
-RelExpr TargetInfo::adjustRelaxExpr(RelType type, const uint8_t *data,
-                                    RelExpr expr) const {
+RelExpr TargetInfo::adjustTlsExpr(RelType type, RelExpr expr) const {
   return expr;
 }
 
-void TargetInfo::relaxGot(uint8_t *loc, RelType type, uint64_t val) const {
+RelExpr TargetInfo::adjustGotPcExpr(RelType type, int64_t addend,
+                                    const uint8_t *data) const {
+  return R_GOT_PC;
+}
+
+void TargetInfo::relaxGot(uint8_t *loc, const Relocation &rel,
+                          uint64_t val) const {
   llvm_unreachable("Should not have claimed to be relaxable");
 }
 
-void TargetInfo::relaxTlsGdToLe(uint8_t *loc, RelType type,
+void TargetInfo::relaxTlsGdToLe(uint8_t *loc, const Relocation &rel,
                                 uint64_t val) const {
   llvm_unreachable("Should not have claimed to be relaxable");
 }
 
-void TargetInfo::relaxTlsGdToIe(uint8_t *loc, RelType type,
+void TargetInfo::relaxTlsGdToIe(uint8_t *loc, const Relocation &rel,
                                 uint64_t val) const {
   llvm_unreachable("Should not have claimed to be relaxable");
 }
 
-void TargetInfo::relaxTlsIeToLe(uint8_t *loc, RelType type,
+void TargetInfo::relaxTlsIeToLe(uint8_t *loc, const Relocation &rel,
                                 uint64_t val) const {
   llvm_unreachable("Should not have claimed to be relaxable");
 }
 
-void TargetInfo::relaxTlsLdToLe(uint8_t *loc, RelType type,
+void TargetInfo::relaxTlsLdToLe(uint8_t *loc, const Relocation &rel,
                                 uint64_t val) const {
   llvm_unreachable("Should not have claimed to be relaxable");
 }
 
 uint64_t TargetInfo::getImageBase() const {
-  // Use -image-base if set. Fall back to the target default if not.
+  // Use --image-base if set. Fall back to the target default if not.
   if (config->imageBase)
     return *config->imageBase;
   return config->isPic ? 0 : defaultImageBase;
 }
-
-} // namespace elf
-} // namespace lld

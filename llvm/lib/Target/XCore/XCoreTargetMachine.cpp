@@ -20,15 +20,13 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CodeGen.h"
-#include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;
 
 static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
-  if (!RM.hasValue())
-    return Reloc::Static;
-  return *RM;
+  return RM.getValueOr(Reloc::Static);
 }
 
 static CodeModel::Model
@@ -54,7 +52,7 @@ XCoreTargetMachine::XCoreTargetMachine(const Target &T, const Triple &TT,
           TT, CPU, FS, Options, getEffectiveRelocModel(RM),
           getEffectiveXCoreCodeModel(CM), OL),
       TLOF(std::make_unique<XCoreTargetObjectFile>()),
-      Subtarget(TT, CPU, FS, *this) {
+      Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
 }
 
@@ -101,15 +99,15 @@ bool XCorePassConfig::addInstSelector() {
 }
 
 void XCorePassConfig::addPreEmitPass() {
-  addPass(createXCoreFrameToArgsOffsetEliminationPass(), false);
+  addPass(createXCoreFrameToArgsOffsetEliminationPass());
 }
 
 // Force static initialization.
-extern "C" void LLVMInitializeXCoreTarget() {
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeXCoreTarget() {
   RegisterTargetMachine<XCoreTargetMachine> X(getTheXCoreTarget());
 }
 
 TargetTransformInfo
-XCoreTargetMachine::getTargetTransformInfo(const Function &F) {
+XCoreTargetMachine::getTargetTransformInfo(const Function &F) const {
   return TargetTransformInfo(XCoreTTIImpl(this, F));
 }

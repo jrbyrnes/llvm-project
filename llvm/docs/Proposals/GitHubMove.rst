@@ -127,7 +127,7 @@ within a single branch, but this means the tuple `(num, branch-name)` uniquely
 identifies a commit.
 
 We can thus use this revision number to ensure that e.g. `clang -v` reports a
-user-friendly revision number (e.g. `master-12345` or `4.0-5321`), addressing
+user-friendly revision number (e.g. `main-12345` or `4.0-5321`), addressing
 the objections raised above with respect to this aspect of Git.
 
 What About Branches and Merges?
@@ -141,9 +141,9 @@ Unfortunately, GitHub does not support server side hooks to enforce such a
 policy.  We must rely on the community to avoid pushing merge commits.
 
 GitHub offers a feature called `Status Checks`: a branch protected by
-`status checks` requires commits to be whitelisted before the push can happen.
+`status checks` requires commits to be explicitly allowed before the push can happen.
 We could supply a pre-push hook on the client side that would run and check the
-history, before whitelisting the commit being pushed [statuschecks]_.
+history, before allowing the commit being pushed [statuschecks]_.
 However this solution would be somewhat fragile (how do you update a script
 installed on every developer machine?) and prevents SVN access to the
 repository.
@@ -202,14 +202,14 @@ Step #4 : Post Move
 14. Update links on the LLVM website pointing to viewvc/klaus/phab etc. to
     point to GitHub instead.
 
-Github Repository Description
+GitHub Repository Description
 =============================
 
 Monorepo
 ----------------
 
 The LLVM git repository hosted at https://github.com/llvm/llvm-project contains all
-sub-projects in a single source tree.  It is often refered to as a monorepo and
+sub-projects in a single source tree.  It is often referred to as a monorepo and
 mimics an export of the current SVN repository, with each sub-project having its
 own top-level directory. Not all sub-projects are used for building toolchains.
 For example, www/ and test-suite/ are not part of the monorepo.
@@ -281,7 +281,7 @@ Monorepo Drawbacks
    1GB for the monorepo), and the commit rate of LLVM may cause more frequent
    `git push` collisions when upstreaming. Affected contributors may be able to
    use the SVN bridge or the single-subproject Git mirrors. However, it's
-   undecided if these projects will continue to be mantained.
+   undecided if these projects will continue to be maintained.
  * Using the monolithic repository may add overhead for those *integrating* a
    standalone sub-project, even if they aren't contributing to it, due to the
    same disk space concern as the point above. The availability of the
@@ -319,10 +319,10 @@ Currently
   # direct SVN checkout
   svn co https://user@llvm.org/svn/llvm-project/llvm/trunk llvm
   # or using the read-only Git view, with git-svn
-  git clone http://llvm.org/git/llvm.git
+  git clone https://llvm.org/git/llvm.git
   cd llvm
   git svn init https://llvm.org/svn/llvm-project/llvm/trunk --username=<username>
-  git config svn-remote.svn.fetch :refs/remotes/origin/master
+  git config svn-remote.svn.fetch :refs/remotes/origin/main
   git svn rebase -l  # -l avoids fetching ahead of the git mirror.
 
 Commits are performed using `svn commit` or with the sequence `git commit` and
@@ -356,13 +356,13 @@ Before you push, you'll need to fetch and rebase (`git pull --rebase`) as
 usual.
 
 Note that when you fetch you'll likely pull in changes to sub-projects you don't
-care about. If you are using spasre checkout, the files from other projects
+care about. If you are using sparse checkout, the files from other projects
 won't appear on your disk. The only effect is that your commit hash changes.
 
 You can check whether the changes in the last fetch are relevant to your commit
 by running::
 
-  git log origin/master@{1}..origin/master -- libcxx
+  git log origin/main@{1}..origin/main -- libcxx
 
 This command can be hidden in a script so that `git llvmpush` would perform all
 these steps, fail only if such a dependent change exists, and show immediately
@@ -381,32 +381,32 @@ Currently
 
 ::
 
-  svn co http://llvm.org/svn/llvm-project/llvm/trunk llvm -r $REVISION
+  svn co https://llvm.org/svn/llvm-project/llvm/trunk llvm -r $REVISION
   cd llvm/tools
-  svn co http://llvm.org/svn/llvm-project/clang/trunk clang -r $REVISION
+  svn co https://llvm.org/svn/llvm-project/clang/trunk clang -r $REVISION
   cd ../projects
-  svn co http://llvm.org/svn/llvm-project/libcxx/trunk libcxx -r $REVISION
+  svn co https://llvm.org/svn/llvm-project/libcxx/trunk libcxx -r $REVISION
 
 Or using git-svn::
 
-  git clone http://llvm.org/git/llvm.git
+  git clone https://llvm.org/git/llvm.git
   cd llvm/
   git svn init https://llvm.org/svn/llvm-project/llvm/trunk --username=<username>
-  git config svn-remote.svn.fetch :refs/remotes/origin/master
+  git config svn-remote.svn.fetch :refs/remotes/origin/main
   git svn rebase -l
   git checkout `git svn find-rev -B r258109`
   cd tools
-  git clone http://llvm.org/git/clang.git
+  git clone https://llvm.org/git/clang.git
   cd clang/
   git svn init https://llvm.org/svn/llvm-project/clang/trunk --username=<username>
-  git config svn-remote.svn.fetch :refs/remotes/origin/master
+  git config svn-remote.svn.fetch :refs/remotes/origin/main
   git svn rebase -l
   git checkout `git svn find-rev -B r258109`
   cd ../../projects/
-  git clone http://llvm.org/git/libcxx.git
+  git clone https://llvm.org/git/libcxx.git
   cd libcxx
   git svn init https://llvm.org/svn/llvm-project/libcxx/trunk --username=<username>
-  git config svn-remote.svn.fetch :refs/remotes/origin/master
+  git config svn-remote.svn.fetch :refs/remotes/origin/main
   git svn rebase -l
   git checkout `git svn find-rev -B r258109`
 
@@ -604,13 +604,13 @@ Python script and are expanded on below to a more general recipe::
 
   # Octopus-merge the resulting local split histories to unify them.
 
-  # Assumes local work on local split mirrors is on master (and
+  # Assumes local work on local split mirrors is on main (and
   # upstream is presumably represented by some other branch like
-  # upstream/master).
-  my_local_branch="master"
+  # upstream/main).
+  my_local_branch="main"
 
-  git -C my-monorepo branch --no-track local/octopus/master \
-    $(git -C my-monorepo merge-base refs/remotes/upstream/monorepo/master \
+  git -C my-monorepo branch --no-track local/octopus/main \
+    $(git -C my-monorepo merge-base refs/remotes/upstream/monorepo/main \
                                     refs/remotes/local/split/llvm/${my_local_branch})
   git -C my-monorepo checkout local/octopus/${my_local_branch}
 
@@ -640,11 +640,11 @@ Python script and are expanded on below to a more general recipe::
 
 The above gets you to a state like the following::
 
-  U1 - U2 - U3 <- upstream/master
+  U1 - U2 - U3 <- upstream/main
     \   \    \
      \   \    - Llld1 - Llld2 -
       \   \                    \
-       \   - Lclang1 - Lclang2-- Lmerge <- local/octopus/master
+       \   - Lclang1 - Lclang2-- Lmerge <- local/octopus/main
         \                      /
          - Lllvm1 - Lllvm2-----
 
@@ -657,7 +657,7 @@ done for each branch.  Ref paths will need to be updated to map the
 local branch to the corresponding upstream branch.  If local branches
 have no corresponding upstream branch, then the creation of
 ``local/octopus/<local branch>`` need not use ``git-merge-base`` to
-pinpont its root commit; it may simply be branched from the
+pinpoint its root commit; it may simply be branched from the
 appropriate component branch (say, ``llvm/local_release_X``).
 
 Zipping local history
@@ -672,7 +672,7 @@ with some kind of "umbrella" project that imports the project git
 mirrors as submodules, similar to the multirepo umbrella proposed
 above.  Such an umbrella repository looks something like this::
 
-   UM1 ---- UM2 -- UM3 -- UM4 ---- UM5 ---- UM6 ---- UM7 ---- UM8 <- master
+   UM1 ---- UM2 -- UM3 -- UM4 ---- UM5 ---- UM6 ---- UM7 ---- UM8 <- main
    |        |             |        |        |        |        |
   Lllvm1   Llld1         Lclang1  Lclang2  Lllvm2   Llld2     Lmyproj1
 
@@ -687,14 +687,14 @@ https://github.com/greened/llvm-git-migration/tree/zip can be used to
 convert the umbrella history into a monorepo-based history with
 commits in the order implied by submodule updates::
 
-  U1 - U2 - U3 <- upstream/master
+  U1 - U2 - U3 <- upstream/main
    \    \    \
     \    -----\---------------                                    local/zip--.
      \         \              \                                               |
     - Lllvm1 - Llld1 - UM3 -  Lclang1 - Lclang2 - Lllvm2 - Llld2 - Lmyproj1 <-'
 
 
-The ``U*`` commits represent upstream commits to the monorepo master
+The ``U*`` commits represent upstream commits to the monorepo main
 branch.  Each submodule update in the local ``UM*`` commits brought in
 a subproject tree at some local commit.  The trees in the ``L*1``
 commits represent merges from upstream.  These result in edges from
@@ -712,7 +712,7 @@ clang's tree actually looks like in ``Lclang1``.
 Even so, the edge ``U3 -> Llld1`` could be problematic for future
 merges from upstream.  git will think that we've already merged from
 ``U3``, and we have, except for the state of the clang tree.  One
-possible migitation strategy is to manually diff clang between ``U2``
+possible mitigation strategy is to manually diff clang between ``U2``
 and ``U3`` and apply those updates to ``local/zip``.  Another,
 possibly simpler strategy is to freeze local work on downstream
 branches and merge all submodules from the latest upstream before
@@ -790,8 +790,8 @@ create the zipped history is below::
       --update-tags
    )
 
-   # Create the zip branch (assuming umbrella master is wanted).
-   git -C my-monorepo branch --no-track local/zip/master refs/remotes/umbrella/master
+   # Create the zip branch (assuming umbrella main is wanted).
+   git -C my-monorepo branch --no-track local/zip/main refs/remotes/umbrella/main
 
 Note that if the umbrella has submodules to non-LLVM repositories,
 ``zip-downstream-fork.py`` needs to know about them to be able to
@@ -812,8 +812,8 @@ The tool handles nested submodules (e.g. llvm is a submodule in
 umbrella and clang is a submodule in llvm).  The file
 ``submodule-map.txt`` is a list of pairs, one per line.  The first
 pair item describes the path to a submodule in the umbrella
-repository.  The second pair item secribes the path where trees for
-that submodule should be written in the zipped history.  
+repository.  The second pair item describes the path where trees for
+that submodule should be written in the zipped history.
 
 Let's say your umbrella repository is actually the llvm repository and
 it has submodules in the "nested sources" layout (clang in
@@ -906,8 +906,8 @@ content into ``llvm`` in the zippped history::
       --update-tags
    )
 
-   # Create the zip branch (assuming umbrella master is wanted).
-   git -C my-monorepo branch --no-track local/zip/master refs/remotes/umbrella/master
+   # Create the zip branch (assuming umbrella main is wanted).
+   git -C my-monorepo branch --no-track local/zip/main refs/remotes/umbrella/main
 
 
 Comments at the top of ``zip-downstream-fork.py`` describe in more
@@ -921,7 +921,7 @@ ecosystem, essentially extending it with new tools.  If such
 repositories are tightly coupled with LLVM, it may make sense to
 import them into your local mirror of the monorepo.
 
-If such repositores participated in the umbrella repository used
+If such repositories participated in the umbrella repository used
 during the zipping process above, they will automatically be added to
 the monorepo.  For downstream repositories that don't participate in
 an umbrella setup, the ``import-downstream-repo.py`` tool at
@@ -945,19 +945,19 @@ getting them into the monorepo.  A recipe follows::
       --tag-prefix="myrepo-"
    )
 
-   # Preserve release braches.
+   # Preserve release branches.
    for ref in $(git -C my-monorepo for-each-ref --format="%(refname)" \
                   refs/remotes/myrepo/release); do
      branch=${ref#refs/remotes/myrepo/}
      git -C my-monorepo branch --no-track myrepo/${branch} ${ref}
    done
 
-   # Preserve master.
-   git -C my-monorepo branch --no-track myrepo/master refs/remotes/myrepo/master
+   # Preserve main.
+   git -C my-monorepo branch --no-track myrepo/main refs/remotes/myrepo/main
 
-   # Merge master.
-   git -C my-monorepo checkout local/zip/master  # Or local/octopus/master
-   git -C my-monorepo merge myrepo/master
+   # Merge main.
+   git -C my-monorepo checkout local/zip/main  # Or local/octopus/main
+   git -C my-monorepo merge myrepo/main
 
 You may want to merge other corresponding branches, for example
 ``myrepo`` release branches if they were in lockstep with LLVM project
@@ -974,14 +974,14 @@ imported repositories.
 
 Given this repository history::
 
-  R1 - R2 - R3 <- master
+  R1 - R2 - R3 <- main
        ^
        |
     release/1
 
 The above recipe results in a history like this::
 
-  U1 - U2 - U3 <- upstream/master
+  U1 - U2 - U3 <- upstream/main
    \    \    \
     \    -----\---------------                                         local/zip--.
      \         \              \                                                    |
@@ -992,7 +992,7 @@ The above recipe results in a history like this::
                                                                       |           |
                                                                myrepo-release/1   |
                                                                                   |
-                                                                   myrepo/master--'
+                                                                     myrepo/main--'
 
 Commits ``R1``, ``R2`` and ``R3`` have trees that *only* contain blobs
 from ``myrepo``.  If you require commits from ``myrepo`` to be
@@ -1022,12 +1022,12 @@ clean up.  The python tools use ``git-fast-import`` which leaves a lot
 of cruft around and we want to shrink our new monorepo mirror as much
 as possible.  Here is one way to do it::
 
-  git -C my-monorepo checkout master
+  git -C my-monorepo checkout main
 
   # Delete branches we no longer need.  Do this for any other branches
   # you merged above.
-  git -C my-monorepo branch -D local/zip/master || true
-  git -C my-monorepo branch -D local/octopus/master || true
+  git -C my-monorepo branch -D local/zip/main || true
+  git -C my-monorepo branch -D local/octopus/main || true
 
   # Remove remotes.
   git -C my-monorepo remote remove upstream/monorepo

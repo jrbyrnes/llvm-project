@@ -187,7 +187,7 @@ typedef void (function_ptr)(void);
 // CHECK-MESSAGES: :[[@LINE-1]]:29: warning: {{.*}} in typedef
 // CHECK-FIXES: {{^}}typedef void (function_ptr)();{{$}}
 
-// intentionally not LLVM style to check preservation of whitesapce
+// intentionally not LLVM style to check preservation of whitespace
 typedef void (function_ptr2)
     (
         void
@@ -198,7 +198,8 @@ typedef void (function_ptr2)
 // CHECK-FIXES-NEXT: {{^        $}}
 // CHECK-FIXES-NEXT: {{^    \);$}}
 
-// intentionally not LLVM style to check preservation of whitesapce
+// intentionally not LLVM style to check preservation of whitespace
+// clang-format off
 typedef
 void
 (
@@ -240,7 +241,7 @@ void
 // CHECK-FIXES-NOT:  {{[^ ]}}
 // CHECK-FIXES:      {{^\)$}}
 // CHECK-FIXES-NEXT: {{^;$}}
-
+// clang-format on
 
 void (gronk::*p1)(void);
 // CHECK-MESSAGES: :[[@LINE-1]]:19: warning: {{.*}} in variable declaration
@@ -254,7 +255,7 @@ typedef void (gronk::*member_function_ptr)(void);
 // CHECK-MESSAGES: :[[@LINE-1]]:44: warning: {{.*}} in typedef
 // CHECK-FIXES: {{^}}typedef void (gronk::*member_function_ptr)();{{$}}
 
-// intentionally not LLVM style to check preservation of whitesapce
+// intentionally not LLVM style to check preservation of whitespace
 typedef void (gronk::*member_function_ptr2)
     (
         void
@@ -274,7 +275,7 @@ void gronk::foo() {
   // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: {{.*}} in variable declaration
   // CHECK-FIXES: {{^  }}void (*f2)();{{$}}
 
-  // intentionally not LLVM style to check preservation of whitesapce
+  // intentionally not LLVM style to check preservation of whitespace
   void (*f3)
       (
           void
@@ -297,7 +298,7 @@ void gronk::bar(void) {
   // CHECK-MESSAGES: :[[@LINE-1]]:21: warning: {{.*}} in variable declaration
   // CHECK-FIXES: {{^  }}void (gronk::*p4)();{{$}}
 
-  // intentionally not LLVM style to check preservation of whitesapce
+  // intentionally not LLVM style to check preservation of whitespace
   void (gronk::*p5)
       (
           void
@@ -309,7 +310,7 @@ void gronk::bar(void) {
   // CHECK-FIXES-NExT: {{^      \);$}}
 }
 
-// intentionally not LLVM style to check preservation of whitesapce
+// intentionally not LLVM style to check preservation of whitespace
 void gronk::bar2
   (
   void
@@ -357,7 +358,7 @@ nutter::nutter(void) {
   // CHECK-MESSAGES: :[[@LINE-2]]:48: warning: {{.*}} in named cast
   // CHECK-FIXES: void (*f5)() = reinterpret_cast<void (*)()>(0);{{$}}
 
-  // intentionally not LLVM style to check preservation of whitesapce
+  // intentionally not LLVM style to check preservation of whitespace
   void (*f6)(void) = static_cast<void (*)
       (
           void
@@ -369,7 +370,7 @@ nutter::nutter(void) {
   // CHECK-FIXES-NEXT: {{^          $}}
   // CHECK-FIXES-NEXT: {{^      }})>(0);{{$}}
 
-  // intentionally not LLVM style to check preservation of whitesapce
+  // intentionally not LLVM style to check preservation of whitespace
   void (*f7)(void) = (void (*)
       (
           void
@@ -381,7 +382,7 @@ nutter::nutter(void) {
   // CHECK-FIXES-NEXT: {{^          $}}
   // CHECK-FIXES-NEXT: {{^      \)\) 0;$}}
 
-  // intentionally not LLVM style to check preservation of whitesapce
+  // intentionally not LLVM style to check preservation of whitespace
   void (*f8)(void) = reinterpret_cast<void (*)
       (
           void
@@ -556,3 +557,38 @@ void f_testTemplate() {
   S_3<int>();
   g_3<int>();
 }
+
+#define return_t(T) T
+extern return_t(void) func(void);
+// CHECK-MESSAGES: :[[@LINE-1]]:28: warning: redundant void argument list in function declaration
+// CHECK-FIXES: extern return_t(void) func();
+
+return_t(void) func(void) {
+  // CHECK-MESSAGES: :[[@LINE-1]]:21: warning: redundant void argument list in function definition
+  // CHECK-FIXES: return_t(void) func() {
+  int a;
+  (void)a;
+}
+
+extern return_t(void) func(return_t(void) (*fp)(void));
+// CHECK-MESSAGES: :[[@LINE-1]]:49: warning: redundant void argument list in variable declaration
+// CHECK-FIXES: extern return_t(void) func(return_t(void) (*fp)());
+
+return_t(void) func(return_t(void) (*fp)(void)) {
+  // CHECK-MESSAGES: :[[@LINE-1]]:42: warning: redundant void argument list in variable declaration
+  // CHECK-FIXES: return_t(void) func(return_t(void) (*fp)()) {
+  int a;
+  (void)a;
+}
+
+extern return_t(return_t(void)) func2(return_t(return_t(void)) (*fp)(void));
+// CHECK-MESSAGES: :[[@LINE-1]]:70: warning: redundant void argument list in variable declaration
+// CHECK-FIXES: extern return_t(return_t(void)) func2(return_t(return_t(void)) (*fp)());
+
+return_t(return_t(void)) func2(return_t(return_t(void)) (*fp)(void)) {
+  // CHECK-MESSAGES: :[[@LINE-1]]:63: warning: redundant void argument list in variable declaration
+  // CHECK-FIXES: return_t(return_t(void)) func2(return_t(return_t(void)) (*fp)()) {
+  int a;
+  (void)a;
+}
+#undef return_t

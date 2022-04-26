@@ -1,10 +1,10 @@
-// RUN: %clang_cc1 -std=c++98 %s -Wno-parentheses -Wdeprecated -verify -triple x86_64-linux-gnu
-// RUN: %clang_cc1 -std=c++11 %s -Wno-parentheses -Wdeprecated -verify -triple x86_64-linux-gnu
-// RUN: %clang_cc1 -std=c++14 %s -Wno-parentheses -Wdeprecated -verify -triple x86_64-linux-gnu
-// RUN: %clang_cc1 -std=c++17 %s -Wno-parentheses -Wdeprecated -verify -triple x86_64-linux-gnu
+// RUN: %clang_cc1 -std=c++98 %s -Wno-parentheses -Wdeprecated -verify=expected,not-cxx20 -triple x86_64-linux-gnu
+// RUN: %clang_cc1 -std=c++11 %s -Wno-parentheses -Wdeprecated -verify=expected,not-cxx20 -triple x86_64-linux-gnu
+// RUN: %clang_cc1 -std=c++14 %s -Wno-parentheses -Wdeprecated -verify=expected,not-cxx20 -triple x86_64-linux-gnu
+// RUN: %clang_cc1 -std=c++17 %s -Wno-parentheses -Wdeprecated -verify=expected,not-cxx20 -triple x86_64-linux-gnu
 // RUN: %clang_cc1 -std=c++2a %s -Wno-parentheses -Wdeprecated -verify=expected,cxx20 -triple x86_64-linux-gnu
 
-// RUN: %clang_cc1 -std=c++14 %s -Wno-parentheses -Wdeprecated -verify -triple x86_64-linux-gnu -Wno-deprecated-register -DNO_DEPRECATED_FLAGS
+// RUN: %clang_cc1 -std=c++14 %s -Wno-parentheses -Wdeprecated -verify=expected,not-cxx20 -triple x86_64-linux-gnu -Wno-deprecated-register -DNO_DEPRECATED_FLAGS
 
 #include "Inputs/register.h"
 
@@ -83,24 +83,31 @@ struct T : private S {
 #if __cplusplus >= 201103L
 namespace DeprecatedCopy {
   struct Assign {
-    Assign &operator=(const Assign&); // expected-warning {{definition of implicit copy constructor for 'Assign' is deprecated because it has a user-declared copy assignment operator}}
+    Assign &operator=(const Assign&); // expected-warning {{definition of implicit copy constructor for 'Assign' is deprecated because it has a user-provided copy assignment operator}}
   };
   Assign a1, a2(a1); // expected-note {{implicit copy constructor for 'DeprecatedCopy::Assign' first required here}}
 
   struct Ctor {
     Ctor();
-    Ctor(const Ctor&); // expected-warning {{definition of implicit copy assignment operator for 'Ctor' is deprecated because it has a user-declared copy constructor}}
+    Ctor(const Ctor&); // expected-warning {{definition of implicit copy assignment operator for 'Ctor' is deprecated because it has a user-provided copy constructor}}
   };
   Ctor b1, b2;
   void f() { b1 = b2; } // expected-note {{implicit copy assignment operator for 'DeprecatedCopy::Ctor' first required here}}
 
   struct Dtor {
     ~Dtor();
-    // expected-warning@-1 {{definition of implicit copy constructor for 'Dtor' is deprecated because it has a user-declared destructor}}
-    // expected-warning@-2 {{definition of implicit copy assignment operator for 'Dtor' is deprecated because it has a user-declared destructor}}
+    // expected-warning@-1 {{definition of implicit copy constructor for 'Dtor' is deprecated because it has a user-provided destructor}}
+    // expected-warning@-2 {{definition of implicit copy assignment operator for 'Dtor' is deprecated because it has a user-provided destructor}}
   };
   Dtor c1, c2(c1); // expected-note {{implicit copy constructor for 'DeprecatedCopy::Dtor' first required here}}
   void g() { c1 = c2; } // expected-note {{implicit copy assignment operator for 'DeprecatedCopy::Dtor' first required here}}
+
+  struct DefaultedDtor {
+    ~DefaultedDtor() = default; // expected-warning {{definition of implicit copy constructor for 'DefaultedDtor' is deprecated because it has a user-declared destructor}}
+  };                            // expected-warning@-1 {{definition of implicit copy assignment operator for 'DefaultedDtor' is deprecated because it has a user-declared destructor}}
+  DefaultedDtor d1;
+  DefaultedDtor d2(d1);         // expected-note {{in implicit copy constructor for 'DeprecatedCopy::DefaultedDtor' first required here}}
+  void h() { d1 = d2; }         // expected-note {{in implicit copy assignment operator for 'DeprecatedCopy::DefaultedDtor' first required here}}
 }
 #endif
 
@@ -215,6 +222,33 @@ namespace DeprecatedVolatile {
     a = c = a;
     b += a;
   }
+}
+
+namespace ArithConv {
+  enum E { e } e2;
+  enum F { f };
+  bool b1 = e == e2;
+  bool b2 = e == f; // not-cxx20-warning-re {{different enumeration types ('ArithConv::E' and 'ArithConv::F'){{$}}}} cxx20-warning {{F') is deprecated}}
+  bool b3 = e == 0.0; // cxx20-warning {{comparison of enumeration type 'ArithConv::E' with floating-point type 'double' is deprecated}}
+  bool b4 = 0.0 == f; // cxx20-warning {{comparison of floating-point type 'double' with enumeration type 'ArithConv::F' is deprecated}}
+  int n1 = true ? e : f; // cxx20-warning {{conditional expression between different enumeration types ('ArithConv::E' and 'ArithConv::F') is deprecated}}
+  int n2 = true ? e : 0.0; // cxx20-warning {{conditional expression between enumeration type 'ArithConv::E' and floating-point type 'double' is deprecated}}
+}
+
+namespace ArrayComp {
+  int arr1[3], arr2[4];
+  bool b1 = arr1 == arr2; // expected-warning {{array comparison always evaluates to false}} cxx20-warning {{comparison between two arrays is deprecated}}
+  bool b2 = arr1 < arr2; // expected-warning {{array comparison always evaluates to a constant}} cxx20-warning {{comparison between two arrays is deprecated}}
+  __attribute__((weak)) int arr3[3];
+  bool b3 = arr1 == arr3; // cxx20-warning {{comparison between two arrays is deprecated}}
+  bool b4 = arr1 < arr3; // cxx20-warning {{comparison between two arrays is deprecated}}
+#if __cplusplus > 201703L
+  bool b5 = arr1 <=> arr2; // cxx20-error {{invalid operands}}
+#endif
+
+  int (&f())[3];
+  bool b6 = arr1 == f(); // cxx20-warning {{comparison between two arrays is deprecated}}
+  bool b7 = arr1 == +f();
 }
 
 # 1 "/usr/include/system-header.h" 1 3

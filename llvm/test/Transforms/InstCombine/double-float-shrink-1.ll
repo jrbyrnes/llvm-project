@@ -1,8 +1,8 @@
-; RUN: opt < %s -instcombine -S -mtriple x86_64-unknown-linux-gnu | FileCheck %s --check-prefixes=CHECK,LINUX,ISC99
-; RUN: opt < %s -instcombine -S -mtriple x86_64-pc-win32          | FileCheck %s --check-prefixes=CHECK,ISC99
-; RUN: opt < %s -instcombine -S -mtriple x86_64-pc-windows-msvc16 | FileCheck %s --check-prefixes=CHECK,MS64,ISC89
-; RUN: opt < %s -instcombine -S -mtriple i386-pc-windows-msvc     | FileCheck %s --check-prefixes=CHECK,ISC99
-; RUN: opt < %s -instcombine -S -mtriple i686-pc-windows-msvc17   | FileCheck %s --check-prefixes=CHECK,MS32,ISC89
+; RUN: opt < %s -passes=instcombine -S -mtriple x86_64-unknown-linux-gnu | FileCheck %s --check-prefixes=CHECK,LINUX,ISC99
+; RUN: opt < %s -passes=instcombine -S -mtriple x86_64-pc-win32          | FileCheck %s --check-prefixes=CHECK,ISC99
+; RUN: opt < %s -passes=instcombine -S -mtriple x86_64-pc-windows-msvc16 | FileCheck %s --check-prefixes=CHECK,MS64,ISC89
+; RUN: opt < %s -passes=instcombine -S -mtriple i386-pc-windows-msvc     | FileCheck %s --check-prefixes=CHECK,ISC99
+; RUN: opt < %s -passes=instcombine -S -mtriple i686-pc-windows-msvc17   | FileCheck %s --check-prefixes=CHECK,MS32,ISC89
 
 ; Check for and against shrinkage when using the
 ; unsafe-fp-math function attribute on a math lib
@@ -529,12 +529,14 @@ define float @max1(float %a, float %b) {
 
 define float @fake_fmin(float %a, float %b) {
 ; CHECK-LABEL: @fake_fmin(
-; CHECK-NEXT:    [[C:%.*]] = fpext float [[A:%.*]] to fp128
-; CHECK-NEXT:    [[D:%.*]] = fpext float [[B:%.*]] to fp128
-; ISC99-NEXT:    [[E:%.*]] = call nsz fp128 @llvm.minnum.f128(fp128 [[C]], fp128 [[D]])
+; ISC99-NEXT:    [[MIN:%.*]] = call nsz float @llvm.minnum.f32(float %a, float %b)
+; ISC99-NEXT:    ret float [[MIN]]
+
+; ISC89-NEXT:    [[C:%.*]] = fpext float [[A:%.*]] to fp128
+; ISC89-NEXT:    [[D:%.*]] = fpext float [[B:%.*]] to fp128
 ; ISC89-NEXT:    [[E:%.*]] = call fp128 @fmin(fp128 [[C]], fp128 [[D]])
-; CHECK-NEXT:    [[F:%.*]] = fptrunc fp128 [[E]] to float
-; CHECK-NEXT:    ret float [[F]]
+; ISC89-NEXT:    [[F:%.*]] = fptrunc fp128 [[E]] to float
+; ISC89-NEXT:    ret float [[F]]
 ;
   %c = fpext float %a to fp128
   %d = fpext float %b to fp128

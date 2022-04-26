@@ -156,7 +156,7 @@ llvm::createMips16TargetLowering(const MipsTargetMachine &TM,
 }
 
 bool Mips16TargetLowering::allowsMisalignedMemoryAccesses(
-    EVT VT, unsigned, unsigned, MachineMemOperand::Flags, bool *Fast) const {
+    EVT VT, unsigned, Align, MachineMemOperand::Flags, bool *Fast) const {
   return false;
 }
 
@@ -252,9 +252,6 @@ void Mips16TargetLowering::setMips16HardFloatLibCalls() {
     if (HardFloatLibCalls[I].Libcall != RTLIB::UNKNOWN_LIBCALL)
       setLibcallName(HardFloatLibCalls[I].Libcall, HardFloatLibCalls[I].Name);
   }
-
-  setLibcallName(RTLIB::O_F64, "__mips16_unorddf2");
-  setLibcallName(RTLIB::O_F32, "__mips16_unordsf2");
 }
 
 //
@@ -454,7 +451,7 @@ getOpndList(SmallVectorImpl<SDValue> &Ops,
           // So for now we always save S2. The optimization will be done
           // in a follow-on patch.
           //
-          if (1 || (Signature->RetSig != Mips16HardFloatInfo::NoFPRet))
+          if (true || (Signature->RetSig != Mips16HardFloatInfo::NoFPRet))
             FuncInfo->setSaveS2();
         }
         // one more look at list of intrinsics
@@ -495,7 +492,7 @@ getOpndList(SmallVectorImpl<SDValue> &Ops,
       ExternalSymbolSDNode *S = cast<ExternalSymbolSDNode>(JumpTarget);
       JumpTarget = getAddrGlobal(S, CLI.DL, JumpTarget.getValueType(), DAG,
                                  MipsII::MO_GOT, Chain,
-                                 FuncInfo->callPtrInfo(S->getSymbol()));
+                                 FuncInfo->callPtrInfo(MF, S->getSymbol()));
     } else
       RegsToPass.push_front(std::make_pair((unsigned)Mips::T9, Callee));
   }

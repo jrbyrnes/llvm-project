@@ -14,6 +14,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_GCNSCHEDSTRATEGY_H
 
 #include "GCNRegPressure.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -50,6 +51,14 @@ class GCNMaxOccupancySchedStrategy final : public GenericScheduler {
 
   unsigned TargetOccupancy;
 
+  // schedule() have seen a clustered memory operation. Set it to false
+  // before a region scheduling to know if the region had such clusters.
+  bool HasClusteredNodes;
+
+  // schedule() have seen an excess register pressure and had to track
+  // register pressure for actual scheduling heuristics.
+  bool HasExcessPressure;
+
   MachineFunction *MF;
 
 public:
@@ -63,6 +72,15 @@ public:
 };
 
 class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
+
+  enum : unsigned {
+    Collect,
+    InitialSchedule,
+    UnclusteredReschedule,
+    ClusteredLowOccupancyReschedule,
+    PreRARematerialize,
+    LastStage = PreRARematerialize
+  };
 
   const GCNSubtarget &ST;
 
@@ -84,11 +102,35 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   SmallVector<std::pair<MachineBasicBlock::iterator,
                         MachineBasicBlock::iterator>, 32> Regions;
 
+  // Records if a region is not yet scheduled, or schedule has been reverted,
+  // or we generally desire to reschedule it.
+  BitVector RescheduleRegions;
+
+  // Record regions which use clustered loads/stores.
+  BitVector RegionsWithClusters;
+
+  // Record regions with high register pressure.
+  BitVector RegionsWithHighRP;
+
+  // Regions that has the same occupancy as the latest MinOccupancy
+  BitVector RegionsWithMinOcc;
+
   // Region live-in cache.
   SmallVector<GCNRPTracker::LiveRegSet, 32> LiveIns;
 
   // Region pressure cache.
   SmallVector<GCNRegPressure, 32> Pressure;
+
+  // Each region at MinOccupancy will have their own list of trivially
+  // rematerializable instructions we can remat to reduce RP. The list maps an
+  // instruction to the position we should remat before, usually the MI using
+  // the rematerializable instruction.
+  MapVector<unsigned, MapVector<MachineInstr *, MachineInstr *>>
+      RematerializableInsts;
+
+  // Map a trivially remateriazable def to a list of regions at MinOccupancy
+  // that has the defined reg as a live-in.
+  DenseMap<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
 
   // Temporary basic block live-in cache.
   DenseMap<const MachineBasicBlock*, GCNRPTracker::LiveRegSet> MBBLiveIns;
@@ -96,12 +138,30 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet> BBLiveInMap;
   DenseMap<MachineInstr *, GCNRPTracker::LiveRegSet> getBBLiveInMap() const;
 
+  // Collect all trivially rematerializable VGPR instructions with a single def
+  // and single use outside the defining block into RematerializableInsts.
+  void collectRematerializableInstructions();
+
+  bool isTriviallyReMaterializable(const MachineInstr &MI, AAResults *AA);
+
+  // TODO: Should also attempt to reduce RP of SGPRs and AGPRs
+  // Attempt to reduce RP of VGPR by sinking trivially rematerializable
+  // instructions. Returns true if we were able to sink instruction(s).
+  bool sinkTriviallyRematInsts(const GCNSubtarget &ST,
+                               const TargetInstrInfo *TII);
+
   // Return current region pressure.
   GCNRegPressure getRealRegPressure() const;
 
   // Compute and cache live-ins and pressure for all regions in block.
   void computeBlockPressure(const MachineBasicBlock *MBB);
 
+  // Update region boundaries when removing MI or inserting NewMI before MI.
+  void updateRegionBoundaries(
+      SmallVectorImpl<std::pair<MachineBasicBlock::iterator,
+                                MachineBasicBlock::iterator>> &RegionBoundaries,
+      MachineBasicBlock::iterator MI, MachineInstr *NewMI,
+      bool Removing = false);
 
 public:
   GCNScheduleDAGMILive(MachineSchedContext *C,
@@ -114,4 +174,4 @@ public:
 
 } // End namespace llvm
 
-#endif // GCNSCHEDSTRATEGY_H
+#endif // LLVM_LIB_TARGET_AMDGPU_GCNSCHEDSTRATEGY_H

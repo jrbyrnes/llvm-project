@@ -47,29 +47,32 @@
 //===----------------------------------------------------------------------===//
 
 #include "AST.h"
-#include "Logger.h"
+#include "FindTarget.h"
 #include "ParsedAST.h"
 #include "Selection.h"
 #include "SourceCode.h"
 #include "refactor/Tweak.h"
+#include "support/Logger.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
-#include "clang/AST/DeclTemplate.h"
+#include "clang/AST/DeclBase.h"
+#include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Stmt.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
-#include "clang/Lex/Lexer.h"
 #include "clang/Tooling/Core/Replacement.h"
 #include "clang/Tooling/Refactoring/Extract/SourceExtraction.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/raw_os_ostream.h"
 
 namespace clang {
 namespace clangd {
@@ -85,6 +88,12 @@ enum class ZoneRelative {
   Inside,     // Inside Zone.
   After,      // After Zone and inside EnclosingFunction.
   OutsideFunc // Outside EnclosingFunction.
+};
+
+enum FunctionDeclKind {
+  InlineDefinition,
+  ForwardDeclaration,
+  OutOfLineDefinition
 };
 
 // A RootStmt is a statement that's fully selected including all it's children
@@ -119,7 +128,7 @@ const Node *getParentOfRootStmts(const Node *CommonAnc) {
   const Node *Parent = nullptr;
   switch (CommonAnc->Selected) {
   case SelectionTree::Selection::Unselected:
-    // Typicaly a block, with the { and } unselected, could also be ForStmt etc
+    // Typically a block, with the { and } unselected, could also be ForStmt etc
     // Ensure all Children are RootStmts.
     Parent = CommonAnc;
     break;
@@ -152,6 +161,9 @@ struct ExtractionZone {
   const FunctionDecl *EnclosingFunction = nullptr;
   // The half-open file range of the enclosing function.
   SourceRange EnclosingFuncRange;
+  // Set of statements that form the ExtractionZone.
+  llvm::DenseSet<const Stmt *> RootStmts;
+
   SourceLocation getInsertionPoint() const {
     return EnclosingFuncRange.getBegin();
   }
@@ -159,20 +171,70 @@ struct ExtractionZone {
   // The last root statement is important to decide where we need to insert a
   // semicolon after the extraction.
   const Node *getLastRootStmt() const { return Parent->Children.back(); }
-  void generateRootStmts();
 
-private:
-  llvm::DenseSet<const Stmt *> RootStmts;
+  // Checks if declarations inside extraction zone are accessed afterwards.
+  //
+  // This performs a partial AST traversal proportional to the size of the
+  // enclosing function, so it is possibly expensive.
+  bool requiresHoisting(const SourceManager &SM,
+                        const HeuristicResolver *Resolver) const {
+    // First find all the declarations that happened inside extraction zone.
+    llvm::SmallSet<const Decl *, 1> DeclsInExtZone;
+    for (auto *RootStmt : RootStmts) {
+      findExplicitReferences(
+          RootStmt,
+          [&DeclsInExtZone](const ReferenceLoc &Loc) {
+            if (!Loc.IsDecl)
+              return;
+            DeclsInExtZone.insert(Loc.Targets.front());
+          },
+          Resolver);
+    }
+    // Early exit without performing expensive traversal below.
+    if (DeclsInExtZone.empty())
+      return false;
+    // Then make sure they are not used outside the zone.
+    for (const auto *S : EnclosingFunction->getBody()->children()) {
+      if (SM.isBeforeInTranslationUnit(S->getSourceRange().getEnd(),
+                                       ZoneRange.getEnd()))
+        continue;
+      bool HasPostUse = false;
+      findExplicitReferences(
+          S,
+          [&](const ReferenceLoc &Loc) {
+            if (HasPostUse ||
+                SM.isBeforeInTranslationUnit(Loc.NameLoc, ZoneRange.getEnd()))
+              return;
+            HasPostUse = llvm::any_of(Loc.Targets,
+                                      [&DeclsInExtZone](const Decl *Target) {
+                                        return DeclsInExtZone.contains(Target);
+                                      });
+          },
+          Resolver);
+      if (HasPostUse)
+        return true;
+    }
+    return false;
+  }
 };
 
-bool ExtractionZone::isRootStmt(const Stmt *S) const {
-  return RootStmts.find(S) != RootStmts.end();
+// Whether the code in the extraction zone is guaranteed to return, assuming
+// no broken control flow (unbound break/continue).
+// This is a very naive check (does it end with a return stmt).
+// Doing some rudimentary control flow analysis would cover more cases.
+bool alwaysReturns(const ExtractionZone &EZ) {
+  const Stmt *Last = EZ.getLastRootStmt()->ASTNode.get<Stmt>();
+  // Unwrap enclosing (unconditional) compound statement.
+  while (const auto *CS = llvm::dyn_cast<CompoundStmt>(Last)) {
+    if (CS->body_empty())
+      return false;
+    Last = CS->body_back();
+  }
+  return llvm::isa<ReturnStmt>(Last);
 }
 
-// Generate RootStmts set
-void ExtractionZone::generateRootStmts() {
-  for (const Node *Child : Parent->Children)
-    RootStmts.insert(Child->ASTNode.get<Stmt>());
+bool ExtractionZone::isRootStmt(const Stmt *S) const {
+  return RootStmts.contains(S);
 }
 
 // Finds the function in which the zone lies.
@@ -183,9 +245,6 @@ const FunctionDecl *findEnclosingFunction(const Node *CommonAnc) {
     if (CurNode->ASTNode.get<LambdaExpr>())
       return nullptr;
     if (const FunctionDecl *Func = CurNode->ASTNode.get<FunctionDecl>()) {
-      // FIXME: Support extraction from methods.
-      if (isa<CXXMethodDecl>(Func))
-        return nullptr;
       // FIXME: Support extraction from templated functions.
       if (Func->isTemplated())
         return nullptr;
@@ -265,7 +324,10 @@ llvm::Optional<ExtractionZone> findExtractionZone(const Node *CommonAnc,
     ExtZone.ZoneRange = *ZoneRange;
   if (ExtZone.EnclosingFuncRange.isInvalid() || ExtZone.ZoneRange.isInvalid())
     return llvm::None;
-  ExtZone.generateRootStmts();
+
+  for (const Node *Child : ExtZone.Parent->Children)
+    ExtZone.RootStmts.insert(Child->ASTNode.get<Stmt>());
+
   return ExtZone;
 }
 
@@ -283,36 +345,56 @@ struct NewFunction {
     }
   };
   std::string Name = "extracted";
-  std::string ReturnType;
+  QualType ReturnType;
   std::vector<Parameter> Parameters;
   SourceRange BodyRange;
-  SourceLocation InsertionPoint;
-  const DeclContext *EnclosingFuncContext;
+  SourceLocation DefinitionPoint;
+  llvm::Optional<SourceLocation> ForwardDeclarationPoint;
+  const CXXRecordDecl *EnclosingClass = nullptr;
+  const NestedNameSpecifier *DefinitionQualifier = nullptr;
+  const DeclContext *SemanticDC = nullptr;
+  const DeclContext *SyntacticDC = nullptr;
+  const DeclContext *ForwardDeclarationSyntacticDC = nullptr;
+  bool CallerReturnsValue = false;
+  bool Static = false;
+  ConstexprSpecKind Constexpr = ConstexprSpecKind::Unspecified;
+  bool Const = false;
+
   // Decides whether the extracted function body and the function call need a
   // semicolon after extraction.
   tooling::ExtractionSemicolonPolicy SemicolonPolicy;
-  NewFunction(tooling::ExtractionSemicolonPolicy SemicolonPolicy)
-      : SemicolonPolicy(SemicolonPolicy) {}
+  const LangOptions *LangOpts;
+  NewFunction(tooling::ExtractionSemicolonPolicy SemicolonPolicy,
+              const LangOptions *LangOpts)
+      : SemicolonPolicy(SemicolonPolicy), LangOpts(LangOpts) {}
   // Render the call for this function.
   std::string renderCall() const;
   // Render the definition for this function.
-  std::string renderDefinition(const SourceManager &SM) const;
+  std::string renderDeclaration(FunctionDeclKind K,
+                                const DeclContext &SemanticDC,
+                                const DeclContext &SyntacticDC,
+                                const SourceManager &SM) const;
 
 private:
-  std::string renderParametersForDefinition() const;
+  std::string
+  renderParametersForDeclaration(const DeclContext &Enclosing) const;
   std::string renderParametersForCall() const;
+  std::string renderSpecifiers(FunctionDeclKind K) const;
+  std::string renderQualifiers() const;
+  std::string renderDeclarationName(FunctionDeclKind K) const;
   // Generate the function body.
   std::string getFuncBody(const SourceManager &SM) const;
 };
 
-std::string NewFunction::renderParametersForDefinition() const {
+std::string NewFunction::renderParametersForDeclaration(
+    const DeclContext &Enclosing) const {
   std::string Result;
   bool NeedCommaBefore = false;
   for (const Parameter &P : Parameters) {
     if (NeedCommaBefore)
       Result += ", ";
     NeedCommaBefore = true;
-    Result += P.render(EnclosingFuncContext);
+    Result += P.render(&Enclosing);
   }
   return Result;
 }
@@ -329,14 +411,75 @@ std::string NewFunction::renderParametersForCall() const {
   return Result;
 }
 
-std::string NewFunction::renderCall() const {
-  return Name + "(" + renderParametersForCall() + ")" +
-         (SemicolonPolicy.isNeededInOriginalFunction() ? ";" : "");
+std::string NewFunction::renderSpecifiers(FunctionDeclKind K) const {
+  std::string Attributes;
+
+  if (Static && K != FunctionDeclKind::OutOfLineDefinition) {
+    Attributes += "static ";
+  }
+
+  switch (Constexpr) {
+  case ConstexprSpecKind::Unspecified:
+  case ConstexprSpecKind::Constinit:
+    break;
+  case ConstexprSpecKind::Constexpr:
+    Attributes += "constexpr ";
+    break;
+  case ConstexprSpecKind::Consteval:
+    Attributes += "consteval ";
+    break;
+  }
+
+  return Attributes;
 }
 
-std::string NewFunction::renderDefinition(const SourceManager &SM) const {
-  return ReturnType + " " + Name + "(" + renderParametersForDefinition() + ")" +
-         " {\n" + getFuncBody(SM) + "\n}\n";
+std::string NewFunction::renderQualifiers() const {
+  std::string Attributes;
+
+  if (Const) {
+    Attributes += " const";
+  }
+
+  return Attributes;
+}
+
+std::string NewFunction::renderDeclarationName(FunctionDeclKind K) const {
+  if (DefinitionQualifier == nullptr || K != OutOfLineDefinition) {
+    return Name;
+  }
+
+  std::string QualifierName;
+  llvm::raw_string_ostream Oss(QualifierName);
+  DefinitionQualifier->print(Oss, *LangOpts);
+  return llvm::formatv("{0}{1}", QualifierName, Name);
+}
+
+std::string NewFunction::renderCall() const {
+  return std::string(
+      llvm::formatv("{0}{1}({2}){3}", CallerReturnsValue ? "return " : "", Name,
+                    renderParametersForCall(),
+                    (SemicolonPolicy.isNeededInOriginalFunction() ? ";" : "")));
+}
+
+std::string NewFunction::renderDeclaration(FunctionDeclKind K,
+                                           const DeclContext &SemanticDC,
+                                           const DeclContext &SyntacticDC,
+                                           const SourceManager &SM) const {
+  std::string Declaration = std::string(llvm::formatv(
+      "{0}{1} {2}({3}){4}", renderSpecifiers(K),
+      printType(ReturnType, SyntacticDC), renderDeclarationName(K),
+      renderParametersForDeclaration(SemanticDC), renderQualifiers()));
+
+  switch (K) {
+  case ForwardDeclaration:
+    return std::string(llvm::formatv("{0};\n", Declaration));
+  case OutOfLineDefinition:
+  case InlineDefinition:
+    return std::string(
+        llvm::formatv("{0} {\n{1}\n}\n", Declaration, getFuncBody(SM)));
+    break;
+  }
+  llvm_unreachable("Unsupported FunctionDeclKind enum");
 }
 
 std::string NewFunction::getFuncBody(const SourceManager &SM) const {
@@ -370,8 +513,8 @@ struct CapturedZoneInfo {
   };
   // Maps Decls to their DeclInfo
   llvm::DenseMap<const Decl *, DeclInformation> DeclInfoMap;
-  // True if there is a return statement in zone.
-  bool HasReturnStmt = false;
+  bool HasReturnStmt = false; // Are there any return statements in the zone?
+  bool AlwaysReturns = false; // Does the zone always return?
   // Control flow is broken if we are extracting a break/continue without a
   // corresponding parent loop/switch
   bool BrokenControlFlow = false;
@@ -460,24 +603,13 @@ CapturedZoneInfo captureZoneInfo(const ExtractionZone &ExtZone) {
         CurNumberOfSwitch += Increment;
     }
 
-    // Decrement CurNumberOf{NestedLoops,Switch} if statement is {Loop,Switch}
-    // and inside Extraction Zone.
-    void decrementLoopSwitchCounters(Stmt *S) {
-      if (CurrentLocation != ZoneRelative::Inside)
-        return;
-      if (isLoop(S))
-        CurNumberOfNestedLoops--;
-      else if (isa<SwitchStmt>(S))
-        CurNumberOfSwitch--;
-    }
-
     bool VisitDecl(Decl *D) {
       Info.createDeclInfo(D, CurrentLocation);
       return true;
     }
 
     bool VisitDeclRefExpr(DeclRefExpr *DRE) {
-      // Find the corresponding Decl and mark it's occurence.
+      // Find the corresponding Decl and mark it's occurrence.
       const Decl *D = DRE->getDecl();
       auto *DeclInfo = Info.getDeclInfoFor(D);
       // If no Decl was found, the Decl must be outside the enclosingFunc.
@@ -519,7 +651,9 @@ CapturedZoneInfo captureZoneInfo(const ExtractionZone &ExtZone) {
     unsigned CurNumberOfSwitch = 0;
   };
   ExtractionZoneVisitor Visitor(ExtZone);
-  return std::move(Visitor.Info);
+  CapturedZoneInfo Result = std::move(Visitor.Info);
+  Result.AlwaysReturns = alwaysReturns(ExtZone);
+  return Result;
 }
 
 // Adds parameters to ExtractedFunc.
@@ -556,8 +690,9 @@ bool createParameters(NewFunction &ExtractedFunc,
     // pointers, etc by reference.
     bool IsPassedByReference = true;
     // We use the index of declaration as the ordering priority for parameters.
-    ExtractedFunc.Parameters.push_back(
-        {VD->getName(), TypeInfo, IsPassedByReference, DeclInfo.DeclIndex});
+    ExtractedFunc.Parameters.push_back({std::string(VD->getName()), TypeInfo,
+                                        IsPassedByReference,
+                                        DeclInfo.DeclIndex});
   }
   llvm::sort(ExtractedFunc.Parameters);
   return true;
@@ -582,14 +717,34 @@ getSemicolonPolicy(ExtractionZone &ExtZone, const SourceManager &SM,
 
 // Generate return type for ExtractedFunc. Return false if unable to do so.
 bool generateReturnProperties(NewFunction &ExtractedFunc,
+                              const FunctionDecl &EnclosingFunc,
                               const CapturedZoneInfo &CapturedInfo) {
-
-  // FIXME: Use Existing Return statements (if present)
+  // If the selected code always returns, we preserve those return statements.
+  // The return type should be the same as the enclosing function.
+  // (Others are possible if there are conversions, but this seems clearest).
+  if (CapturedInfo.HasReturnStmt) {
+    // If the return is conditional, neither replacing the code with
+    // `extracted()` nor `return extracted()` is correct.
+    if (!CapturedInfo.AlwaysReturns)
+      return false;
+    QualType Ret = EnclosingFunc.getReturnType();
+    // Once we support members, it'd be nice to support e.g. extracting a method
+    // of Foo<T> that returns T. But it's not clear when that's safe.
+    if (Ret->isDependentType())
+      return false;
+    ExtractedFunc.ReturnType = Ret;
+    return true;
+  }
   // FIXME: Generate new return statement if needed.
-  if (CapturedInfo.HasReturnStmt)
-    return false;
-  ExtractedFunc.ReturnType = "void";
+  ExtractedFunc.ReturnType = EnclosingFunc.getParentASTContext().VoidTy;
   return true;
+}
+
+void captureMethodInfo(NewFunction &ExtractedFunc,
+                       const CXXMethodDecl *Method) {
+  ExtractedFunc.Static = Method->isStatic();
+  ExtractedFunc.Const = Method->isConst();
+  ExtractedFunc.EnclosingClass = Method->getParent();
 }
 
 // FIXME: add support for adding other function return types besides void.
@@ -600,18 +755,42 @@ llvm::Expected<NewFunction> getExtractedFunction(ExtractionZone &ExtZone,
   CapturedZoneInfo CapturedInfo = captureZoneInfo(ExtZone);
   // Bail out if any break of continue exists
   if (CapturedInfo.BrokenControlFlow)
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                   +"Cannot extract break/continue without "
-                                    "corresponding loop/switch statement.");
-  NewFunction ExtractedFunc(getSemicolonPolicy(ExtZone, SM, LangOpts));
+    return error("Cannot extract break/continue without corresponding "
+                 "loop/switch statement.");
+  NewFunction ExtractedFunc(getSemicolonPolicy(ExtZone, SM, LangOpts),
+                            &LangOpts);
+
+  ExtractedFunc.SyntacticDC =
+      ExtZone.EnclosingFunction->getLexicalDeclContext();
+  ExtractedFunc.SemanticDC = ExtZone.EnclosingFunction->getDeclContext();
+  ExtractedFunc.DefinitionQualifier = ExtZone.EnclosingFunction->getQualifier();
+  ExtractedFunc.Constexpr = ExtZone.EnclosingFunction->getConstexprKind();
+
+  if (const auto *Method =
+          llvm::dyn_cast<CXXMethodDecl>(ExtZone.EnclosingFunction))
+    captureMethodInfo(ExtractedFunc, Method);
+
+  if (ExtZone.EnclosingFunction->isOutOfLine()) {
+    // FIXME: Put the extracted method in a private section if it's a class or
+    // maybe in an anonymous namespace
+    const auto *FirstOriginalDecl =
+        ExtZone.EnclosingFunction->getCanonicalDecl();
+    auto DeclPos =
+        toHalfOpenFileRange(SM, LangOpts, FirstOriginalDecl->getSourceRange());
+    if (!DeclPos)
+      return error("Declaration is inside a macro");
+    ExtractedFunc.ForwardDeclarationPoint = DeclPos.getValue().getBegin();
+    ExtractedFunc.ForwardDeclarationSyntacticDC = ExtractedFunc.SemanticDC;
+  }
+
   ExtractedFunc.BodyRange = ExtZone.ZoneRange;
-  ExtractedFunc.InsertionPoint = ExtZone.getInsertionPoint();
-  ExtractedFunc.EnclosingFuncContext =
-      ExtZone.EnclosingFunction->getDeclContext();
+  ExtractedFunc.DefinitionPoint = ExtZone.getInsertionPoint();
+
+  ExtractedFunc.CallerReturnsValue = CapturedInfo.AlwaysReturns;
   if (!createParameters(ExtractedFunc, CapturedInfo) ||
-      !generateReturnProperties(ExtractedFunc, CapturedInfo))
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                   +"Too complex to extract.");
+      !generateReturnProperties(ExtractedFunc, *ExtZone.EnclosingFunction,
+                                CapturedInfo))
+    return error("Too complex to extract.");
   return ExtractedFunc;
 }
 
@@ -621,7 +800,9 @@ public:
   bool prepare(const Selection &Inputs) override;
   Expected<Effect> apply(const Selection &Inputs) override;
   std::string title() const override { return "Extract to function"; }
-  Intent intent() const override { return Refactor; }
+  llvm::StringLiteral kind() const override {
+    return CodeAction::REFACTOR_KIND;
+  }
 
 private:
   ExtractionZone ExtZone;
@@ -638,34 +819,102 @@ tooling::Replacement replaceWithFuncCall(const NewFunction &ExtractedFunc,
 
 tooling::Replacement createFunctionDefinition(const NewFunction &ExtractedFunc,
                                               const SourceManager &SM) {
-  std::string FunctionDef = ExtractedFunc.renderDefinition(SM);
-  return tooling::Replacement(SM, ExtractedFunc.InsertionPoint, 0, FunctionDef);
+  FunctionDeclKind DeclKind = InlineDefinition;
+  if (ExtractedFunc.ForwardDeclarationPoint.hasValue())
+    DeclKind = OutOfLineDefinition;
+  std::string FunctionDef = ExtractedFunc.renderDeclaration(
+      DeclKind, *ExtractedFunc.SemanticDC, *ExtractedFunc.SyntacticDC, SM);
+
+  return tooling::Replacement(SM, ExtractedFunc.DefinitionPoint, 0,
+                              FunctionDef);
+}
+
+tooling::Replacement createForwardDeclaration(const NewFunction &ExtractedFunc,
+                                              const SourceManager &SM) {
+  std::string FunctionDecl = ExtractedFunc.renderDeclaration(
+      ForwardDeclaration, *ExtractedFunc.SemanticDC,
+      *ExtractedFunc.ForwardDeclarationSyntacticDC, SM);
+  SourceLocation DeclPoint = ExtractedFunc.ForwardDeclarationPoint.getValue();
+
+  return tooling::Replacement(SM, DeclPoint, 0, FunctionDecl);
+}
+
+// Returns true if ExtZone contains any ReturnStmts.
+bool hasReturnStmt(const ExtractionZone &ExtZone) {
+  class ReturnStmtVisitor
+      : public clang::RecursiveASTVisitor<ReturnStmtVisitor> {
+  public:
+    bool VisitReturnStmt(ReturnStmt *Return) {
+      Found = true;
+      return false; // We found the answer, abort the scan.
+    }
+    bool Found = false;
+  };
+
+  ReturnStmtVisitor V;
+  for (const Stmt *RootStmt : ExtZone.RootStmts) {
+    V.TraverseStmt(const_cast<Stmt *>(RootStmt));
+    if (V.Found)
+      break;
+  }
+  return V.Found;
 }
 
 bool ExtractFunction::prepare(const Selection &Inputs) {
+  const LangOptions &LangOpts = Inputs.AST->getLangOpts();
+  if (!LangOpts.CPlusPlus)
+    return false;
   const Node *CommonAnc = Inputs.ASTSelection.commonAncestor();
-  const SourceManager &SM = Inputs.AST.getSourceManager();
-  const LangOptions &LangOpts = Inputs.AST.getASTContext().getLangOpts();
-  if (auto MaybeExtZone = findExtractionZone(CommonAnc, SM, LangOpts)) {
-    ExtZone = std::move(*MaybeExtZone);
-    return true;
-  }
-  return false;
+  const SourceManager &SM = Inputs.AST->getSourceManager();
+  auto MaybeExtZone = findExtractionZone(CommonAnc, SM, LangOpts);
+  if (!MaybeExtZone ||
+      (hasReturnStmt(*MaybeExtZone) && !alwaysReturns(*MaybeExtZone)))
+    return false;
+
+  // FIXME: Get rid of this check once we support hoisting.
+  if (MaybeExtZone->requiresHoisting(SM, Inputs.AST->getHeuristicResolver()))
+    return false;
+
+  ExtZone = std::move(*MaybeExtZone);
+  return true;
 }
 
 Expected<Tweak::Effect> ExtractFunction::apply(const Selection &Inputs) {
-  const SourceManager &SM = Inputs.AST.getSourceManager();
-  const LangOptions &LangOpts = Inputs.AST.getASTContext().getLangOpts();
+  const SourceManager &SM = Inputs.AST->getSourceManager();
+  const LangOptions &LangOpts = Inputs.AST->getLangOpts();
   auto ExtractedFunc = getExtractedFunction(ExtZone, SM, LangOpts);
   // FIXME: Add more types of errors.
   if (!ExtractedFunc)
     return ExtractedFunc.takeError();
-  tooling::Replacements Result;
-  if (auto Err = Result.add(createFunctionDefinition(*ExtractedFunc, SM)))
+  tooling::Replacements Edit;
+  if (auto Err = Edit.add(createFunctionDefinition(*ExtractedFunc, SM)))
     return std::move(Err);
-  if (auto Err = Result.add(replaceWithFuncCall(*ExtractedFunc, SM, LangOpts)))
+  if (auto Err = Edit.add(replaceWithFuncCall(*ExtractedFunc, SM, LangOpts)))
     return std::move(Err);
-  return Effect::mainFileEdit(SM, std::move(Result));
+
+  if (auto FwdLoc = ExtractedFunc->ForwardDeclarationPoint) {
+    // If the fwd-declaration goes in the same file, merge into Replacements.
+    // Otherwise it needs to be a separate file edit.
+    if (SM.isWrittenInSameFile(ExtractedFunc->DefinitionPoint, *FwdLoc)) {
+      if (auto Err = Edit.add(createForwardDeclaration(*ExtractedFunc, SM)))
+        return std::move(Err);
+    } else {
+      auto MultiFileEffect = Effect::mainFileEdit(SM, std::move(Edit));
+      if (!MultiFileEffect)
+        return MultiFileEffect.takeError();
+
+      tooling::Replacements OtherEdit(
+          createForwardDeclaration(*ExtractedFunc, SM));
+      if (auto PathAndEdit = Tweak::Effect::fileEdit(SM, SM.getFileID(*FwdLoc),
+                                                 OtherEdit))
+        MultiFileEffect->ApplyEdits.try_emplace(PathAndEdit->first,
+                                                PathAndEdit->second);
+      else
+        return PathAndEdit.takeError();
+      return MultiFileEffect;
+    }
+  }
+  return Effect::mainFileEdit(SM, std::move(Edit));
 }
 
 } // namespace

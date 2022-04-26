@@ -7,24 +7,25 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/PDB/Native/PDBFileBuilder.h"
-
-#include "llvm/ADT/BitVector.h"
-
+#include "llvm/DebugInfo/CodeView/CodeView.h"
+#include "llvm/DebugInfo/CodeView/GUID.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
-#include "llvm/DebugInfo/PDB/Native/DbiStream.h"
+#include "llvm/DebugInfo/MSF/MSFCommon.h"
+#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/GSIStreamBuilder.h"
-#include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/PDBStringTableBuilder.h"
+#include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
-#include "llvm/DebugInfo/PDB/Native/TpiStream.h"
+#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStreamBuilder.h"
-#include "llvm/Support/BinaryStream.h"
 #include "llvm/Support/BinaryStreamWriter.h"
 #include "llvm/Support/CRC.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/xxhash.h"
+
+#include <ctime>
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -32,11 +33,15 @@ using namespace llvm::msf;
 using namespace llvm::pdb;
 using namespace llvm::support;
 
+namespace llvm {
+class WritableBinaryStream;
+}
+
 PDBFileBuilder::PDBFileBuilder(BumpPtrAllocator &Allocator)
     : Allocator(Allocator), InjectedSourceHashTraits(Strings),
       InjectedSourceTable(2) {}
 
-PDBFileBuilder::~PDBFileBuilder() {}
+PDBFileBuilder::~PDBFileBuilder() = default;
 
 Error PDBFileBuilder::initialize(uint32_t BlockSize) {
   auto ExpectedMsf = MSFBuilder::create(Allocator, BlockSize);
@@ -95,7 +100,7 @@ Error PDBFileBuilder::addNamedStream(StringRef Name, StringRef Data) {
   if (!ExpectedIndex)
     return ExpectedIndex.takeError();
   assert(NamedStreamData.count(*ExpectedIndex) == 0);
-  NamedStreamData[*ExpectedIndex] = Data;
+  NamedStreamData[*ExpectedIndex] = std::string(Data);
   return Error::success();
 }
 
@@ -105,7 +110,7 @@ void PDBFileBuilder::addInjectedSource(StringRef Name,
   // table and the hash value is dependent on the exact contents of the string.
   // link.exe lowercases a path and converts / to \, so we must do the same.
   SmallString<64> VName;
-  sys::path::native(Name.lower(), VName);
+  sys::path::native(Name.lower(), VName, sys::path::Style::windows_backslash);
 
   uint32_t NI = getStringTableBuilder().insert(Name);
   uint32_t VNI = getStringTableBuilder().insert(VName);
@@ -144,7 +149,7 @@ Error PDBFileBuilder::finalizeMsfLayout() {
     if (Dbi) {
       Dbi->setPublicsStreamIndex(Gsi->getPublicsStreamIndex());
       Dbi->setGlobalsStreamIndex(Gsi->getGlobalsStreamIndex());
-      Dbi->setSymbolRecordStreamIndex(Gsi->getRecordStreamIdx());
+      Dbi->setSymbolRecordStreamIndex(Gsi->getRecordStreamIndex());
     }
   }
   if (Tpi) {

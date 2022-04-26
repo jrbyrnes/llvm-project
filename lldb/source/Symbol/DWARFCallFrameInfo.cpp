@@ -1,4 +1,4 @@
-//===-- DWARFCallFrameInfo.cpp ----------------------------------*- C++ -*-===//
+//===-- DWARFCallFrameInfo.cpp --------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -16,13 +16,15 @@
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ArchSpec.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Timer.h"
-#include <list>
 #include <cstring>
+#include <list>
 
 using namespace lldb;
 using namespace lldb_private;
+using namespace lldb_private::dwarf;
 
 // GetDwarfEHPtr
 //
@@ -396,7 +398,7 @@ DWARFCallFrameInfo::ParseCIE(const dw_offset_t cie_offset) {
 
 void DWARFCallFrameInfo::GetCFIData() {
   if (!m_cfi_data_initialized) {
-    Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND));
+    Log *log = GetLog(LLDBLog::Unwind);
     if (log)
       m_objfile.GetModule()->LogMessage(log, "Reading EH frame info");
     m_objfile.ReadSectionData(m_section_sp.get(), m_cfi_data);
@@ -419,8 +421,7 @@ void DWARFCallFrameInfo::GetFDEIndex() {
   if (m_fde_index_initialized) // if two threads hit the locker
     return;
 
-  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
-  Timer scoped_timer(func_cat, "%s - %s", LLVM_PRETTY_FUNCTION,
+  LLDB_SCOPED_TIMERF("%s - %s", LLVM_PRETTY_FUNCTION,
                      m_objfile.GetFileSpec().GetFilename().AsCString(""));
 
   bool clear_address_zeroth_bit = false;
@@ -526,7 +527,7 @@ void DWARFCallFrameInfo::GetFDEIndex() {
 bool DWARFCallFrameInfo::FDEToUnwindPlan(dw_offset_t dwarf_offset,
                                          Address startaddr,
                                          UnwindPlan &unwind_plan) {
-  Log *log = GetLogIfAllCategoriesSet(LIBLLDB_LOG_UNWIND);
+  Log *log = GetLog(LLDBLog::Unwind);
   lldb::offset_t offset = dwarf_offset;
   lldb::offset_t current_entry = offset;
 
@@ -690,7 +691,7 @@ bool DWARFCallFrameInfo::FDEToUnwindPlan(dw_offset_t dwarf_offset,
           UnwindPlan::Row *newrow = new UnwindPlan::Row;
           *newrow = *row.get();
           row.reset(newrow);
-          row->SetOffset(m_cfi_data.GetPointer(&offset) -
+          row->SetOffset(m_cfi_data.GetAddress(&offset) -
                          startaddr.GetFileAddress());
           break;
         }

@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Taint.h"
 #include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
+#include "clang/StaticAnalyzer/Checkers/Taint.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
@@ -63,6 +63,6 @@ void ento::registerTaintTesterChecker(CheckerManager &mgr) {
   mgr.registerChecker<TaintTesterChecker>();
 }
 
-bool ento::shouldRegisterTaintTesterChecker(const LangOptions &LO) {
+bool ento::shouldRegisterTaintTesterChecker(const CheckerManager &mgr) {
   return true;
 }

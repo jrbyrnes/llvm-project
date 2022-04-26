@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef lldb_RegisterContextHistory_h_
-#define lldb_RegisterContextHistory_h_
+#ifndef LLDB_SOURCE_PLUGINS_PROCESS_UTILITY_REGISTERCONTEXTHISTORY_H
+#define LLDB_SOURCE_PLUGINS_PROCESS_UTILITY_REGISTERCONTEXTHISTORY_H
 
 #include <vector>
 
@@ -43,7 +43,7 @@ public:
   bool WriteRegister(const lldb_private::RegisterInfo *reg_info,
                      const lldb_private::RegisterValue &value) override;
 
-  bool ReadAllRegisterValues(lldb::DataBufferSP &data_sp) override;
+  bool ReadAllRegisterValues(lldb::WritableDataBufferSP &data_sp) override;
 
   bool WriteAllRegisterValues(const lldb::DataBufferSP &data_sp) override;
 
@@ -58,8 +58,10 @@ private:
 
   lldb::addr_t m_pc_value;
 
-  DISALLOW_COPY_AND_ASSIGN(RegisterContextHistory);
+  RegisterContextHistory(const RegisterContextHistory &) = delete;
+  const RegisterContextHistory &
+  operator=(const RegisterContextHistory &) = delete;
 };
 } // namespace lldb_private
 
-#endif // lldb_RegisterContextHistory_h_
+#endif // LLDB_SOURCE_PLUGINS_PROCESS_UTILITY_REGISTERCONTEXTHISTORY_H

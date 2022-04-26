@@ -24,6 +24,33 @@ tablegen("AMDGPUGenGlobalISel") {
   td_file = "AMDGPUGISel.td"
 }
 
+tablegen("AMDGPUGenPreLegalizeGICombiner") {
+  visibility = [ ":LLVMAMDGPUCodeGen" ]
+  args = [
+    "-gen-global-isel-combiner",
+    "-combiners=AMDGPUPreLegalizerCombinerHelper",
+  ]
+  td_file = "AMDGPUGISel.td"
+}
+
+tablegen("AMDGPUGenPostLegalizeGICombiner") {
+  visibility = [ ":LLVMAMDGPUCodeGen" ]
+  args = [
+    "-gen-global-isel-combiner",
+    "-combiners=AMDGPUPostLegalizerCombinerHelper",
+  ]
+  td_file = "AMDGPUGISel.td"
+}
+
+tablegen("AMDGPUGenRegBankGICombiner") {
+  visibility = [ ":LLVMAMDGPUCodeGen" ]
+  args = [
+    "-gen-global-isel-combiner",
+    "-combiners=AMDGPURegBankCombinerHelper",
+  ]
+  td_file = "AMDGPUGISel.td"
+}
+
 tablegen("AMDGPUGenMCPseudoLowering") {
   visibility = [ ":LLVMAMDGPUCodeGen" ]
   args = [ "-gen-pseudo-lowering" ]
@@ -34,6 +61,11 @@ tablegen("AMDGPUGenRegisterBank") {
   visibility = [ ":LLVMAMDGPUCodeGen" ]
   args = [ "-gen-register-bank" ]
   td_file = "AMDGPU.td"
+}
+
+tablegen("InstCombineTables") {
+  visibility = [ ":LLVMAMDGPUCodeGen" ]
+  args = [ "-gen-searchable-tables" ]
 }
 
 tablegen("R600GenCallingConv") {
@@ -61,7 +93,11 @@ static_library("LLVMAMDGPUCodeGen") {
     ":AMDGPUGenDAGISel",
     ":AMDGPUGenGlobalISel",
     ":AMDGPUGenMCPseudoLowering",
+    ":AMDGPUGenPostLegalizeGICombiner",
+    ":AMDGPUGenPreLegalizeGICombiner",
+    ":AMDGPUGenRegBankGICombiner",
     ":AMDGPUGenRegisterBank",
+    ":InstCombineTables",
     ":R600GenCallingConv",
     ":R600GenDAGISel",
     ":R600GenDFAPacketizer",
@@ -76,6 +112,7 @@ static_library("LLVMAMDGPUCodeGen") {
     "//llvm/lib/CodeGen/SelectionDAG",
     "//llvm/lib/IR",
     "//llvm/lib/MC",
+    "//llvm/lib/Passes",
     "//llvm/lib/Support",
     "//llvm/lib/Target",
     "//llvm/lib/Transforms/IPO",
@@ -91,34 +128,46 @@ static_library("LLVMAMDGPUCodeGen") {
     "AMDGPUArgumentUsageInfo.cpp",
     "AMDGPUAsmPrinter.cpp",
     "AMDGPUAtomicOptimizer.cpp",
+    "AMDGPUAttributor.cpp",
     "AMDGPUCallLowering.cpp",
     "AMDGPUCodeGenPrepare.cpp",
-    "AMDGPUFixFunctionBitcasts.cpp",
+    "AMDGPUCombinerHelper.cpp",
+    "AMDGPUCtorDtorLowering.cpp",
+    "AMDGPUExportClustering.cpp",
     "AMDGPUFrameLowering.cpp",
+    "AMDGPUGlobalISelUtils.cpp",
     "AMDGPUHSAMetadataStreamer.cpp",
     "AMDGPUISelDAGToDAG.cpp",
     "AMDGPUISelLowering.cpp",
-    "AMDGPUInline.cpp",
+    "AMDGPUInstCombineIntrinsic.cpp",
     "AMDGPUInstrInfo.cpp",
     "AMDGPUInstructionSelector.cpp",
+    "AMDGPULateCodeGenPrepare.cpp",
     "AMDGPULegalizerInfo.cpp",
     "AMDGPULibCalls.cpp",
     "AMDGPULibFunc.cpp",
     "AMDGPULowerIntrinsics.cpp",
     "AMDGPULowerKernelArguments.cpp",
     "AMDGPULowerKernelAttributes.cpp",
+    "AMDGPULowerModuleLDSPass.cpp",
     "AMDGPUMCInstLower.cpp",
+    "AMDGPUMIRFormatter.cpp",
     "AMDGPUMachineCFGStructurizer.cpp",
     "AMDGPUMachineFunction.cpp",
     "AMDGPUMachineModuleInfo.cpp",
     "AMDGPUMacroFusion.cpp",
     "AMDGPUOpenCLEnqueuedBlockLowering.cpp",
     "AMDGPUPerfHintAnalysis.cpp",
+    "AMDGPUPostLegalizerCombiner.cpp",
+    "AMDGPUPreLegalizerCombiner.cpp",
     "AMDGPUPrintfRuntimeBinding.cpp",
     "AMDGPUPromoteAlloca.cpp",
+    "AMDGPUPromoteKernelArguments.cpp",
     "AMDGPUPropagateAttributes.cpp",
+    "AMDGPURegBankCombiner.cpp",
     "AMDGPURegisterBankInfo.cpp",
-    "AMDGPURegisterInfo.cpp",
+    "AMDGPUReplaceLDSUseWithPointer.cpp",
+    "AMDGPUResourceUsageAnalysis.cpp",
     "AMDGPURewriteOutArguments.cpp",
     "AMDGPUSubtarget.cpp",
     "AMDGPUTargetMachine.cpp",
@@ -126,14 +175,13 @@ static_library("LLVMAMDGPUCodeGen") {
     "AMDGPUTargetTransformInfo.cpp",
     "AMDGPUUnifyDivergentExitNodes.cpp",
     "AMDGPUUnifyMetadata.cpp",
-    "AMDILCFGStructurizer.cpp",
     "GCNDPPCombine.cpp",
     "GCNHazardRecognizer.cpp",
     "GCNILPSched.cpp",
     "GCNIterativeScheduler.cpp",
     "GCNMinRegStrategy.cpp",
     "GCNNSAReassign.cpp",
-    "GCNRegBankReassign.cpp",
+    "GCNPreRAOptimizations.cpp",
     "GCNRegPressure.cpp",
     "GCNSchedStrategy.cpp",
     "R600AsmPrinter.cpp",
@@ -142,26 +190,31 @@ static_library("LLVMAMDGPUCodeGen") {
     "R600EmitClauseMarkers.cpp",
     "R600ExpandSpecialInstrs.cpp",
     "R600FrameLowering.cpp",
+    "R600ISelDAGToDAG.cpp",
     "R600ISelLowering.cpp",
     "R600InstrInfo.cpp",
+    "R600MCInstLower.cpp",
+    "R600MachineCFGStructurizer.cpp",
     "R600MachineFunctionInfo.cpp",
     "R600MachineScheduler.cpp",
     "R600OpenCLImageTypeLoweringPass.cpp",
     "R600OptimizeVectorRegisters.cpp",
     "R600Packetizer.cpp",
     "R600RegisterInfo.cpp",
-    "SIAddIMGInit.cpp",
+    "R600Subtarget.cpp",
+    "R600TargetMachine.cpp",
+    "R600TargetTransformInfo.cpp",
     "SIAnnotateControlFlow.cpp",
     "SIFixSGPRCopies.cpp",
     "SIFixVGPRCopies.cpp",
-    "SIFixupVectorISel.cpp",
     "SIFoldOperands.cpp",
     "SIFormMemoryClauses.cpp",
     "SIFrameLowering.cpp",
     "SIISelLowering.cpp",
-    "SIInsertSkips.cpp",
+    "SIInsertHardClauses.cpp",
     "SIInsertWaitcnts.cpp",
     "SIInstrInfo.cpp",
+    "SILateBranchLowering.cpp",
     "SILoadStoreOptimizer.cpp",
     "SILowerControlFlow.cpp",
     "SILowerI1Copies.cpp",
@@ -172,8 +225,12 @@ static_library("LLVMAMDGPUCodeGen") {
     "SIModeRegister.cpp",
     "SIOptimizeExecMasking.cpp",
     "SIOptimizeExecMaskingPreRA.cpp",
+    "SIOptimizeVGPRLiveRange.cpp",
     "SIPeepholeSDWA.cpp",
+    "SIPostRABundler.cpp",
     "SIPreAllocateWWMRegs.cpp",
+    "SIPreEmitPeephole.cpp",
+    "SIProgramInfo.cpp",
     "SIRegisterInfo.cpp",
     "SIShrinkInstructions.cpp",
     "SIWholeQuadMode.cpp",
@@ -191,6 +248,7 @@ group("AMDGPU") {
     ":LLVMAMDGPUCodeGen",
     "AsmParser",
     "Disassembler",
+    "MCA",
     "MCTargetDesc",
     "TargetInfo",
     "Utils",

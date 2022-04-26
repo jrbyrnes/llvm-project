@@ -67,7 +67,8 @@ define <2 x i8> @cvt_v2f32_v2i8(<2 x float> %src) {
 ; CHECK-LABEL: cvt_v2f32_v2i8:
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    vcvttps2dq %xmm0, %xmm0
-; CHECK-NEXT:    vpshufb {{.*#+}} xmm0 = xmm0[0,4,u,u,u,u,u,u,u,u,u,u,u,u,u,u]
+; CHECK-NEXT:    vpackssdw %xmm0, %xmm0, %xmm0
+; CHECK-NEXT:    vpacksswb %xmm0, %xmm0, %xmm0
 ; CHECK-NEXT:    retl
   %res = fptosi <2 x float> %src to <2 x i8>
   ret <2 x i8> %res
@@ -77,7 +78,7 @@ define <2 x i16> @cvt_v2f32_v2i16(<2 x float> %src) {
 ; CHECK-LABEL: cvt_v2f32_v2i16:
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    vcvttps2dq %xmm0, %xmm0
-; CHECK-NEXT:    vpshuflw {{.*#+}} xmm0 = xmm0[0,2,2,3,4,5,6,7]
+; CHECK-NEXT:    vpackssdw %xmm0, %xmm0, %xmm0
 ; CHECK-NEXT:    retl
   %res = fptosi <2 x float> %src to <2 x i16>
   ret <2 x i16> %res
@@ -96,7 +97,8 @@ define <2 x i8> @cvt_v2f32_v2u8(<2 x float> %src) {
 ; CHECK-LABEL: cvt_v2f32_v2u8:
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    vcvttps2dq %xmm0, %xmm0
-; CHECK-NEXT:    vpshufb {{.*#+}} xmm0 = xmm0[0,4,u,u,u,u,u,u,u,u,u,u,u,u,u,u]
+; CHECK-NEXT:    vpackusdw %xmm0, %xmm0, %xmm0
+; CHECK-NEXT:    vpackuswb %xmm0, %xmm0, %xmm0
 ; CHECK-NEXT:    retl
   %res = fptoui <2 x float> %src to <2 x i8>
   ret <2 x i8> %res
@@ -106,7 +108,7 @@ define <2 x i16> @cvt_v2f32_v2u16(<2 x float> %src) {
 ; CHECK-LABEL: cvt_v2f32_v2u16:
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    vcvttps2dq %xmm0, %xmm0
-; CHECK-NEXT:    vpshuflw {{.*#+}} xmm0 = xmm0[0,2,2,3,4,5,6,7]
+; CHECK-NEXT:    vpackusdw %xmm0, %xmm0, %xmm0
 ; CHECK-NEXT:    retl
   %res = fptoui <2 x float> %src to <2 x i16>
   ret <2 x i16> %res
@@ -115,13 +117,12 @@ define <2 x i16> @cvt_v2f32_v2u16(<2 x float> %src) {
 define <2 x i32> @cvt_v2f32_v2u32(<2 x float> %src) {
 ; CHECK-LABEL: cvt_v2f32_v2u32:
 ; CHECK:       ## %bb.0:
-; CHECK-NEXT:    vmovaps {{.*#+}} xmm1 = [2.14748365E+9,2.14748365E+9,2.14748365E+9,2.14748365E+9]
-; CHECK-NEXT:    vcmpltps %xmm1, %xmm0, %xmm2
-; CHECK-NEXT:    vsubps %xmm1, %xmm0, %xmm1
-; CHECK-NEXT:    vcvttps2dq %xmm1, %xmm1
-; CHECK-NEXT:    vxorps LCPI11_1, %xmm1, %xmm1
+; CHECK-NEXT:    vcvttps2dq %xmm0, %xmm1
+; CHECK-NEXT:    vpsrad $31, %xmm1, %xmm2
+; CHECK-NEXT:    vsubps {{\.?LCPI[0-9]+_[0-9]+}}, %xmm0, %xmm0
 ; CHECK-NEXT:    vcvttps2dq %xmm0, %xmm0
-; CHECK-NEXT:    vblendvps %xmm2, %xmm0, %xmm1, %xmm0
+; CHECK-NEXT:    vpand %xmm2, %xmm0, %xmm0
+; CHECK-NEXT:    vpor %xmm0, %xmm1, %xmm0
 ; CHECK-NEXT:    retl
   %res = fptoui <2 x float> %src to <2 x i32>
   ret <2 x i32> %res
@@ -130,9 +131,9 @@ define <2 x i32> @cvt_v2f32_v2u32(<2 x float> %src) {
 define <32 x i8> @PR40146(<4 x i64> %x) {
 ; CHECK-LABEL: PR40146:
 ; CHECK:       ## %bb.0:
-; CHECK-NEXT:    vpshufd {{.*#+}} xmm1 = xmm0[2,3,0,1]
+; CHECK-NEXT:    vpxor %xmm1, %xmm1, %xmm1
+; CHECK-NEXT:    vpunpckhbw {{.*#+}} xmm1 = xmm0[8],xmm1[8],xmm0[9],xmm1[9],xmm0[10],xmm1[10],xmm0[11],xmm1[11],xmm0[12],xmm1[12],xmm0[13],xmm1[13],xmm0[14],xmm1[14],xmm0[15],xmm1[15]
 ; CHECK-NEXT:    vpmovzxbw {{.*#+}} xmm0 = xmm0[0],zero,xmm0[1],zero,xmm0[2],zero,xmm0[3],zero,xmm0[4],zero,xmm0[5],zero,xmm0[6],zero,xmm0[7],zero
-; CHECK-NEXT:    vpmovzxbw {{.*#+}} xmm1 = xmm1[0],zero,xmm1[1],zero,xmm1[2],zero,xmm1[3],zero,xmm1[4],zero,xmm1[5],zero,xmm1[6],zero,xmm1[7],zero
 ; CHECK-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
 ; CHECK-NEXT:    retl
   %perm = shufflevector <4 x i64> %x, <4 x i64> undef, <4 x i32> <i32 0, i32 undef, i32 1, i32 undef>

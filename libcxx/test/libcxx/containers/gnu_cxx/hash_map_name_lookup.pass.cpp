@@ -6,10 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-// Prevent emission of the deprecated warning.
-#ifdef __clang__
-#pragma clang diagnostic ignored "-W#warnings"
-#endif
+// UNSUPPORTED: modules-build
 
 // Poison the std:: names we might use inside __gnu_cxx to ensure they're
 // properly qualified.
@@ -17,6 +14,12 @@ struct allocator;
 struct pair;
 struct equal_to;
 struct unique_ptr;
+
+// Prevent <ext/hash_map> from generating deprecated warnings for this test.
+#if defined(__DEPRECATED)
+#   undef __DEPRECATED
+#endif
+
 #include <ext/hash_map>
 
 #include "test_macros.h"

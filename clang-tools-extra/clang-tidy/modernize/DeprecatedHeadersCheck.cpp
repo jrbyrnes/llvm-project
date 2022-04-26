@@ -27,9 +27,9 @@ public:
 
   void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
                           StringRef FileName, bool IsAngled,
-                          CharSourceRange FilenameRange, const FileEntry *File,
-                          StringRef SearchPath, StringRef RelativePath,
-                          const Module *Imported,
+                          CharSourceRange FilenameRange,
+                          Optional<FileEntryRef> File, StringRef SearchPath,
+                          StringRef RelativePath, const Module *Imported,
                           SrcMgr::CharacteristicKind FileType) override;
 
 private:
@@ -42,10 +42,8 @@ private:
 
 void DeprecatedHeadersCheck::registerPPCallbacks(
     const SourceManager &SM, Preprocessor *PP, Preprocessor *ModuleExpanderPP) {
-  if (getLangOpts().CPlusPlus) {
     PP->addPPCallbacks(
         ::std::make_unique<IncludeModernizePPCallbacks>(*this, getLangOpts()));
-  }
 }
 
 IncludeModernizePPCallbacks::IncludeModernizePPCallbacks(ClangTidyCheck &Check,
@@ -93,7 +91,7 @@ IncludeModernizePPCallbacks::IncludeModernizePPCallbacks(ClangTidyCheck &Check,
 
 void IncludeModernizePPCallbacks::InclusionDirective(
     SourceLocation HashLoc, const Token &IncludeTok, StringRef FileName,
-    bool IsAngled, CharSourceRange FilenameRange, const FileEntry *File,
+    bool IsAngled, CharSourceRange FilenameRange, Optional<FileEntryRef> File,
     StringRef SearchPath, StringRef RelativePath, const Module *Imported,
     SrcMgr::CharacteristicKind FileType) {
   // FIXME: Take care of library symbols from the global namespace.

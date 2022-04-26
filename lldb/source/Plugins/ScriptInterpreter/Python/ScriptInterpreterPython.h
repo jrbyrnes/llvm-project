@@ -9,14 +9,13 @@
 #ifndef LLDB_PLUGINS_SCRIPTINTERPRETER_PYTHON_SCRIPTINTERPRETERPYTHON_H
 #define LLDB_PLUGINS_SCRIPTINTERPRETER_PYTHON_SCRIPTINTERPRETERPYTHON_H
 
-#ifdef LLDB_DISABLE_PYTHON
+#include "lldb/Host/Config.h"
 
-// Python is disabled in this build
-
-#else
+#if LLDB_ENABLE_PYTHON
 
 #include "lldb/Breakpoint/BreakpointOptions.h"
 #include "lldb/Core/IOHandler.h"
+#include "lldb/Core/StructuredDataImpl.h"
 #include "lldb/Interpreter/ScriptInterpreter.h"
 #include "lldb/lldb-private.h"
 
@@ -34,17 +33,25 @@ public:
     CommandDataPython() : BreakpointOptions::CommandData() {
       interpreter = lldb::eScriptLanguagePython;
     }
+    CommandDataPython(StructuredData::ObjectSP extra_args_sp)
+        : BreakpointOptions::CommandData(),
+          m_extra_args(std::move(extra_args_sp)) {
+      interpreter = lldb::eScriptLanguagePython;
+    }
+    StructuredDataImpl m_extra_args;
   };
 
   ScriptInterpreterPython(Debugger &debugger)
       : ScriptInterpreter(debugger, lldb::eScriptLanguagePython),
         IOHandlerDelegateMultiline("DONE") {}
 
+  StructuredData::DictionarySP GetInterpreterInfo() override;
   static void Initialize();
   static void Terminate();
-  static lldb_private::ConstString GetPluginNameStatic();
-  static const char *GetPluginDescriptionStatic();
+  static llvm::StringRef GetPluginNameStatic() { return "script-python"; }
+  static llvm::StringRef GetPluginDescriptionStatic();
   static FileSpec GetPythonDir();
+  static void SharedLibraryDirectoryHelper(FileSpec &this_file);
 
 protected:
   static void ComputePythonDirForApple(llvm::SmallVectorImpl<char> &path);
@@ -52,5 +59,5 @@ protected:
 };
 } // namespace lldb_private
 
-#endif // LLDB_DISABLE_PYTHON
+#endif // LLDB_ENABLE_PYTHON
 #endif // LLDB_PLUGINS_SCRIPTINTERPRETER_PYTHON_SCRIPTINTERPRETERPYTHON_H

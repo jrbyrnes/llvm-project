@@ -1,4 +1,4 @@
-//===-- ThreadPlanStepInRange.cpp -------------------------------*- C++ -*-===//
+//===-- ThreadPlanStepInRange.cpp -----------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -18,6 +18,7 @@
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/ThreadPlanStepOut.h"
 #include "lldb/Target/ThreadPlanStepThrough.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Stream.h"
@@ -30,22 +31,6 @@ uint32_t ThreadPlanStepInRange::s_default_flag_values =
 
 // ThreadPlanStepInRange: Step through a stack range, either stepping over or
 // into based on the value of \a type.
-
-ThreadPlanStepInRange::ThreadPlanStepInRange(
-    Thread &thread, const AddressRange &range,
-    const SymbolContext &addr_context, lldb::RunMode stop_others,
-    LazyBool step_in_avoids_code_without_debug_info,
-    LazyBool step_out_avoids_code_without_debug_info)
-    : ThreadPlanStepRange(ThreadPlan::eKindStepInRange,
-                          "Step Range stepping in", thread, range, addr_context,
-                          stop_others),
-      ThreadPlanShouldStopHere(this), m_step_past_prologue(true),
-      m_virtual_step(false) {
-  SetCallbacks();
-  SetFlagsToDefault();
-  SetupAvoidNoDebug(step_in_avoids_code_without_debug_info,
-                    step_out_avoids_code_without_debug_info);
-}
 
 ThreadPlanStepInRange::ThreadPlanStepInRange(
     Thread &thread, const AddressRange &range,
@@ -69,7 +54,7 @@ void ThreadPlanStepInRange::SetupAvoidNoDebug(
     LazyBool step_in_avoids_code_without_debug_info,
     LazyBool step_out_avoids_code_without_debug_info) {
   bool avoid_nodebug = true;
-
+  Thread &thread = GetThread();
   switch (step_in_avoids_code_without_debug_info) {
   case eLazyBoolYes:
     avoid_nodebug = true;
@@ -78,7 +63,7 @@ void ThreadPlanStepInRange::SetupAvoidNoDebug(
     avoid_nodebug = false;
     break;
   case eLazyBoolCalculate:
-    avoid_nodebug = m_thread.GetStepInAvoidsNoDebug();
+    avoid_nodebug = thread.GetStepInAvoidsNoDebug();
     break;
   }
   if (avoid_nodebug)
@@ -94,7 +79,7 @@ void ThreadPlanStepInRange::SetupAvoidNoDebug(
     avoid_nodebug = false;
     break;
   case eLazyBoolCalculate:
-    avoid_nodebug = m_thread.GetStepOutAvoidsNoDebug();
+    avoid_nodebug = thread.GetStepOutAvoidsNoDebug();
     break;
   }
   if (avoid_nodebug)
@@ -141,13 +126,12 @@ void ThreadPlanStepInRange::GetDescription(Stream *s,
 }
 
 bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
 
   if (log) {
     StreamString s;
-    s.Address(
-        m_thread.GetRegisterContext()->GetPC(),
-        m_thread.CalculateTarget()->GetArchitecture().GetAddressByteSize());
+    DumpAddress(s.AsRawOstream(), GetThread().GetRegisterContext()->GetPC(),
+                GetTarget().GetArchitecture().GetAddressByteSize());
     LLDB_LOGF(log, "ThreadPlanStepInRange reached %s.", s.GetData());
   }
 
@@ -180,6 +164,7 @@ bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
 
     FrameComparison frame_order = CompareCurrentFrameToStartFrame();
 
+    Thread &thread = GetThread();
     if (frame_order == eFrameCompareOlder ||
         frame_order == eFrameCompareSameParent) {
       // If we're in an older frame then we should stop.
@@ -189,7 +174,7 @@ bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
       // I'm going to make the assumption that you wouldn't RETURN to a
       // trampoline.  So if we are in a trampoline we think the frame is older
       // because the trampoline confused the backtracer.
-      m_sub_plan_sp = m_thread.QueueThreadPlanForStepThrough(
+      m_sub_plan_sp = thread.QueueThreadPlanForStepThrough(
           m_stack_id, false, stop_others, m_status);
       if (!m_sub_plan_sp) {
         // Otherwise check the ShouldStopHere for step out:
@@ -233,7 +218,7 @@ bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
     // We may have set the plan up above in the FrameIsOlder section:
 
     if (!m_sub_plan_sp)
-      m_sub_plan_sp = m_thread.QueueThreadPlanForStepThrough(
+      m_sub_plan_sp = thread.QueueThreadPlanForStepThrough(
           m_stack_id, false, stop_others, m_status);
 
     if (log) {
@@ -254,10 +239,10 @@ bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
 
     if (!m_sub_plan_sp && frame_order == eFrameCompareYounger &&
         m_step_past_prologue) {
-      lldb::StackFrameSP curr_frame = m_thread.GetStackFrameAtIndex(0);
+      lldb::StackFrameSP curr_frame = thread.GetStackFrameAtIndex(0);
       if (curr_frame) {
         size_t bytes_to_skip = 0;
-        lldb::addr_t curr_addr = m_thread.GetRegisterContext()->GetPC();
+        lldb::addr_t curr_addr = thread.GetRegisterContext()->GetPC();
         Address func_start_address;
 
         SymbolContext sc = curr_frame->GetSymbolContext(eSymbolContextFunction |
@@ -265,35 +250,30 @@ bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
 
         if (sc.function) {
           func_start_address = sc.function->GetAddressRange().GetBaseAddress();
-          if (curr_addr ==
-              func_start_address.GetLoadAddress(
-                  m_thread.CalculateTarget().get()))
+          if (curr_addr == func_start_address.GetLoadAddress(&GetTarget()))
             bytes_to_skip = sc.function->GetPrologueByteSize();
         } else if (sc.symbol) {
           func_start_address = sc.symbol->GetAddress();
-          if (curr_addr ==
-              func_start_address.GetLoadAddress(
-                  m_thread.CalculateTarget().get()))
+          if (curr_addr == func_start_address.GetLoadAddress(&GetTarget()))
             bytes_to_skip = sc.symbol->GetPrologueByteSize();
         }
 
         if (bytes_to_skip == 0 && sc.symbol) {
-          TargetSP target = m_thread.CalculateTarget();
-          const Architecture *arch = target->GetArchitecturePlugin();
+          const Architecture *arch = GetTarget().GetArchitecturePlugin();
           if (arch) {
             Address curr_sec_addr;
-            target->GetSectionLoadList().ResolveLoadAddress(curr_addr,
-                                                            curr_sec_addr);
+            GetTarget().GetSectionLoadList().ResolveLoadAddress(curr_addr,
+                                                                curr_sec_addr);
             bytes_to_skip = arch->GetBytesToSkip(*sc.symbol, curr_sec_addr);
           }
         }
 
         if (bytes_to_skip != 0) {
           func_start_address.Slide(bytes_to_skip);
-          log = lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP);
+          log = GetLog(LLDBLog::Step);
           LLDB_LOGF(log, "Pushing past prologue ");
 
-          m_sub_plan_sp = m_thread.QueueThreadPlanForRunToAddress(
+          m_sub_plan_sp = thread.QueueThreadPlanForRunToAddress(
               false, func_start_address, true, m_status);
         }
       }
@@ -312,11 +292,10 @@ bool ThreadPlanStepInRange::ShouldStop(Event *event_ptr) {
 }
 
 void ThreadPlanStepInRange::SetAvoidRegexp(const char *name) {
-  auto name_ref = llvm::StringRef::withNullAsEmpty(name);
   if (m_avoid_regexp_up)
-    *m_avoid_regexp_up = RegularExpression(name_ref);
+    *m_avoid_regexp_up = RegularExpression(name);
   else
-    m_avoid_regexp_up.reset(new RegularExpression(name_ref));
+    m_avoid_regexp_up = std::make_unique<RegularExpression>(name);
 }
 
 void ThreadPlanStepInRange::SetDefaultFlagValue(uint32_t new_value) {
@@ -339,7 +318,7 @@ bool ThreadPlanStepInRange::FrameMatchesAvoidCriteria() {
     if (frame_library) {
       for (size_t i = 0; i < num_libraries; i++) {
         const FileSpec &file_spec(libraries_to_avoid.GetFileSpecAtIndex(i));
-        if (FileSpec::Equal(file_spec, frame_library, false)) {
+        if (FileSpec::Match(file_spec, frame_library)) {
           libraries_say_avoid = true;
           break;
         }
@@ -361,17 +340,13 @@ bool ThreadPlanStepInRange::FrameMatchesAvoidCriteria() {
           sc.GetFunctionName(Mangled::ePreferDemangledWithoutArguments)
               .GetCString();
       if (frame_function_name) {
-        llvm::SmallVector<llvm::StringRef, 2> matches;
-        bool return_value =
-            avoid_regexp_to_use->Execute(frame_function_name, &matches);
-        if (return_value && matches.size() > 1) {
-          std::string match = matches[1].str();
-          LLDB_LOGF(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP),
-                    "Stepping out of function \"%s\" because it matches "
-                    "the avoid regexp \"%s\" - match substring: \"%s\".",
+        bool return_value = avoid_regexp_to_use->Execute(frame_function_name);
+        if (return_value) {
+          LLDB_LOGF(GetLog(LLDBLog::Step),
+                    "Stepping out of function \"%s\" because it matches the "
+                    "avoid regexp \"%s\".",
                     frame_function_name,
-                    avoid_regexp_to_use->GetText().str().c_str(),
-                    match.c_str());
+                    avoid_regexp_to_use->GetText().str().c_str());
         }
         return return_value;
       }
@@ -385,14 +360,14 @@ bool ThreadPlanStepInRange::DefaultShouldStopHereCallback(
     Status &status, void *baton) {
   bool should_stop_here = true;
   StackFrame *frame = current_plan->GetThread().GetStackFrameAtIndex(0).get();
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
 
   // First see if the ThreadPlanShouldStopHere default implementation thinks we
   // should get out of here:
   should_stop_here = ThreadPlanShouldStopHere::DefaultShouldStopHereCallback(
       current_plan, flags, operation, status, baton);
   if (!should_stop_here)
-    return should_stop_here;
+    return false;
 
   if (should_stop_here && current_plan->GetKind() == eKindStepInRange &&
       operation == eFrameCompareYounger) {
@@ -467,7 +442,7 @@ bool ThreadPlanStepInRange::DoPlanExplainsStop(Event *event_ptr) {
           return_value = true;
         }
       } else if (IsUsuallyUnexplainedStopReason(reason)) {
-        Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+        Log *log = GetLog(LLDBLog::Step);
         if (log)
           log->PutCString("ThreadPlanStepInRange got asked if it explains the "
                           "stop for some reason other than step.");
@@ -486,15 +461,16 @@ bool ThreadPlanStepInRange::DoWillResume(lldb::StateType resume_state,
                                          bool current_plan) {
   m_virtual_step = false;
   if (resume_state == eStateStepping && current_plan) {
+    Thread &thread = GetThread();
     // See if we are about to step over a virtual inlined call.
-    bool step_without_resume = m_thread.DecrementCurrentInlinedDepth();
+    bool step_without_resume = thread.DecrementCurrentInlinedDepth();
     if (step_without_resume) {
-      Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+      Log *log = GetLog(LLDBLog::Step);
       LLDB_LOGF(log,
                 "ThreadPlanStepInRange::DoWillResume: returning false, "
                 "inline_depth: %d",
-                m_thread.GetCurrentInlinedDepth());
-      SetStopInfo(StopInfo::CreateStopReasonToTrace(m_thread));
+                thread.GetCurrentInlinedDepth());
+      SetStopInfo(StopInfo::CreateStopReasonToTrace(thread));
 
       // FIXME: Maybe it would be better to create a InlineStep stop reason, but
       // then

@@ -19,10 +19,8 @@
 // to the NFA.
 //
 //===----------------------------------------------------------------------===//
-#define DEBUG_TYPE "dfa-emitter"
 
 #include "DFAEmitter.h"
-#include "CodeGenTarget.h"
 #include "SequenceToOffsetTable.h"
 #include "TableGenBackends.h"
 #include "llvm/ADT/SmallVector.h"
@@ -31,13 +29,15 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TableGen/Record.h"
-#include "llvm/TableGen/TableGenBackend.h"
 #include <cassert>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
+
+#define DEBUG_TYPE "dfa-emitter"
 
 using namespace llvm;
 
@@ -53,14 +53,14 @@ void DfaEmitter::addTransition(state_type From, state_type To, action_type A) {
   ++NumNfaTransitions;
 }
 
-void DfaEmitter::visitDfaState(DfaState DS) {
+void DfaEmitter::visitDfaState(const DfaState &DS) {
   // For every possible action...
   auto FromId = DfaStates.idFor(DS);
   for (action_type A : Actions) {
     DfaState NewStates;
     DfaTransitionInfo TI;
     // For every represented state, word pair in the original NFA...
-    for (state_type &FromState : DS) {
+    for (state_type FromState : DS) {
       // If this action is possible from this state add the transitioned-to
       // states to NewStates.
       auto I = NfaTransitions.find({FromState, A});
@@ -90,8 +90,11 @@ void DfaEmitter::constructDfa() {
 
   // Note that UniqueVector starts indices at 1, not zero.
   unsigned DfaStateId = 1;
-  while (DfaStateId <= DfaStates.size())
-    visitDfaState(DfaStates[DfaStateId++]);
+  while (DfaStateId <= DfaStates.size()) {
+    DfaState S = DfaStates[DfaStateId];
+    visitDfaState(S);
+    DfaStateId++;
+  }
 }
 
 void DfaEmitter::emit(StringRef Name, raw_ostream &OS) {
@@ -119,7 +122,7 @@ void DfaEmitter::emit(StringRef Name, raw_ostream &OS) {
   for (auto &T : DfaTransitions)
     Table.add(T.second.second);
   Table.layout();
-  OS << "std::array<NfaStatePair, " << Table.size() << "> " << Name
+  OS << "const std::array<NfaStatePair, " << Table.size() << "> " << Name
      << "TransitionInfo = {{\n";
   Table.emit(
       OS,
@@ -143,8 +146,8 @@ void DfaEmitter::emit(StringRef Name, raw_ostream &OS) {
 
   OS << "// A table of DFA transitions, ordered by {FromDfaState, Action}.\n";
   OS << "// The initial state is 1, not zero.\n";
-  OS << "std::array<" << Name << "Transition, " << DfaTransitions.size() << "> "
-     << Name << "Transitions = {{\n";
+  OS << "const std::array<" << Name << "Transition, "
+     << DfaTransitions.size() << "> " << Name << "Transitions = {{\n";
   for (auto &KV : DfaTransitions) {
     dfa_state_type From = KV.first.first;
     dfa_state_type To = KV.second.first;
@@ -171,7 +174,7 @@ namespace {
 struct Action {
   Record *R = nullptr;
   unsigned I = 0;
-  std::string S = nullptr;
+  std::string S;
 
   Action() = default;
   Action(Record *R, unsigned I, std::string S) : R(R), I(I), S(S) {}
@@ -302,6 +305,7 @@ void Automaton::emit(raw_ostream &OS) {
   }
   LLVM_DEBUG(dbgs() << "  NFA automaton has " << SeenStates.size()
                     << " states with " << NumTransitions << " transitions.\n");
+  (void) NumTransitions;
 
   const auto &ActionTypes = Transitions.back().getTypes();
   OS << "// The type of an action in the " << Name << " automaton.\n";
@@ -343,9 +347,8 @@ Transition::Transition(Record *R, Automaton *Parent) {
     } else if (isa<IntRecTy>(SymbolV->getType())) {
       Actions.emplace_back(nullptr, R->getValueAsInt(A), "");
       Types.emplace_back("unsigned");
-    } else if (isa<StringRecTy>(SymbolV->getType()) ||
-               isa<CodeRecTy>(SymbolV->getType())) {
-      Actions.emplace_back(nullptr, 0, R->getValueAsString(A));
+    } else if (isa<StringRecTy>(SymbolV->getType())) {
+      Actions.emplace_back(nullptr, 0, std::string(R->getValueAsString(A)));
       Types.emplace_back("std::string");
     } else {
       report_fatal_error("Unhandled symbol type!");
@@ -353,7 +356,7 @@ Transition::Transition(Record *R, Automaton *Parent) {
 
     StringRef TypeOverride = Parent->getActionSymbolType(A);
     if (!TypeOverride.empty())
-      Types.back() = TypeOverride;
+      Types.back() = std::string(TypeOverride);
   }
 }
 
@@ -374,11 +377,9 @@ void CustomDfaEmitter::printActionValue(action_type A, raw_ostream &OS) {
   const ActionTuple &AT = Actions[A];
   if (AT.size() > 1)
     OS << "std::make_tuple(";
-  bool First = true;
+  ListSeparator LS;
   for (const auto &SingleAction : AT) {
-    if (!First)
-      OS << ", ";
-    First = false;
+    OS << LS;
     SingleAction.print(OS);
   }
   if (AT.size() > 1)

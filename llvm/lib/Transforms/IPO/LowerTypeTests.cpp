@@ -42,6 +42,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
@@ -54,6 +55,7 @@
 #include "llvm/IR/Use.h"
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Casting.h"
@@ -115,6 +117,11 @@ static cl::opt<std::string> ClWriteSummary(
     "lowertypetests-write-summary",
     cl::desc("Write summary to given YAML file after running pass"),
     cl::Hidden);
+
+static cl::opt<bool>
+    ClDropTypeTests("lowertypetests-drop-type-tests",
+                    cl::desc("Simply drop type test assume sequences"),
+                    cl::Hidden, cl::init(false));
 
 bool BitSetInfo::containsGlobalOffset(uint64_t Offset) const {
   if (Offset < ByteOffset)
@@ -197,7 +204,7 @@ void GlobalLayoutBuilder::addFragment(const std::set<uint64_t> &F) {
       // indices from the old fragment in this fragment do not insert any more
       // indices.
       std::vector<uint64_t> &OldFragment = Fragments[OldFragmentIndex];
-      Fragment.insert(Fragment.end(), OldFragment.begin(), OldFragment.end());
+      llvm::append_range(Fragment, OldFragment);
       OldFragment.clear();
     }
   }
@@ -335,8 +342,9 @@ private:
 
 struct ScopedSaveAliaseesAndUsed {
   Module &M;
-  SmallPtrSet<GlobalValue *, 16> Used, CompilerUsed;
-  std::vector<std::pair<GlobalIndirectSymbol *, Function *>> FunctionAliases;
+  SmallVector<GlobalValue *, 4> Used, CompilerUsed;
+  std::vector<std::pair<GlobalAlias *, Function *>> FunctionAliases;
+  std::vector<std::pair<GlobalIFunc *, Function *>> ResolverIFuncs;
 
   ScopedSaveAliaseesAndUsed(Module &M) : M(M) {
     // The users of this class want to replace all function references except
@@ -356,23 +364,32 @@ struct ScopedSaveAliaseesAndUsed {
     if (GlobalVariable *GV = collectUsedGlobalVariables(M, CompilerUsed, true))
       GV->eraseFromParent();
 
-    for (auto &GIS : concat<GlobalIndirectSymbol>(M.aliases(), M.ifuncs())) {
+    for (auto &GA : M.aliases()) {
       // FIXME: This should look past all aliases not just interposable ones,
       // see discussion on D65118.
-      if (auto *F =
-              dyn_cast<Function>(GIS.getIndirectSymbol()->stripPointerCasts()))
-        FunctionAliases.push_back({&GIS, F});
+      if (auto *F = dyn_cast<Function>(GA.getAliasee()->stripPointerCasts()))
+        FunctionAliases.push_back({&GA, F});
     }
+
+    for (auto &GI : M.ifuncs())
+      if (auto *F = dyn_cast<Function>(GI.getResolver()->stripPointerCasts()))
+        ResolverIFuncs.push_back({&GI, F});
   }
 
   ~ScopedSaveAliaseesAndUsed() {
-    appendToUsed(M, std::vector<GlobalValue *>(Used.begin(), Used.end()));
-    appendToCompilerUsed(M, std::vector<GlobalValue *>(CompilerUsed.begin(),
-                                                       CompilerUsed.end()));
+    appendToUsed(M, Used);
+    appendToCompilerUsed(M, CompilerUsed);
 
     for (auto P : FunctionAliases)
-      P.first->setIndirectSymbol(
+      P.first->setAliasee(
           ConstantExpr::getBitCast(P.second, P.first->getType()));
+
+    for (auto P : ResolverIFuncs) {
+      // This does not preserve pointer casts that may have been stripped by the
+      // constructor, but the resolver's type is different from that of the
+      // ifunc anyway.
+      P.first->setResolver(P.second);
+    }
   }
 };
 
@@ -381,6 +398,9 @@ class LowerTypeTestsModule {
 
   ModuleSummaryIndex *ExportSummary;
   const ModuleSummaryIndex *ImportSummary;
+  // Set when the client has invoked this to simply drop all type test assume
+  // sequences.
+  bool DropTypeTests;
 
   Triple::ArchType Arch;
   Triple::OSType OS;
@@ -499,7 +519,8 @@ class LowerTypeTestsModule {
 
 public:
   LowerTypeTestsModule(Module &M, ModuleSummaryIndex *ExportSummary,
-                       const ModuleSummaryIndex *ImportSummary);
+                       const ModuleSummaryIndex *ImportSummary,
+                       bool DropTypeTests);
 
   bool lower();
 
@@ -515,22 +536,25 @@ struct LowerTypeTests : public ModulePass {
 
   ModuleSummaryIndex *ExportSummary;
   const ModuleSummaryIndex *ImportSummary;
+  bool DropTypeTests;
 
   LowerTypeTests() : ModulePass(ID), UseCommandLine(true) {
     initializeLowerTypeTestsPass(*PassRegistry::getPassRegistry());
   }
 
   LowerTypeTests(ModuleSummaryIndex *ExportSummary,
-                 const ModuleSummaryIndex *ImportSummary)
+                 const ModuleSummaryIndex *ImportSummary, bool DropTypeTests)
       : ModulePass(ID), ExportSummary(ExportSummary),
-        ImportSummary(ImportSummary) {
+        ImportSummary(ImportSummary),
+        DropTypeTests(DropTypeTests || ClDropTypeTests) {
     initializeLowerTypeTestsPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module &M) override {
     if (UseCommandLine)
       return LowerTypeTestsModule::runForTesting(M);
-    return LowerTypeTestsModule(M, ExportSummary, ImportSummary).lower();
+    return LowerTypeTestsModule(M, ExportSummary, ImportSummary, DropTypeTests)
+        .lower();
   }
 };
 
@@ -543,8 +567,9 @@ INITIALIZE_PASS(LowerTypeTests, "lowertypetests", "Lower type metadata", false,
 
 ModulePass *
 llvm::createLowerTypeTestsPass(ModuleSummaryIndex *ExportSummary,
-                               const ModuleSummaryIndex *ImportSummary) {
-  return new LowerTypeTests(ExportSummary, ImportSummary);
+                               const ModuleSummaryIndex *ImportSummary,
+                               bool DropTypeTests) {
+  return new LowerTypeTests(ExportSummary, ImportSummary, DropTypeTests);
 }
 
 /// Build a bit set for TypeId using the object layouts in
@@ -727,6 +752,9 @@ static bool isKnownTypeIdMember(Metadata *TypeId, const DataLayout &DL,
 /// replace the call with.
 Value *LowerTypeTestsModule::lowerTypeTestCall(Metadata *TypeId, CallInst *CI,
                                                const TypeIdLowering &TIL) {
+  // Delay lowering if the resolution is currently unknown.
+  if (TIL.TheKind == TypeTestResolution::Unknown)
+    return nullptr;
   if (TIL.TheKind == TypeTestResolution::Unsat)
     return ConstantInt::getFalse(M.getContext());
 
@@ -822,16 +850,15 @@ void LowerTypeTestsModule::buildBitSetsFromGlobalVariables(
   std::vector<Constant *> GlobalInits;
   const DataLayout &DL = M.getDataLayout();
   DenseMap<GlobalTypeMember *, uint64_t> GlobalLayout;
-  uint64_t MaxAlign = 0;
+  Align MaxAlign;
   uint64_t CurOffset = 0;
   uint64_t DesiredPadding = 0;
   for (GlobalTypeMember *G : Globals) {
     auto *GV = cast<GlobalVariable>(G->getGlobal());
-    uint64_t Align = GV->getAlignment();
-    if (Align == 0)
-      Align = DL.getABITypeAlignment(GV->getValueType());
-    MaxAlign = std::max(MaxAlign, Align);
-    uint64_t GVOffset = alignTo(CurOffset + DesiredPadding, Align);
+    Align Alignment =
+        DL.getValueOrABITypeAlignment(GV->getAlign(), GV->getValueType());
+    MaxAlign = std::max(MaxAlign, Alignment);
+    uint64_t GVOffset = alignTo(CurOffset + DesiredPadding, Alignment);
     GlobalLayout[G] = GVOffset;
     if (GVOffset != 0) {
       uint64_t Padding = GVOffset - CurOffset;
@@ -1029,14 +1056,18 @@ void LowerTypeTestsModule::importTypeTest(CallInst *CI) {
     report_fatal_error("Second argument of llvm.type.test must be metadata");
 
   auto TypeIdStr = dyn_cast<MDString>(TypeIdMDVal->getMetadata());
+  // If this is a local unpromoted type, which doesn't have a metadata string,
+  // treat as Unknown and delay lowering, so that we can still utilize it for
+  // later optimizations.
   if (!TypeIdStr)
-    report_fatal_error(
-        "Second argument of llvm.type.test must be a metadata string");
+    return;
 
   TypeIdLowering TIL = importTypeId(TypeIdStr->getString());
   Value *Lowered = lowerTypeTestCall(TypeIdStr, CI, TIL);
-  CI->replaceAllUsesWith(Lowered);
-  CI->eraseFromParent();
+  if (Lowered) {
+    CI->replaceAllUsesWith(Lowered);
+    CI->eraseFromParent();
+  }
 }
 
 // ThinLTO backend: the function F has a jump table entry; update this module
@@ -1047,7 +1078,7 @@ void LowerTypeTestsModule::importFunction(
   assert(F->getType()->getAddressSpace() == 0);
 
   GlobalValue::VisibilityTypes Visibility = F->getVisibility();
-  std::string Name = F->getName();
+  std::string Name = std::string(F->getName());
 
   if (F->isDeclarationForLinker() && isJumpTableCanonical) {
     // Non-dso_local functions may be overriden at run time,
@@ -1159,8 +1190,10 @@ void LowerTypeTestsModule::lowerTypeTestCalls(
     for (CallInst *CI : TIUI.CallSites) {
       ++NumTypeTestCallsLowered;
       Value *Lowered = lowerTypeTestCall(TypeId, CI, TIL);
-      CI->replaceAllUsesWith(Lowered);
-      CI->eraseFromParent();
+      if (Lowered) {
+        CI->replaceAllUsesWith(Lowered);
+        CI->eraseFromParent();
+      }
     }
   }
 }
@@ -1189,6 +1222,7 @@ void LowerTypeTestsModule::verifyTypeMDNode(GlobalObject *GO, MDNode *Type) {
 
 static const unsigned kX86JumpTableEntrySize = 8;
 static const unsigned kARMJumpTableEntrySize = 4;
+static const unsigned kARMBTIJumpTableEntrySize = 8;
 
 unsigned LowerTypeTestsModule::getJumpTableEntrySize() {
   switch (Arch) {
@@ -1197,7 +1231,12 @@ unsigned LowerTypeTestsModule::getJumpTableEntrySize() {
       return kX86JumpTableEntrySize;
     case Triple::arm:
     case Triple::thumb:
+      return kARMJumpTableEntrySize;
     case Triple::aarch64:
+      if (const auto *BTE = mdconst::extract_or_null<ConstantInt>(
+            M.getModuleFlag("branch-target-enforcement")))
+        if (BTE->getZExtValue())
+          return kARMBTIJumpTableEntrySize;
       return kARMJumpTableEntrySize;
     default:
       report_fatal_error("Unsupported architecture for jump tables");
@@ -1216,7 +1255,13 @@ void LowerTypeTestsModule::createJumpTableEntry(
   if (JumpTableArch == Triple::x86 || JumpTableArch == Triple::x86_64) {
     AsmOS << "jmp ${" << ArgIndex << ":c}@plt\n";
     AsmOS << "int3\nint3\nint3\n";
-  } else if (JumpTableArch == Triple::arm || JumpTableArch == Triple::aarch64) {
+  } else if (JumpTableArch == Triple::arm) {
+    AsmOS << "b $" << ArgIndex << "\n";
+  } else if (JumpTableArch == Triple::aarch64) {
+    if (const auto *BTE = mdconst::extract_or_null<ConstantInt>(
+          Dest->getParent()->getModuleFlag("branch-target-enforcement")))
+      if (BTE->getZExtValue())
+        AsmOS << "bti c\n";
     AsmOS << "b $" << ArgIndex << "\n";
   } else if (JumpTableArch == Triple::thumb) {
     AsmOS << "b.w $" << ArgIndex << "\n";
@@ -1268,7 +1313,7 @@ void LowerTypeTestsModule::moveInitializerToModuleConstructor(
 
   IRBuilder<> IRB(WeakInitializerFn->getEntryBlock().getTerminator());
   GV->setConstant(false);
-  IRB.CreateAlignedStore(GV->getInitializer(), GV, GV->getAlignment());
+  IRB.CreateAlignedStore(GV->getInitializer(), GV, GV->getAlign());
   GV->setInitializer(Constant::getNullValue(GV->getValueType()));
 }
 
@@ -1310,7 +1355,7 @@ void LowerTypeTestsModule::replaceWeakDeclarationWithJumpTablePtr(
 
 static bool isThumbFunction(Function *F, Triple::ArchType ModuleArch) {
   Attribute TFAttr = F->getFnAttribute("target-features");
-  if (!TFAttr.hasAttribute(Attribute::None)) {
+  if (TFAttr.isValid()) {
     SmallVector<StringRef, 6> Features;
     TFAttr.getValueAsString().split(Features, ',');
     for (StringRef Feature : Features) {
@@ -1363,7 +1408,7 @@ void LowerTypeTestsModule::createJumpTable(
                          cast<Function>(Functions[I]->getGlobal()));
 
   // Align the whole table by entry size.
-  F->setAlignment(getJumpTableEntrySize());
+  F->setAlignment(Align(getJumpTableEntrySize()));
   // Skip prologue.
   // Disabled on win32 due to https://llvm.org/bugs/show_bug.cgi?id=28641#c3.
   // Luckily, this function does not get any prologue even without the
@@ -1377,6 +1422,10 @@ void LowerTypeTestsModule::createJumpTable(
     // Thumb jump table assembly needs Thumb2. The following attribute is added
     // by Clang for -march=armv7.
     F->addFnAttr("target-cpu", "cortex-a8");
+  }
+  if (JumpTableArch == Triple::aarch64) {
+    F->addFnAttr("branch-target-enforcement", "false");
+    F->addFnAttr("sign-return-address", "none");
   }
   // Make sure we don't emit .eh_frame for this function.
   F->addFnAttr(Attribute::NoUnwind);
@@ -1513,17 +1562,28 @@ void LowerTypeTestsModule::buildBitSetsFromFunctionsNative(
               ArrayRef<Constant *>{ConstantInt::get(IntPtrTy, 0),
                                    ConstantInt::get(IntPtrTy, I)}),
           F->getType());
-      if (Functions[I]->isExported()) {
-        if (IsJumpTableCanonical) {
-          ExportSummary->cfiFunctionDefs().insert(F->getName());
-        } else {
-          GlobalAlias *JtAlias = GlobalAlias::create(
-              F->getValueType(), 0, GlobalValue::ExternalLinkage,
-              F->getName() + ".cfi_jt", CombinedGlobalElemPtr, &M);
+
+      const bool IsExported = Functions[I]->isExported();
+      if (!IsJumpTableCanonical) {
+        GlobalValue::LinkageTypes LT = IsExported
+                                           ? GlobalValue::ExternalLinkage
+                                           : GlobalValue::InternalLinkage;
+        GlobalAlias *JtAlias = GlobalAlias::create(F->getValueType(), 0, LT,
+                                                   F->getName() + ".cfi_jt",
+                                                   CombinedGlobalElemPtr, &M);
+        if (IsExported)
           JtAlias->setVisibility(GlobalValue::HiddenVisibility);
-          ExportSummary->cfiFunctionDecls().insert(F->getName());
-        }
+        else
+          appendToUsed(M, {JtAlias});
       }
+
+      if (IsExported) {
+        if (IsJumpTableCanonical)
+          ExportSummary->cfiFunctionDefs().insert(std::string(F->getName()));
+        else
+          ExportSummary->cfiFunctionDecls().insert(std::string(F->getName()));
+      }
+
       if (!IsJumpTableCanonical) {
         if (F->hasExternalWeakLinkage())
           replaceWeakDeclarationWithJumpTablePtr(F, CombinedGlobalElemPtr,
@@ -1654,8 +1714,9 @@ void LowerTypeTestsModule::buildBitSetsFromDisjointSet(
 /// Lower all type tests in this module.
 LowerTypeTestsModule::LowerTypeTestsModule(
     Module &M, ModuleSummaryIndex *ExportSummary,
-    const ModuleSummaryIndex *ImportSummary)
-    : M(M), ExportSummary(ExportSummary), ImportSummary(ImportSummary) {
+    const ModuleSummaryIndex *ImportSummary, bool DropTypeTests)
+    : M(M), ExportSummary(ExportSummary), ImportSummary(ImportSummary),
+      DropTypeTests(DropTypeTests || ClDropTypeTests) {
   assert(!(ExportSummary && ImportSummary));
   Triple TargetTriple(M.getTargetTriple());
   Arch = TargetTriple.getArch();
@@ -1682,14 +1743,15 @@ bool LowerTypeTestsModule::runForTesting(Module &M) {
   bool Changed =
       LowerTypeTestsModule(
           M, ClSummaryAction == PassSummaryAction::Export ? &Summary : nullptr,
-          ClSummaryAction == PassSummaryAction::Import ? &Summary : nullptr)
+          ClSummaryAction == PassSummaryAction::Import ? &Summary : nullptr,
+          /*DropTypeTests*/ false)
           .lower();
 
   if (!ClWriteSummary.empty()) {
     ExitOnError ExitOnErr("-lowertypetests-write-summary: " + ClWriteSummary +
                           ": ");
     std::error_code EC;
-    raw_fd_ostream OS(ClWriteSummary, EC, sys::fs::OF_Text);
+    raw_fd_ostream OS(ClWriteSummary, EC, sys::fs::OF_TextWithCRLF);
     ExitOnErr(errorCodeToError(EC));
 
     yaml::Output Out(OS);
@@ -1702,8 +1764,8 @@ bool LowerTypeTestsModule::runForTesting(Module &M) {
 static bool isDirectCall(Use& U) {
   auto *Usr = dyn_cast<CallInst>(U.getUser());
   if (Usr) {
-    CallSite CS(Usr);
-    if (CS.isCallee(&U))
+    auto *CB = dyn_cast<CallBase>(Usr);
+    if (CB && CB->isCallee(&U))
       return true;
   }
   return false;
@@ -1712,13 +1774,10 @@ static bool isDirectCall(Use& U) {
 void LowerTypeTestsModule::replaceCfiUses(Function *Old, Value *New,
                                           bool IsJumpTableCanonical) {
   SmallSetVector<Constant *, 4> Constants;
-  auto UI = Old->use_begin(), E = Old->use_end();
-  for (; UI != E;) {
-    Use &U = *UI;
-    ++UI;
-
-    // Skip block addresses
-    if (isa<BlockAddress>(U.getUser()))
+  for (Use &U : llvm::make_early_inc_range(Old->uses())) {
+    // Skip block addresses and no_cfi values, which refer to the function
+    // body instead of the jump table.
+    if (isa<BlockAddress, NoCFIValue>(U.getUser()))
       continue;
 
     // Skip direct calls to externally defined or non-dso_local functions
@@ -1745,10 +1804,40 @@ void LowerTypeTestsModule::replaceCfiUses(Function *Old, Value *New,
 }
 
 void LowerTypeTestsModule::replaceDirectCalls(Value *Old, Value *New) {
-  Old->replaceUsesWithIf(New, [](Use &U) { return isDirectCall(U); });
+  Old->replaceUsesWithIf(New, isDirectCall);
 }
 
 bool LowerTypeTestsModule::lower() {
+  Function *TypeTestFunc =
+      M.getFunction(Intrinsic::getName(Intrinsic::type_test));
+
+  if (DropTypeTests && TypeTestFunc) {
+    for (Use &U : llvm::make_early_inc_range(TypeTestFunc->uses())) {
+      auto *CI = cast<CallInst>(U.getUser());
+      // Find and erase llvm.assume intrinsics for this llvm.type.test call.
+      for (Use &CIU : llvm::make_early_inc_range(CI->uses()))
+        if (auto *Assume = dyn_cast<AssumeInst>(CIU.getUser()))
+          Assume->eraseFromParent();
+      // If the assume was merged with another assume, we might have a use on a
+      // phi (which will feed the assume). Simply replace the use on the phi
+      // with "true" and leave the merged assume.
+      if (!CI->use_empty()) {
+        assert(all_of(CI->users(),
+                      [](User *U) -> bool { return isa<PHINode>(U); }));
+        CI->replaceAllUsesWith(ConstantInt::getTrue(M.getContext()));
+      }
+      CI->eraseFromParent();
+    }
+
+    // We have deleted the type intrinsics, so we no longer have enough
+    // information to reason about the liveness of virtual function pointers
+    // in GlobalDCE.
+    for (GlobalVariable &GV : M.globals())
+      GV.eraseMetadata(LLVMContext::MD_vcall_visibility);
+
+    return true;
+  }
+
   // If only some of the modules were split, we cannot correctly perform
   // this transformation. We already checked for the presense of type tests
   // with partially split modules during the thin link, and would have emitted
@@ -1757,8 +1846,6 @@ bool LowerTypeTestsModule::lower() {
       (ImportSummary && ImportSummary->partiallySplitLTOUnits()))
     return false;
 
-  Function *TypeTestFunc =
-      M.getFunction(Intrinsic::getName(Intrinsic::type_test));
   Function *ICallBranchFunnelFunc =
       M.getFunction(Intrinsic::getName(Intrinsic::icall_branch_funnel));
   if ((!TypeTestFunc || TypeTestFunc->use_empty()) &&
@@ -1767,13 +1854,9 @@ bool LowerTypeTestsModule::lower() {
     return false;
 
   if (ImportSummary) {
-    if (TypeTestFunc) {
-      for (auto UI = TypeTestFunc->use_begin(), UE = TypeTestFunc->use_end();
-           UI != UE;) {
-        auto *CI = cast<CallInst>((*UI++).getUser());
-        importTypeTest(CI);
-      }
-    }
+    if (TypeTestFunc)
+      for (Use &U : llvm::make_early_inc_range(TypeTestFunc->uses()))
+        importTypeTest(cast<CallInst>(U.getUser()));
 
     if (ICallBranchFunnelFunc && !ICallBranchFunnelFunc->use_empty())
       report_fatal_error(
@@ -1786,9 +1869,10 @@ bool LowerTypeTestsModule::lower() {
       // have the same name, but it's not the one we are looking for.
       if (F.hasLocalLinkage())
         continue;
-      if (ImportSummary->cfiFunctionDefs().count(F.getName()))
+      if (ImportSummary->cfiFunctionDefs().count(std::string(F.getName())))
         Defs.push_back(&F);
-      else if (ImportSummary->cfiFunctionDecls().count(F.getName()))
+      else if (ImportSummary->cfiFunctionDecls().count(
+                   std::string(F.getName())))
         Decls.push_back(&F);
     }
 
@@ -1810,7 +1894,7 @@ bool LowerTypeTestsModule::lower() {
   // reference them. This is used to partition the set of type identifiers in
   // the module into disjoint sets.
   using GlobalClassesTy = EquivalenceClasses<
-      PointerUnion3<GlobalTypeMember *, Metadata *, ICallBranchFunnel *>>;
+      PointerUnion<GlobalTypeMember *, Metadata *, ICallBranchFunnel *>>;
   GlobalClassesTy GlobalClasses;
 
   // Verify the type metadata and build a few data structures to let us
@@ -1998,6 +2082,21 @@ bool LowerTypeTestsModule::lower() {
   if (TypeTestFunc) {
     for (const Use &U : TypeTestFunc->uses()) {
       auto CI = cast<CallInst>(U.getUser());
+      // If this type test is only used by llvm.assume instructions, it
+      // was used for whole program devirtualization, and is being kept
+      // for use by other optimization passes. We do not need or want to
+      // lower it here. We also don't want to rewrite any associated globals
+      // unnecessarily. These will be removed by a subsequent LTT invocation
+      // with the DropTypeTests flag set.
+      bool OnlyAssumeUses = !CI->use_empty();
+      for (const Use &CIU : CI->uses()) {
+        if (isa<AssumeInst>(CIU.getUser()))
+          continue;
+        OnlyAssumeUses = false;
+        break;
+      }
+      if (OnlyAssumeUses)
+        continue;
 
       auto TypeIdMDVal = dyn_cast<MetadataAsValue>(CI->getArgOperand(1));
       if (!TypeIdMDVal)
@@ -2016,11 +2115,11 @@ bool LowerTypeTestsModule::lower() {
       auto CI = cast<CallInst>(U.getUser());
 
       std::vector<GlobalTypeMember *> Targets;
-      if (CI->getNumArgOperands() % 2 != 1)
+      if (CI->arg_size() % 2 != 1)
         report_fatal_error("number of arguments should be odd");
 
       GlobalClassesTy::member_iterator CurSet;
-      for (unsigned I = 1; I != CI->getNumArgOperands(); I += 2) {
+      for (unsigned I = 1; I != CI->arg_size(); I += 2) {
         int64_t Offset;
         auto *Base = dyn_cast<GlobalObject>(GetPointerBaseWithConstantOffset(
             CI->getOperand(I), Offset, M.getDataLayout()));
@@ -2195,7 +2294,13 @@ bool LowerTypeTestsModule::lower() {
 
 PreservedAnalyses LowerTypeTestsPass::run(Module &M,
                                           ModuleAnalysisManager &AM) {
-  bool Changed = LowerTypeTestsModule(M, ExportSummary, ImportSummary).lower();
+  bool Changed;
+  if (UseCommandLine)
+    Changed = LowerTypeTestsModule::runForTesting(M);
+  else
+    Changed =
+        LowerTypeTestsModule(M, ExportSummary, ImportSummary, DropTypeTests)
+            .lower();
   if (!Changed)
     return PreservedAnalyses::all();
   return PreservedAnalyses::none();

@@ -46,7 +46,9 @@ enum {
   CompareZeroCCMaskShift = 14,
   CCMaskFirst            = (1 << 18),
   CCMaskLast             = (1 << 19),
-  IsLogical              = (1 << 20)
+  IsLogical              = (1 << 20),
+  CCIfNoSignedWrap       = (1 << 21),
+  MemMemOp               = (1 << 22)
 };
 
 static inline unsigned getAccessSize(unsigned int Flags) {
@@ -154,6 +156,20 @@ enum FusedCompareType {
 namespace SystemZ {
 int getTwoOperandOpcode(uint16_t Opcode);
 int getTargetMemOpcode(uint16_t Opcode);
+
+// Return a version of comparison CC mask CCMask in which the LT and GT
+// actions are swapped.
+unsigned reverseCCMask(unsigned CCMask);
+
+// Create a new basic block after MBB.
+MachineBasicBlock *emitBlockAfter(MachineBasicBlock *MBB);
+// Split MBB after MI and return the new block (the one that contains
+// instructions after MI).
+MachineBasicBlock *splitBlockAfter(MachineBasicBlock::iterator MI,
+                                   MachineBasicBlock *MBB);
+// Split MBB before MI and return the new block (the one that contains MI).
+MachineBasicBlock *splitBlockBefore(MachineBasicBlock::iterator MI,
+                                    MachineBasicBlock *MBB);
 }
 
 class SystemZInstrInfo : public SystemZGenInstrInfo {
@@ -218,15 +234,17 @@ public:
                         MachineBasicBlock *FBB, ArrayRef<MachineOperand> Cond,
                         const DebugLoc &DL,
                         int *BytesAdded = nullptr) const override;
-  bool analyzeCompare(const MachineInstr &MI, unsigned &SrcReg,
-                      unsigned &SrcReg2, int &Mask, int &Value) const override;
-  bool canInsertSelect(const MachineBasicBlock&, ArrayRef<MachineOperand> Cond,
-                       unsigned, unsigned, int&, int&, int&) const override;
+  bool analyzeCompare(const MachineInstr &MI, Register &SrcReg,
+                      Register &SrcReg2, int64_t &Mask,
+                      int64_t &Value) const override;
+  bool canInsertSelect(const MachineBasicBlock &, ArrayRef<MachineOperand> Cond,
+                       Register, Register, Register, int &, int &,
+                       int &) const override;
   void insertSelect(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
-                    const DebugLoc &DL, unsigned DstReg,
-                    ArrayRef<MachineOperand> Cond, unsigned TrueReg,
-                    unsigned FalseReg) const override;
-  bool FoldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, unsigned Reg,
+                    const DebugLoc &DL, Register DstReg,
+                    ArrayRef<MachineOperand> Cond, Register TrueReg,
+                    Register FalseReg) const override;
+  bool FoldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, Register Reg,
                      MachineRegisterInfo *MRI) const override;
   bool isPredicable(const MachineInstr &MI) const override;
   bool isProfitableToIfCvt(MachineBasicBlock &MBB, unsigned NumCycles,
@@ -242,21 +260,20 @@ public:
   bool PredicateInstruction(MachineInstr &MI,
                             ArrayRef<MachineOperand> Pred) const override;
   void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
-                   const DebugLoc &DL, unsigned DestReg, unsigned SrcReg,
+                   const DebugLoc &DL, MCRegister DestReg, MCRegister SrcReg,
                    bool KillSrc) const override;
   void storeRegToStackSlot(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MBBI,
-                           unsigned SrcReg, bool isKill, int FrameIndex,
+                           Register SrcReg, bool isKill, int FrameIndex,
                            const TargetRegisterClass *RC,
                            const TargetRegisterInfo *TRI) const override;
   void loadRegFromStackSlot(MachineBasicBlock &MBB,
                             MachineBasicBlock::iterator MBBI,
-                            unsigned DestReg, int FrameIdx,
+                            Register DestReg, int FrameIdx,
                             const TargetRegisterClass *RC,
                             const TargetRegisterInfo *TRI) const override;
-  MachineInstr *convertToThreeAddress(MachineFunction::iterator &MFI,
-                                      MachineInstr &MI,
-                                      LiveVariables *LV) const override;
+  MachineInstr *convertToThreeAddress(MachineInstr &MI, LiveVariables *LV,
+                                      LiveIntervals *LIS) const override;
   MachineInstr *
   foldMemoryOperandImpl(MachineFunction &MF, MachineInstr &MI,
                         ArrayRef<unsigned> Ops,
@@ -295,6 +312,9 @@ public:
   // exists.
   unsigned getOpcodeForOffset(unsigned Opcode, int64_t Offset) const;
 
+  // Return true if Opcode has a mapping in 12 <-> 20 bit displacements.
+  bool hasDisplacementPairInsn(unsigned Opcode) const;
+
   // If Opcode is a load instruction that has a LOAD AND TEST form,
   // return the opcode for the testing form, otherwise return 0.
   unsigned getLoadAndTest(unsigned Opcode) const;
@@ -312,6 +332,12 @@ public:
                            SystemZII::FusedCompareType Type,
                            const MachineInstr *MI = nullptr) const;
 
+  // Try to find all CC users of the compare instruction (MBBI) and update
+  // all of them to maintain equivalent behavior after swapping the compare
+  // operands. Return false if not all users can be conclusively found and
+  // handled. The compare instruction is *not* changed.
+  bool prepareCompareSwapOperands(MachineBasicBlock::iterator MBBI) const;
+
   // If Opcode is a LOAD opcode for with an associated LOAD AND TRAP
   // operation exists, returh the opcode for the latter, otherwise return 0.
   unsigned getLoadAndTrap(unsigned Opcode) const;
@@ -321,6 +347,10 @@ public:
   void loadImmediate(MachineBasicBlock &MBB,
                      MachineBasicBlock::iterator MBBI,
                      unsigned Reg, uint64_t Value) const;
+
+  // Perform target specific instruction verification.
+  bool verifyInstruction(const MachineInstr &MI,
+                         StringRef &ErrInfo) const override;
 
   // Sometimes, it is possible for the target to tell, even without
   // aliasing information, that two MIs access different memory

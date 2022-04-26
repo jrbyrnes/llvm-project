@@ -14,7 +14,7 @@ define signext i32 @test_igtsll(i64 %a, i64 %b) {
 ; CHECK:       # %bb.0: # %entry
 ; CHECK-NEXT:    sradi r5, r4, 63
 ; CHECK-NEXT:    rldicl r6, r3, 1, 63
-; CHECK-NEXT:    subfc r3, r3, r4
+; CHECK-NEXT:    subc r3, r4, r3
 ; CHECK-NEXT:    adde r3, r6, r5
 ; CHECK-NEXT:    xori r3, r3, 1
 ; CHECK-NEXT:    blr
@@ -30,7 +30,7 @@ define signext i32 @test_igtsll_sext(i64 %a, i64 %b) {
 ; CHECK:       # %bb.0: # %entry
 ; CHECK-NEXT:    sradi r5, r4, 63
 ; CHECK-NEXT:    rldicl r6, r3, 1, 63
-; CHECK-NEXT:    subfc r3, r3, r4
+; CHECK-NEXT:    subc r3, r4, r3
 ; CHECK-NEXT:    adde r3, r6, r5
 ; CHECK-NEXT:    xori r3, r3, 1
 ; CHECK-NEXT:    neg r3, r3
@@ -76,14 +76,13 @@ define void @test_igtsll_store(i64 %a, i64 %b) {
 ; CHECK:       # %bb.0: # %entry
 ; CHECK-NEXT:    sradi r6, r4, 63
 ; CHECK-NEXT:    addis r5, r2, .LC0@toc@ha
-; CHECK-NEXT:    subfc r4, r3, r4
+; CHECK-NEXT:    subc r4, r4, r3
 ; CHECK-NEXT:    rldicl r3, r3, 1, 63
 ; CHECK-NEXT:    ld r4, .LC0@toc@l(r5)
 ; CHECK-NEXT:    adde r3, r3, r6
 ; CHECK-NEXT:    xori r3, r3, 1
 ; CHECK-NEXT:    std r3, 0(r4)
 ; CHECK-NEXT:    blr
-; CHECK-DIAG:    subfc [[REG3:r[0-9]+]], r3, r4
 entry:
   %cmp = icmp sgt i64 %a, %b
   %conv1 = zext i1 %cmp to i64
@@ -97,7 +96,7 @@ define void @test_igtsll_sext_store(i64 %a, i64 %b) {
 ; CHECK:       # %bb.0: # %entry
 ; CHECK-NEXT:    sradi r6, r4, 63
 ; CHECK-NEXT:    addis r5, r2, .LC0@toc@ha
-; CHECK-NEXT:    subfc r4, r3, r4
+; CHECK-NEXT:    subc r4, r4, r3
 ; CHECK-NEXT:    rldicl r3, r3, 1, 63
 ; CHECK-NEXT:    adde r3, r3, r6
 ; CHECK-NEXT:    ld r4, .LC0@toc@l(r5)
@@ -105,7 +104,6 @@ define void @test_igtsll_sext_store(i64 %a, i64 %b) {
 ; CHECK-NEXT:    neg r3, r3
 ; CHECK-NEXT:    std r3, 0(r4)
 ; CHECK-NEXT:    blr
-; CHECK-DIAG:    subfc [[REG3:r[0-9]+]], r3, r4
 entry:
   %cmp = icmp sgt i64 %a, %b
   %conv1 = sext i1 %cmp to i64

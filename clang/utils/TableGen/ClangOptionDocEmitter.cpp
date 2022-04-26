@@ -48,7 +48,7 @@ Documentation extractDocumentation(RecordKeeper &Records) {
 
   std::map<std::string, Record*> OptionsByName;
   for (Record *R : Records.getAllDerivedDefinitions("Option"))
-    OptionsByName[R->getValueAsString("Name")] = R;
+    OptionsByName[std::string(R->getValueAsString("Name"))] = R;
 
   auto Flatten = [](Record *R) {
     return R->getValue("DocFlatten") && R->getValueAsBit("DocFlatten");
@@ -81,7 +81,7 @@ Documentation extractDocumentation(RecordKeeper &Records) {
     }
 
     // Pretend no-X and Xno-Y options are aliases of X and XY.
-    std::string Name = R->getValueAsString("Name");
+    std::string Name = std::string(R->getValueAsString("Name"));
     if (Name.size() >= 4) {
       if (Name.substr(0, 3) == "no-" && OptionsByName[Name.substr(3)]) {
         Aliases[OptionsByName[Name.substr(3)]].push_back(R);
@@ -217,13 +217,11 @@ std::string getRSTStringWithTextFallback(const Record *R, StringRef Primary,
       StringRef Value;
       if (auto *SV = dyn_cast_or_null<StringInit>(V->getValue()))
         Value = SV->getValue();
-      else if (auto *CV = dyn_cast_or_null<CodeInit>(V->getValue()))
-        Value = CV->getValue();
       if (!Value.empty())
         return Field == Primary ? Value.str() : escapeRST(Value);
     }
   }
-  return StringRef();
+  return std::string(StringRef());
 }
 
 void emitOptionWithArgs(StringRef Prefix, const Record *Option,
@@ -240,6 +238,8 @@ void emitOptionWithArgs(StringRef Prefix, const Record *Option,
   }
 }
 
+constexpr StringLiteral DefaultMetaVarName = "<arg>";
+
 void emitOptionName(StringRef Prefix, const Record *Option, raw_ostream &OS) {
   // Find the arguments to list after the option.
   unsigned NumArgs = getNumArgsForKind(Option->getValueAsDef("Kind"), Option);
@@ -247,9 +247,9 @@ void emitOptionName(StringRef Prefix, const Record *Option, raw_ostream &OS) {
 
   std::vector<std::string> Args;
   if (HasMetaVarName)
-    Args.push_back(Option->getValueAsString("MetaVarName"));
+    Args.push_back(std::string(Option->getValueAsString("MetaVarName")));
   else if (NumArgs == 1)
-    Args.push_back("<arg>");
+    Args.push_back(DefaultMetaVarName.str());
 
   // Fill up arguments if this option didn't provide a meta var name or it
   // supports an unlimited number of arguments. We can't see how many arguments
@@ -316,8 +316,8 @@ void emitOption(const DocumentedOption &Option, const Record *DocInfo,
   std::vector<std::string> SphinxOptionIDs;
   forEachOptionName(Option, DocInfo, [&](const Record *Option) {
     for (auto &Prefix : Option->getValueAsListOfStrings("Prefixes"))
-      SphinxOptionIDs.push_back(
-          getSphinxOptionID((Prefix + Option->getValueAsString("Name")).str()));
+      SphinxOptionIDs.push_back(std::string(getSphinxOptionID(
+          (Prefix + Option->getValueAsString("Name")).str())));
   });
   assert(!SphinxOptionIDs.empty() && "no flags for option");
   static std::map<std::string, int> NextSuffix;
@@ -343,8 +343,30 @@ void emitOption(const DocumentedOption &Option, const Record *DocInfo,
   OS << "\n\n";
 
   // Emit the description, if we have one.
+  const Record *R = Option.Option;
   std::string Description =
-      getRSTStringWithTextFallback(Option.Option, "DocBrief", "HelpText");
+      getRSTStringWithTextFallback(R, "DocBrief", "HelpText");
+
+  if (!isa<UnsetInit>(R->getValueInit("Values"))) {
+    if (!Description.empty() && Description.back() != '.')
+      Description.push_back('.');
+
+    StringRef MetaVarName;
+    if (!isa<UnsetInit>(R->getValueInit("MetaVarName")))
+      MetaVarName = R->getValueAsString("MetaVarName");
+    else
+      MetaVarName = DefaultMetaVarName;
+
+    SmallVector<StringRef> Values;
+    SplitString(R->getValueAsString("Values"), Values, ",");
+    Description += (" " + MetaVarName + " must be '").str();
+    if (Values.size() > 1) {
+      Description += join(Values.begin(), Values.end() - 1, "', '");
+      Description += "' or '";
+    }
+    Description += (Values.back() + "'.").str();
+  }
+
   if (!Description.empty())
     OS << Description << "\n\n";
 }

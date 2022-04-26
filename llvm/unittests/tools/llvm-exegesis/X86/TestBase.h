@@ -1,4 +1,4 @@
-//===-- TestBase.cpp --------------------------------------------*- C++ -*-===//
+//===-- TestBase.h ----------------------------------------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -12,7 +12,7 @@
 #define LLVM_UNITTESTS_TOOLS_LLVMEXEGESIS_X86_TESTBASE_H
 
 #include "LlvmState.h"
-#include "llvm/Support/TargetRegistry.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"

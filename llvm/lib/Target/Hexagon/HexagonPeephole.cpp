@@ -45,7 +45,7 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/PassSupport.h"
+#include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -120,16 +120,12 @@ bool HexagonPeephole::runOnMachineFunction(MachineFunction &MF) {
   if (DisableHexagonPeephole) return false;
 
   // Loop over all of the basic blocks.
-  for (MachineFunction::iterator MBBb = MF.begin(), MBBe = MF.end();
-       MBBb != MBBe; ++MBBb) {
-    MachineBasicBlock *MBB = &*MBBb;
+  for (MachineBasicBlock &MBB : MF) {
     PeepholeMap.clear();
     PeepholeDoubleRegsMap.clear();
 
     // Traverse the basic block.
-    for (auto I = MBB->begin(), E = MBB->end(), NextI = I; I != E; I = NextI) {
-      NextI = std::next(I);
-      MachineInstr &MI = *I;
+    for (MachineInstr &MI : llvm::make_early_inc_range(MBB)) {
       // Look for sign extends:
       // %170 = SXTW %166
       if (!DisableOptSZExt && MI.getOpcode() == Hexagon::A2_sxtw) {
@@ -139,8 +135,7 @@ bool HexagonPeephole::runOnMachineFunction(MachineFunction &MF) {
         Register DstReg = Dst.getReg();
         Register SrcReg = Src.getReg();
         // Just handle virtual registers.
-        if (Register::isVirtualRegister(DstReg) &&
-            Register::isVirtualRegister(SrcReg)) {
+        if (DstReg.isVirtual() && SrcReg.isVirtual()) {
           // Map the following:
           // %170 = SXTW %166
           // PeepholeMap[170] = %166
@@ -188,8 +183,7 @@ bool HexagonPeephole::runOnMachineFunction(MachineFunction &MF) {
         Register DstReg = Dst.getReg();
         Register SrcReg = Src.getReg();
         // Just handle virtual registers.
-        if (Register::isVirtualRegister(DstReg) &&
-            Register::isVirtualRegister(SrcReg)) {
+        if (DstReg.isVirtual() && SrcReg.isVirtual()) {
           // Map the following:
           // %170 = NOT_xx %166
           // PeepholeMap[170] = %166
@@ -210,19 +204,18 @@ bool HexagonPeephole::runOnMachineFunction(MachineFunction &MF) {
 
         Register DstReg = Dst.getReg();
         Register SrcReg = Src.getReg();
-        if (Register::isVirtualRegister(DstReg) &&
-            Register::isVirtualRegister(SrcReg)) {
+        if (DstReg.isVirtual() && SrcReg.isVirtual()) {
           // Try to find in the map.
           if (unsigned PeepholeSrc = PeepholeMap.lookup(SrcReg)) {
             // Change the 1st operand.
-            MI.RemoveOperand(1);
+            MI.removeOperand(1);
             MI.addOperand(MachineOperand::CreateReg(PeepholeSrc, false));
           } else  {
             DenseMap<unsigned, std::pair<unsigned, unsigned> >::iterator DI =
               PeepholeDoubleRegsMap.find(SrcReg);
             if (DI != PeepholeDoubleRegsMap.end()) {
               std::pair<unsigned,unsigned> PeepholeSrc = DI->second;
-              MI.RemoveOperand(1);
+              MI.removeOperand(1);
               MI.addOperand(MachineOperand::CreateReg(
                   PeepholeSrc.first, false /*isDef*/, false /*isImp*/,
                   false /*isKill*/, false /*isDead*/, false /*isUndef*/,
@@ -242,7 +235,7 @@ bool HexagonPeephole::runOnMachineFunction(MachineFunction &MF) {
           if (RC0->getID() == Hexagon::PredRegsRegClassID) {
             // Handle instructions that have a prediate register in op0
             // (most cases of predicable instructions).
-            if (Register::isVirtualRegister(Reg0)) {
+            if (Reg0.isVirtual()) {
               // Try to find in the map.
               if (unsigned PeepholeSrc = PeepholeMap.lookup(Reg0)) {
                 // Change the 1st operand and, flip the opcode.
@@ -277,11 +270,11 @@ bool HexagonPeephole::runOnMachineFunction(MachineFunction &MF) {
           if (NewOp) {
             Register PSrc = MI.getOperand(PR).getReg();
             if (unsigned POrig = PeepholeMap.lookup(PSrc)) {
-              BuildMI(*MBB, MI.getIterator(), MI.getDebugLoc(),
-                      QII->get(NewOp), MI.getOperand(0).getReg())
-                .addReg(POrig)
-                .add(MI.getOperand(S2))
-                .add(MI.getOperand(S1));
+              BuildMI(MBB, MI.getIterator(), MI.getDebugLoc(), QII->get(NewOp),
+                      MI.getOperand(0).getReg())
+                  .addReg(POrig)
+                  .add(MI.getOperand(S2))
+                  .add(MI.getOperand(S1));
               MRI->clearKillFlags(POrig);
               MI.eraseFromParent();
             }

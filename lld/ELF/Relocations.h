@@ -11,7 +11,7 @@
 
 #include "lld/Common/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
-#include <map>
+#include "llvm/ADT/STLExtras.h"
 #include <vector>
 
 namespace lld {
@@ -24,6 +24,7 @@ class SectionBase;
 
 // Represents a relocation type, such as R_X86_64_PC32 or R_ARM_THM_CALL.
 using RelType = uint32_t;
+using JumpModType = uint32_t;
 
 // List of target-independent relocation types. Relocations read
 // from files are converted to these types so that the main code
@@ -40,12 +41,11 @@ enum RelExpr {
   R_GOTPLT,
   R_GOTPLTREL,
   R_GOTREL,
-  R_HINT,
-  R_NEG_TLS,
   R_NONE,
   R_PC,
   R_PLT,
   R_PLT_PC,
+  R_PLT_GOTPLT,
   R_RELAX_GOT_PC,
   R_RELAX_GOT_PC_NOPIC,
   R_RELAX_TLS_GD_TO_IE,
@@ -58,10 +58,12 @@ enum RelExpr {
   R_RELAX_TLS_LD_TO_LE,
   R_RELAX_TLS_LD_TO_LE_ABS,
   R_SIZE,
-  R_TLS,
+  R_TPREL,
+  R_TPREL_NEG,
   R_TLSDESC,
   R_TLSDESC_CALL,
   R_TLSDESC_PC,
+  R_TLSDESC_GOTPLT,
   R_TLSGD_GOT,
   R_TLSGD_GOTPLT,
   R_TLSGD_PC,
@@ -78,9 +80,11 @@ enum RelExpr {
   // of a relocation type, there are some relocations whose semantics are
   // unique to a target. Such relocation are marked with R_<TARGET_NAME>.
   R_AARCH64_GOT_PAGE_PC,
+  R_AARCH64_GOT_PAGE,
   R_AARCH64_PAGE_PC,
   R_AARCH64_RELAX_TLS_GD_TO_IE_PAGE_PC,
   R_AARCH64_TLSDESC_PAGE,
+  R_ARM_PCA,
   R_ARM_SBREL,
   R_MIPS_GOTREL,
   R_MIPS_GOT_GP,
@@ -95,6 +99,7 @@ enum RelExpr {
   R_PPC64_CALL_PLT,
   R_PPC64_RELAX_TOC,
   R_PPC64_TOCBASE,
+  R_PPC64_RELAX_GOT_PC,
   R_RISCV_ADD,
   R_RISCV_PC_INDIRECT,
 };
@@ -108,18 +113,28 @@ struct Relocation {
   Symbol *sym;
 };
 
+// Manipulate jump instructions with these modifiers.  These are used to relax
+// jump instruction opcodes at basic block boundaries and are particularly
+// useful when basic block sections are enabled.
+struct JumpInstrMod {
+  uint64_t offset;
+  JumpModType original;
+  unsigned size;
+};
+
 // This function writes undefined symbol diagnostics to an internal buffer.
 // Call reportUndefinedSymbols() after calling scanRelocations() to emit
 // the diagnostics.
 template <class ELFT> void scanRelocations(InputSectionBase &);
+void reportUndefinedSymbols();
+void postScanRelocations();
 
-template <class ELFT> void reportUndefinedSymbols();
-
-void addIRelativeRelocs();
+void hexagonTLSSymbolUpdate(ArrayRef<OutputSection *> outputSections);
+bool hexagonNeedsTLSSymbol(ArrayRef<OutputSection *> outputSections);
 
 class ThunkSection;
 class Thunk;
-struct InputSectionDescription;
+class InputSectionDescription;
 
 class ThunkCreator {
 public:
@@ -135,8 +150,8 @@ private:
   void mergeThunks(ArrayRef<OutputSection *> outputSections);
 
   ThunkSection *getISDThunkSec(OutputSection *os, InputSection *isec,
-                               InputSectionDescription *isd, uint32_t type,
-                               uint64_t src);
+                               InputSectionDescription *isd,
+                               const Relocation &rel, uint64_t src);
 
   ThunkSection *getISThunkSec(InputSection *isec);
 
@@ -150,10 +165,17 @@ private:
 
   bool normalizeExistingThunk(Relocation &rel, uint64_t src);
 
-  // Record all the available Thunks for a Symbol
-  llvm::DenseMap<std::pair<SectionBase *, uint64_t>, std::vector<Thunk *>>
-      thunkedSymbolsBySection;
-  llvm::DenseMap<Symbol *, std::vector<Thunk *>> thunkedSymbols;
+  // Record all the available Thunks for a (Symbol, addend) pair, where Symbol
+  // is represented as a (section, offset) pair. There may be multiple
+  // relocations sharing the same (section, offset + addend) pair. We may revert
+  // a relocation back to its original non-Thunk target, and restore the
+  // original addend, so we cannot fold offset + addend. A nested pair is used
+  // because DenseMapInfo is not specialized for std::tuple.
+  llvm::DenseMap<std::pair<std::pair<SectionBase *, uint64_t>, int64_t>,
+                 std::vector<Thunk *>>
+      thunkedSymbolsBySectionAndAddend;
+  llvm::DenseMap<std::pair<Symbol *, int64_t>, std::vector<Thunk *>>
+      thunkedSymbols;
 
   // Find a Thunk from the Thunks symbol definition, we can use this to find
   // the Thunk from a relocation to the Thunks symbol definition.
@@ -175,6 +197,19 @@ static inline int64_t getAddend(const typename ELFT::Rel &rel) {
 template <class ELFT>
 static inline int64_t getAddend(const typename ELFT::Rela &rel) {
   return rel.r_addend;
+}
+
+template <typename RelTy>
+ArrayRef<RelTy> sortRels(ArrayRef<RelTy> rels, SmallVector<RelTy, 0> &storage) {
+  auto cmp = [](const RelTy &a, const RelTy &b) {
+    return a.r_offset < b.r_offset;
+  };
+  if (!llvm::is_sorted(rels, cmp)) {
+    storage.assign(rels.begin(), rels.end());
+    llvm::stable_sort(storage, cmp);
+    rels = storage;
+  }
+  return rels;
 }
 } // namespace elf
 } // namespace lld

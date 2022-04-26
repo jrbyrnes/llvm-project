@@ -1,11 +1,22 @@
-// RUN: %check_clang_tidy %s bugprone-infinite-loop %t -- -- -fexceptions
+// RUN: %check_clang_tidy %s bugprone-infinite-loop %t \
+// RUN:                   -- -- -fexceptions -fblocks -fno-delayed-template-parsing
 
 void simple_infinite_loop1() {
   int i = 0;
   int j = 0;
   while (i < 10) {
-    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (i) are updated in the loop body [bugprone-infinite-loop]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (i) are updated in the loop body [bugprone-infinite-loop]
     j++;
+  }
+
+  while (int k = 10) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; it does not check any variables in the condition [bugprone-infinite-loop]
+    j--;
+  }
+
+  while (int k = 10) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; it does not check any variables in the condition [bugprone-infinite-loop]
+    k--;
   }
 
   do {
@@ -27,6 +38,16 @@ void simple_infinite_loop2() {
     j++;
   }
 
+  while (int k = Limit) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (Limit) are updated in the loop body [bugprone-infinite-loop]
+    j--;
+  }
+
+  while (int k = Limit) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (Limit) are updated in the loop body [bugprone-infinite-loop]
+    k--;
+  }
+
   do {
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (i, Limit) are updated in the loop body [bugprone-infinite-loop]
     j++;
@@ -44,11 +65,50 @@ void simple_not_infinite1() {
     // Not an error since 'Limit' is updated.
     Limit--;
   }
+
+  while (Limit--) {
+    // Not an error since 'Limit' is updated.
+    i++;
+  }
+
+  while ((Limit)--) {
+    // Not an error since 'Limit' is updated.
+    i++;
+  }
+
+  while ((Limit) -= 1) {
+    // Not an error since 'Limit' is updated.
+  }
+
+  while (int k = Limit) {
+    // Not an error since 'Limit' is updated.
+    Limit--;
+  }
+
+  while (int k = Limit) {
+    // Not an error since 'Limit' is updated
+    (Limit)--;
+  }
+
+  while (int k = Limit--) {
+    // Not an error since 'Limit' is updated.
+    i++;
+  }
+
   do {
     Limit--;
   } while (i < Limit);
 
   for (i = 0; i < Limit; Limit--) {
+  }
+
+  for (i = 0; i < Limit; (Limit) = Limit - 1) {
+  }
+
+  for (i = 0; i < Limit; (Limit) -= 1) {
+  }
+
+  for (i = 0; i < Limit; --(Limit)) {
   }
 }
 
@@ -317,4 +377,276 @@ void lambda_capture() {
     int *p = &i;
     (*p)++;
   } while (i < Limit);
+}
+
+template <typename T> void accept_callback(T t) {
+  // Potentially call the callback.
+  // Possibly on a background thread or something.
+}
+
+void accept_block(void (^)(void)) {
+  // Potentially call the callback.
+  // Possibly on a background thread or something.
+}
+
+void wait(void) {
+  // Wait for the previously passed callback to be called.
+}
+
+void lambda_capture_from_outside() {
+  bool finished = false;
+  accept_callback([&]() {
+    finished = true;
+  });
+  while (!finished) {
+    wait();
+  }
+}
+
+void lambda_capture_from_outside_by_value() {
+  bool finished = false;
+  accept_callback([finished]() {
+    if (finished) {}
+  });
+  while (!finished) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (finished) are updated in the loop body [bugprone-infinite-loop]
+    wait();
+  }
+}
+
+void lambda_capture_from_outside_but_unchanged() {
+  bool finished = false;
+  accept_callback([&finished]() {
+    if (finished) {}
+  });
+  while (!finished) {
+    // FIXME: Should warn.
+    wait();
+  }
+}
+
+void block_capture_from_outside() {
+  __block bool finished = false;
+  accept_block(^{
+    finished = true;
+  });
+  while (!finished) {
+    wait();
+  }
+}
+
+void block_capture_from_outside_by_value() {
+  bool finished = false;
+  accept_block(^{
+    if (finished) {}
+  });
+  while (!finished) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (finished) are updated in the loop body [bugprone-infinite-loop]
+    wait();
+  }
+}
+
+void block_capture_from_outside_but_unchanged() {
+  __block bool finished = false;
+  accept_block(^{
+    if (finished) {}
+  });
+  while (!finished) {
+    // FIXME: Should warn.
+    wait();
+  }
+}
+
+void finish_at_any_time(bool *finished);
+
+void lambda_capture_with_loop_inside_lambda_bad() {
+  bool finished = false;
+  auto lambda = [=]() {
+    while (!finished) {
+      // CHECK-MESSAGES: :[[@LINE-1]]:5: warning: this loop is infinite; none of its condition variables (finished) are updated in the loop body [bugprone-infinite-loop]
+      wait();
+    }
+  };
+  finish_at_any_time(&finished);
+  lambda();
+}
+
+void lambda_capture_with_loop_inside_lambda_bad_init_capture() {
+  bool finished = false;
+  auto lambda = [captured_finished=finished]() {
+    while (!captured_finished) {
+      // CHECK-MESSAGES: :[[@LINE-1]]:5: warning: this loop is infinite; none of its condition variables (captured_finished) are updated in the loop body [bugprone-infinite-loop]
+      wait();
+    }
+  };
+  finish_at_any_time(&finished);
+  lambda();
+}
+
+void lambda_capture_with_loop_inside_lambda_good() {
+  bool finished = false;
+  auto lambda = [&]() {
+    while (!finished) {
+      wait(); // No warning: the variable may be updated
+              // from outside the lambda.
+    }
+  };
+  finish_at_any_time(&finished);
+  lambda();
+}
+
+void lambda_capture_with_loop_inside_lambda_good_init_capture() {
+  bool finished = false;
+  auto lambda = [&captured_finished=finished]() {
+    while (!captured_finished) {
+      wait(); // No warning: the variable may be updated
+              // from outside the lambda.
+    }
+  };
+  finish_at_any_time(&finished);
+  lambda();
+}
+
+void block_capture_with_loop_inside_block_bad() {
+  bool finished = false;
+  auto block = ^() {
+    while (!finished) {
+      // CHECK-MESSAGES: :[[@LINE-1]]:5: warning: this loop is infinite; none of its condition variables (finished) are updated in the loop body [bugprone-infinite-loop]
+      wait();
+    }
+  };
+  finish_at_any_time(&finished);
+  block();
+}
+
+void block_capture_with_loop_inside_block_bad_simpler() {
+  bool finished = false;
+  auto block = ^() {
+    while (!finished) {
+      // CHECK-MESSAGES: :[[@LINE-1]]:5: warning: this loop is infinite; none of its condition variables (finished) are updated in the loop body [bugprone-infinite-loop]
+      wait();
+    }
+  };
+  block();
+}
+
+void block_capture_with_loop_inside_block_good() {
+  __block bool finished = false;
+  auto block = ^() {
+    while (!finished) {
+      wait(); // No warning: the variable may be updated
+              // from outside the block.
+    }
+  };
+  finish_at_any_time(&finished);
+  block();
+}
+
+void evaluatable(bool CondVar) {
+  for (; false && CondVar;) {
+  }
+  while (false && CondVar) {
+  }
+  do {
+  } while (false && CondVar);
+}
+
+struct logger {
+  void (*debug)(struct logger *, const char *, ...);
+};
+
+int foo(void) {
+  struct logger *pl = 0;
+  int iterator = 0;
+  while (iterator < 10) {
+    char *l_tmp_msg = 0;
+    pl->debug(pl, "%d: %s\n", iterator, l_tmp_msg);
+    iterator++;
+  }
+  return 0;
+}
+
+struct AggregateWithReference {
+  int &y;
+};
+
+void test_structured_bindings_good() {
+  int x = 0;
+  AggregateWithReference ref { x };
+  auto &[y] = ref;
+  for (; x < 10; ++y) {
+    // No warning. The loop is finite because 'y' is a reference to 'x'.
+  }
+}
+
+struct AggregateWithValue {
+  int y;
+};
+
+void test_structured_bindings_bad() {
+  int x = 0;
+  AggregateWithValue val { x };
+  auto &[y] = val;
+  for (; x < 10; ++y) {
+      // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (x) are updated in the loop body [bugprone-infinite-loop]
+  }
+}
+
+void test_volatile_cast() {
+  // This is a no-op cast. Clang ignores the qualifier, we should too.
+  for (int i = 0; (volatile int)i < 10;) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (i) are updated in the loop body [bugprone-infinite-loop]
+  }
+}
+
+void test_volatile_concrete_address(int i, int size) {
+  // No warning. The value behind the volatile concrete address
+  // is beyond our control. It may change at any time.
+  for (; *((volatile int *)0x1234) < size;) {
+  }
+
+  for (; *((volatile int *)(0x1234 + i)) < size;) {
+  }
+
+  for (; **((volatile int **)0x1234) < size;) {
+  }
+
+  volatile int *x = (volatile int *)0x1234;
+  for (; *x < 10;) {
+  }
+
+  // FIXME: This one should probably also be suppressed.
+  // Whatever the developer is doing here, they can do that again anywhere else
+  // which basically makes it a global.
+  for (; *(int *)0x1234 < size;) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (size) are updated in the loop body [bugprone-infinite-loop]
+  }
+}
+
+template <typename T>
+int some_template_fn() { return 1; }
+
+template <typename T>
+void test_dependent_condition() {
+  const int error = some_template_fn<T>();
+  do {
+  } while (false && error == 0);
+
+  const int val = some_template_fn<T>();
+  for (; !(val == 0 || true);) {
+  }
+
+  const int val2 = some_template_fn<T>();
+  for (; !(val2 == 0 || false);) {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (val2) are updated in the loop body [bugprone-infinite-loop]
+  }
+
+  const int val3 = some_template_fn<T>();
+  do {
+    // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: this loop is infinite; none of its condition variables (val3) are updated in the loop body [bugprone-infinite-loop]
+  } while (1, (true) && val3 == 1);
+
+  const int val4 = some_template_fn<T>();
+  do {
+  } while (1, (false) && val4 == 1);
 }

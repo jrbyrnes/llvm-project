@@ -1,4 +1,4 @@
-//===-- UniqueCStringMapTest.cpp --------------------------------*- C++ -*-===//
+//===-- UniqueCStringMapTest.cpp ------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -50,4 +50,19 @@ TEST(UniqueCStringMap, NoDefaultConstructor) {
   Values.clear();
   EXPECT_THAT(Map.GetValues(Bar, Values), 0);
   EXPECT_THAT(Values, testing::IsEmpty());
+}
+
+TEST(UniqueCStringMap, ValueCompare) {
+  UniqueCStringMap<int> Map;
+
+  ConstString Foo("foo");
+
+  Map.Append(Foo, 0);
+  Map.Append(Foo, 5);
+  Map.Append(Foo, -5);
+
+  Map.Sort(std::less<int>());
+  std::vector<int> Values;
+  EXPECT_THAT(Map.GetValues(Foo, Values), 3);
+  EXPECT_THAT(Values, testing::ElementsAre(-5, 0, 5));
 }

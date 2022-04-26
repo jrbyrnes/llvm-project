@@ -19,10 +19,10 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DiagnosticPrinter.h"
-#include "llvm/LTO/Caching.h"
 #include "llvm/LTO/Config.h"
 #include "llvm/LTO/LTO.h"
 #include "llvm/Object/SymbolicFile.h"
+#include "llvm/Support/Caching.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -52,6 +52,7 @@ static std::unique_ptr<lto::LTO> createLTO() {
   c.OptLevel = config->ltoo;
   c.MAttrs = getMAttrs();
   c.CGOptLevel = args::getCGOptLevel(config->ltoo);
+  c.DebugPassManager = config->ltoDebugPassManager;
 
   if (config->relocatable)
     c.RelocModel = None;
@@ -63,10 +64,8 @@ static std::unique_ptr<lto::LTO> createLTO() {
   if (config->saveTemps)
     checkError(c.addSaveTemps(config->outputFile.str() + ".",
                               /*UseInputModulePath*/ true));
-
-  lto::ThinBackend backend;
-  if (config->thinLTOJobs != -1U)
-    backend = lto::createInProcessThinBackend(config->thinLTOJobs);
+  lto::ThinBackend backend = lto::createInProcessThinBackend(
+      llvm::heavyweight_hardware_concurrency(config->thinLTOJobs));
   return std::make_unique<lto::LTO>(std::move(c), backend,
                                      config->ltoPartitions);
 }
@@ -77,8 +76,7 @@ BitcodeCompiler::~BitcodeCompiler() = default;
 
 static void undefine(Symbol *s) {
   if (auto f = dyn_cast<DefinedFunction>(s))
-    replaceSymbol<UndefinedFunction>(f, f->getName(), f->getName(),
-                                     defaultModule, 0,
+    replaceSymbol<UndefinedFunction>(f, f->getName(), None, None, 0,
                                      f->getFile(), f->signature);
   else if (isa<DefinedData>(s))
     replaceSymbol<UndefinedData>(s, s->getName(), 0, s->getFile());
@@ -128,17 +126,17 @@ std::vector<StringRef> BitcodeCompiler::compile() {
   // The --thinlto-cache-dir option specifies the path to a directory in which
   // to cache native object files for ThinLTO incremental builds. If a path was
   // specified, configure LTO to use it as the cache directory.
-  lto::NativeObjectCache cache;
+  FileCache cache;
   if (!config->thinLTOCacheDir.empty())
-    cache = check(
-        lto::localCache(config->thinLTOCacheDir,
-                        [&](size_t task, std::unique_ptr<MemoryBuffer> mb) {
-                          files[task] = std::move(mb);
-                        }));
+    cache =
+        check(localCache("ThinLTO", "Thin", config->thinLTOCacheDir,
+                         [&](size_t task, std::unique_ptr<MemoryBuffer> mb) {
+                           files[task] = std::move(mb);
+                         }));
 
   checkError(ltoObj->run(
       [&](size_t task) {
-        return std::make_unique<lto::NativeObjectStream>(
+        return std::make_unique<CachedFileStream>(
             std::make_unique<raw_svector_ostream>(buf[task]));
       },
       cache));

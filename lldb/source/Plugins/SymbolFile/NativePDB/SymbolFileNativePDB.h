@@ -6,10 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLDB_PLUGINS_SYMBOLFILE_NATIVEPDB_SYMBOLFILENATIVEPDB_H
-#define LLDB_PLUGINS_SYMBOLFILE_NATIVEPDB_SYMBOLFILENATIVEPDB_H
+#ifndef LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_SYMBOLFILENATIVEPDB_H
+#define LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_SYMBOLFILENATIVEPDB_H
 
-#include "lldb/Symbol/ClangASTImporter.h"
+#include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/SymbolFile.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -35,15 +35,25 @@ struct UnionRecord;
 } // namespace llvm
 
 namespace lldb_private {
-class ClangASTImporter;
 
 namespace npdb {
 class PdbAstBuilder;
 
-class SymbolFileNativePDB : public SymbolFile {
+class SymbolFileNativePDB : public SymbolFileCommon {
   friend class UdtRecordCompleter;
 
+  /// LLVM RTTI support.
+  static char ID;
+
 public:
+  /// LLVM RTTI support.
+  /// \{
+  bool isA(const void *ClassID) const override {
+    return ClassID == &ID || SymbolFileCommon::isA(ClassID);
+  }
+  static bool classof(const SymbolFile *obj) { return obj->isA(&ID); }
+  /// \}
+
   // Static Functions
   static void Initialize();
 
@@ -51,9 +61,9 @@ public:
 
   static void DebuggerInitialize(Debugger &debugger);
 
-  static ConstString GetPluginNameStatic();
+  static llvm::StringRef GetPluginNameStatic() { return "native-pdb"; }
 
-  static const char *GetPluginDescriptionStatic();
+  static llvm::StringRef GetPluginDescriptionStatic();
 
   static SymbolFile *CreateInstance(lldb::ObjectFileSP objfile_sp);
 
@@ -65,6 +75,8 @@ public:
   uint32_t CalculateAbilities() override;
 
   void InitializeObject() override;
+
+  uint64_t GetDebugInfoSize() override;
 
   // Compile Unit function calls
 
@@ -90,10 +102,10 @@ public:
 
   size_t ParseBlocksRecursive(Function &func) override;
 
-  uint32_t FindGlobalVariables(ConstString name,
-                               const CompilerDeclContext *parent_decl_ctx,
-                               uint32_t max_matches,
-                               VariableList &variables) override;
+  void FindGlobalVariables(ConstString name,
+                           const CompilerDeclContext &parent_decl_ctx,
+                           uint32_t max_matches,
+                           VariableList &variables) override;
 
   size_t ParseVariablesForContext(const SymbolContext &sc) override;
 
@@ -111,29 +123,28 @@ public:
   uint32_t ResolveSymbolContext(const Address &so_addr,
                                 lldb::SymbolContextItem resolve_scope,
                                 SymbolContext &sc) override;
-  uint32_t ResolveSymbolContext(const FileSpec &file_spec, uint32_t line,
-                                bool check_inlines,
+  uint32_t ResolveSymbolContext(const SourceLocationSpec &src_location_spec,
                                 lldb::SymbolContextItem resolve_scope,
                                 SymbolContextList &sc_list) override;
 
   void GetTypes(SymbolContextScope *sc_scope, lldb::TypeClass type_mask,
                 TypeList &type_list) override;
 
-  uint32_t FindFunctions(ConstString name,
-                         const CompilerDeclContext *parent_decl_ctx,
-                         lldb::FunctionNameType name_type_mask,
-                         bool include_inlines, bool append,
-                         SymbolContextList &sc_list) override;
+  void FindFunctions(ConstString name,
+                     const CompilerDeclContext &parent_decl_ctx,
+                     lldb::FunctionNameType name_type_mask,
+                     bool include_inlines, SymbolContextList &sc_list) override;
 
-  uint32_t FindFunctions(const RegularExpression &regex, bool include_inlines,
-                         bool append, SymbolContextList &sc_list) override;
+  void FindFunctions(const RegularExpression &regex, bool include_inlines,
+                     SymbolContextList &sc_list) override;
 
-  void FindTypes(ConstString name, const CompilerDeclContext *parent_decl_ctx,
+  void FindTypes(ConstString name, const CompilerDeclContext &parent_decl_ctx,
                  uint32_t max_matches,
                  llvm::DenseSet<SymbolFile *> &searched_symbol_files,
                  TypeMap &types) override;
 
   void FindTypes(llvm::ArrayRef<CompilerContext> pattern, LanguageSet languages,
+                 llvm::DenseSet<SymbolFile *> &searched_symbol_files,
                  TypeMap &types) override;
 
   llvm::Expected<TypeSystem &>
@@ -141,11 +152,9 @@ public:
 
   CompilerDeclContext
   FindNamespace(ConstString name,
-                const CompilerDeclContext *parent_decl_ctx) override;
+                const CompilerDeclContext &parent_decl_ctx) override;
 
-  ConstString GetPluginName() override;
-
-  uint32_t GetPluginVersion() override;
+  llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
 
   llvm::pdb::PDBFile &GetPDBFile() { return m_index->pdb(); }
   const llvm::pdb::PDBFile &GetPDBFile() const { return m_index->pdb(); }
@@ -153,6 +162,25 @@ public:
   void DumpClangAST(Stream &s) override;
 
 private:
+  struct LineTableEntryComparator {
+    bool operator()(const lldb_private::LineTable::Entry &lhs,
+                    const lldb_private::LineTable::Entry &rhs) const {
+      return lhs.file_addr < rhs.file_addr;
+    }
+  };
+
+  // From address range relative to function base to source line number.
+  using RangeSourceLineVector =
+      lldb_private::RangeDataVector<uint32_t, uint32_t, int32_t>;
+  // InlineSite contains information in a S_INLINESITE record.
+  struct InlineSite {
+    PdbCompilandSymId parent_id;
+    std::shared_ptr<InlineFunctionInfo> inline_function_info;
+    RangeSourceLineVector ranges;
+    std::vector<lldb_private::LineTable::Entry> line_entries;
+    InlineSite(PdbCompilandSymId parent_id) : parent_id(parent_id){};
+  };
+
   uint32_t CalculateNumCompileUnits() override;
 
   lldb::CompUnitSP ParseCompileUnitAtIndex(uint32_t index) override;
@@ -217,11 +245,22 @@ private:
                                       VariableList &variables);
   size_t ParseVariablesForBlock(PdbCompilandSymId block_id);
 
+  llvm::Expected<uint32_t> GetFileIndex(const CompilandIndexItem &cii,
+                                        uint32_t file_id);
+
+  size_t ParseSymbolArrayInScope(
+      PdbCompilandSymId parent,
+      llvm::function_ref<bool(llvm::codeview::SymbolKind, PdbCompilandSymId)>
+          fn);
+
+  void ParseInlineSite(PdbCompilandSymId inline_site_id, Address func_addr);
+
   llvm::BumpPtrAllocator m_allocator;
 
   lldb::addr_t m_obj_load_address = 0;
   bool m_done_full_type_scan = false;
 
+  std::unique_ptr<llvm::pdb::PDBFile> m_file_up;
   std::unique_ptr<PdbIndex> m_index;
 
   std::unique_ptr<PdbAstBuilder> m_ast;
@@ -232,9 +271,10 @@ private:
   llvm::DenseMap<lldb::user_id_t, lldb::FunctionSP> m_functions;
   llvm::DenseMap<lldb::user_id_t, lldb::CompUnitSP> m_compilands;
   llvm::DenseMap<lldb::user_id_t, lldb::TypeSP> m_types;
+  llvm::DenseMap<lldb::user_id_t, std::shared_ptr<InlineSite>> m_inline_sites;
 };
 
 } // namespace npdb
 } // namespace lldb_private
 
-#endif // lldb_Plugins_SymbolFile_PDB_SymbolFilePDB_h_
+#endif // LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_SYMBOLFILENATIVEPDB_H

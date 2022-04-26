@@ -18,6 +18,7 @@
 
 #include "RISCVSubtarget.h"
 #include "RISCVTargetMachine.h"
+#include "llvm/Analysis/IVDescriptors.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/IR/Function.h"
@@ -41,10 +42,182 @@ public:
       : BaseT(TM, F.getParent()->getDataLayout()), ST(TM->getSubtargetImpl(F)),
         TLI(ST->getTargetLowering()) {}
 
-  int getIntImmCost(const APInt &Imm, Type *Ty);
-  int getIntImmCost(unsigned Opcode, unsigned Idx, const APInt &Imm, Type *Ty);
-  int getIntImmCost(Intrinsic::ID IID, unsigned Idx, const APInt &Imm,
-                    Type *Ty);
+  InstructionCost getIntImmCost(const APInt &Imm, Type *Ty,
+                                TTI::TargetCostKind CostKind);
+  InstructionCost getIntImmCostInst(unsigned Opcode, unsigned Idx,
+                                    const APInt &Imm, Type *Ty,
+                                    TTI::TargetCostKind CostKind,
+                                    Instruction *Inst = nullptr);
+  InstructionCost getIntImmCostIntrin(Intrinsic::ID IID, unsigned Idx,
+                                      const APInt &Imm, Type *Ty,
+                                      TTI::TargetCostKind CostKind);
+
+  TargetTransformInfo::PopcntSupportKind getPopcntSupport(unsigned TyWidth);
+
+  bool shouldExpandReduction(const IntrinsicInst *II) const;
+  bool supportsScalableVectors() const { return ST->hasVInstructions(); }
+  Optional<unsigned> getMaxVScale() const;
+
+  TypeSize getRegisterBitWidth(TargetTransformInfo::RegisterKind K) const;
+
+  InstructionCost getRegUsageForType(Type *Ty);
+
+  InstructionCost getMaskedMemoryOpCost(unsigned Opcode, Type *Src,
+                                        Align Alignment, unsigned AddressSpace,
+                                        TTI::TargetCostKind CostKind);
+
+  void getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
+                               TTI::UnrollingPreferences &UP,
+                               OptimizationRemarkEmitter *ORE);
+
+  void getPeelingPreferences(Loop *L, ScalarEvolution &SE,
+                             TTI::PeelingPreferences &PP);
+
+  unsigned getMinVectorRegisterBitWidth() const {
+    return ST->useRVVForFixedLengthVectors() ? 16 : 0;
+  }
+
+  InstructionCost getSpliceCost(VectorType *Tp, int Index);
+  InstructionCost getShuffleCost(TTI::ShuffleKind Kind, VectorType *Tp,
+                                 ArrayRef<int> Mask, int Index,
+                                 VectorType *SubTp,
+                                 ArrayRef<Value *> Args = None);
+
+  InstructionCost getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
+                                        TTI::TargetCostKind CostKind);
+
+  InstructionCost getGatherScatterOpCost(unsigned Opcode, Type *DataTy,
+                                         const Value *Ptr, bool VariableMask,
+                                         Align Alignment,
+                                         TTI::TargetCostKind CostKind,
+                                         const Instruction *I);
+
+  InstructionCost getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
+                                   TTI::CastContextHint CCH,
+                                   TTI::TargetCostKind CostKind,
+                                   const Instruction *I = nullptr);
+
+  InstructionCost getMinMaxReductionCost(VectorType *Ty, VectorType *CondTy,
+                                         bool IsUnsigned,
+                                         TTI::TargetCostKind CostKind);
+
+  InstructionCost getArithmeticReductionCost(unsigned Opcode, VectorType *Ty,
+                                             Optional<FastMathFlags> FMF,
+                                             TTI::TargetCostKind CostKind);
+
+  bool isLegalMaskedLoadStore(Type *DataType, Align Alignment) {
+    if (!ST->hasVInstructions())
+      return false;
+
+    // Only support fixed vectors if we know the minimum vector size.
+    if (isa<FixedVectorType>(DataType) && ST->getMinRVVVectorSizeInBits() == 0)
+      return false;
+
+    // Don't allow elements larger than the ELEN.
+    // FIXME: How to limit for scalable vectors?
+    if (isa<FixedVectorType>(DataType) &&
+        DataType->getScalarSizeInBits() > ST->getELEN())
+      return false;
+
+    if (Alignment <
+        DL.getTypeStoreSize(DataType->getScalarType()).getFixedSize())
+      return false;
+
+    return TLI->isLegalElementTypeForRVV(DataType->getScalarType());
+  }
+
+  bool isLegalMaskedLoad(Type *DataType, Align Alignment) {
+    return isLegalMaskedLoadStore(DataType, Alignment);
+  }
+  bool isLegalMaskedStore(Type *DataType, Align Alignment) {
+    return isLegalMaskedLoadStore(DataType, Alignment);
+  }
+
+  bool isLegalMaskedGatherScatter(Type *DataType, Align Alignment) {
+    if (!ST->hasVInstructions())
+      return false;
+
+    // Only support fixed vectors if we know the minimum vector size.
+    if (isa<FixedVectorType>(DataType) && ST->getMinRVVVectorSizeInBits() == 0)
+      return false;
+
+    // Don't allow elements larger than the ELEN.
+    // FIXME: How to limit for scalable vectors?
+    if (isa<FixedVectorType>(DataType) &&
+        DataType->getScalarSizeInBits() > ST->getELEN())
+      return false;
+
+    if (Alignment <
+        DL.getTypeStoreSize(DataType->getScalarType()).getFixedSize())
+      return false;
+
+    return TLI->isLegalElementTypeForRVV(DataType->getScalarType());
+  }
+
+  bool isLegalMaskedGather(Type *DataType, Align Alignment) {
+    return isLegalMaskedGatherScatter(DataType, Alignment);
+  }
+  bool isLegalMaskedScatter(Type *DataType, Align Alignment) {
+    return isLegalMaskedGatherScatter(DataType, Alignment);
+  }
+
+  /// \returns How the target needs this vector-predicated operation to be
+  /// transformed.
+  TargetTransformInfo::VPLegalization
+  getVPLegalizationStrategy(const VPIntrinsic &PI) const {
+    using VPLegalization = TargetTransformInfo::VPLegalization;
+    return VPLegalization(VPLegalization::Legal, VPLegalization::Legal);
+  }
+
+  bool isLegalToVectorizeReduction(const RecurrenceDescriptor &RdxDesc,
+                                   ElementCount VF) const {
+    if (!ST->hasVInstructions())
+      return false;
+
+    if (!VF.isScalable())
+      return true;
+
+    Type *Ty = RdxDesc.getRecurrenceType();
+    if (!TLI->isLegalElementTypeForRVV(Ty))
+      return false;
+
+    switch (RdxDesc.getRecurrenceKind()) {
+    case RecurKind::Add:
+    case RecurKind::FAdd:
+    case RecurKind::And:
+    case RecurKind::Or:
+    case RecurKind::Xor:
+    case RecurKind::SMin:
+    case RecurKind::SMax:
+    case RecurKind::UMin:
+    case RecurKind::UMax:
+    case RecurKind::FMin:
+    case RecurKind::FMax:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  unsigned getMaxInterleaveFactor(unsigned VF) {
+    // If the loop will not be vectorized, don't interleave the loop.
+    // Let regular unroll to unroll the loop.
+    return VF == 1 ? 1 : ST->getMaxInterleaveFactor();
+  }
+
+  // TODO: We should define RISC-V's own register classes.
+  //       e.g. register class for FPR.
+  unsigned getNumberOfRegisters(unsigned ClassID) const {
+    bool Vector = (ClassID == 1);
+    if (Vector) {
+      if (ST->hasVInstructions())
+        return 32;
+      return 0;
+    }
+    // 31 = 32 GPR - x0 (zero register)
+    // FIXME: Should we exclude fixed registers like SP, TP or GP?
+    return 31;
+  }
 };
 
 } // end namespace llvm

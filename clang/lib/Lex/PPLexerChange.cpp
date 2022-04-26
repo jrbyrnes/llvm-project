@@ -11,20 +11,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Lex/Preprocessor.h"
-#include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/LexDiagnostic.h"
 #include "clang/Lex/MacroInfo.h"
+#include "clang/Lex/Preprocessor.h"
+#include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/Path.h"
-using namespace clang;
 
-PPCallbacks::~PPCallbacks() {}
+using namespace clang;
 
 //===----------------------------------------------------------------------===//
 // Miscellaneous Methods.
@@ -39,8 +38,8 @@ bool Preprocessor::isInPrimaryFile() const {
   // If there are any stacked lexers, we're in a #include.
   assert(IsFileLexer(IncludeMacroStack[0]) &&
          "Top level include stack isn't our primary lexer?");
-  return std::none_of(
-      IncludeMacroStack.begin() + 1, IncludeMacroStack.end(),
+  return llvm::none_of(
+      llvm::drop_begin(IncludeMacroStack),
       [&](const IncludeStackInfo &ISI) -> bool { return IsFileLexer(ISI); });
 }
 
@@ -66,8 +65,9 @@ PreprocessorLexer *Preprocessor::getCurrentFileLexer() const {
 
 /// EnterSourceFile - Add a source file to the top of the include stack and
 /// start lexing tokens from it instead of the current buffer.
-bool Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
-                                   SourceLocation Loc) {
+bool Preprocessor::EnterSourceFile(FileID FID, ConstSearchDirIterator CurDir,
+                                   SourceLocation Loc,
+                                   bool IsFirstIncludeOfFile) {
   assert(!CurTokenLexer && "Cannot #include a file inside a macro!");
   ++NumEnteredSourceFiles;
 
@@ -75,13 +75,12 @@ bool Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
     MaxIncludeStackDepth = IncludeMacroStack.size();
 
   // Get the MemoryBuffer for this FID, if it fails, we fail.
-  bool Invalid = false;
-  const llvm::MemoryBuffer *InputFile =
-    getSourceManager().getBuffer(FID, Loc, &Invalid);
-  if (Invalid) {
+  llvm::Optional<llvm::MemoryBufferRef> InputFile =
+      getSourceManager().getBufferOrNone(FID, Loc);
+  if (!InputFile) {
     SourceLocation FileStart = SourceMgr.getLocForStartOfFile(FID);
     Diag(Loc, diag::err_pp_error_opening_file)
-      << std::string(SourceMgr.getBufferName(FileStart)) << "";
+        << std::string(SourceMgr.getBufferName(FileStart)) << "";
     return true;
   }
 
@@ -92,14 +91,15 @@ bool Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
         CodeCompletionFileLoc.getLocWithOffset(CodeCompletionOffset);
   }
 
-  EnterSourceFileWithLexer(new Lexer(FID, InputFile, *this), CurDir);
+  EnterSourceFileWithLexer(
+      new Lexer(FID, *InputFile, *this, IsFirstIncludeOfFile), CurDir);
   return false;
 }
 
 /// EnterSourceFileWithLexer - Add a source file to the top of the include stack
 ///  and start lexing tokens from it instead of the current buffer.
 void Preprocessor::EnterSourceFileWithLexer(Lexer *TheLexer,
-                                            const DirectoryLookup *CurDir) {
+                                            ConstSearchDirIterator CurDir) {
 
   // Add the current lexer to the include stack.
   if (CurPPLexer || CurTokenLexer)
@@ -265,10 +265,12 @@ static void collectAllSubModulesWithUmbrellaHeader(
 }
 
 void Preprocessor::diagnoseMissingHeaderInUmbrellaDir(const Module &Mod) {
-  assert(Mod.getUmbrellaHeader() && "Module must use umbrella header");
-  SourceLocation StartLoc =
-      SourceMgr.getLocForStartOfFile(SourceMgr.getMainFileID());
-  if (getDiagnostics().isIgnored(diag::warn_uncovered_module_header, StartLoc))
+  const Module::Header &UmbrellaHeader = Mod.getUmbrellaHeader();
+  assert(UmbrellaHeader.Entry && "Module must use umbrella header");
+  const FileID &File = SourceMgr.translateFile(UmbrellaHeader.Entry);
+  SourceLocation ExpectedHeadersLoc = SourceMgr.getLocForEndOfFile(File);
+  if (getDiagnostics().isIgnored(diag::warn_uncovered_module_header,
+                                 ExpectedHeadersLoc))
     return;
 
   ModuleMap &ModMap = getHeaderSearchInfo().getModuleMap();
@@ -293,7 +295,7 @@ void Preprocessor::diagnoseMissingHeaderInUmbrellaDir(const Module &Mod) {
           // Find the relative path that would access this header.
           SmallString<128> RelativePath;
           computeRelativePath(FileMgr, Dir, *Header, RelativePath);
-          Diag(StartLoc, diag::warn_uncovered_module_header)
+          Diag(ExpectedHeadersLoc, diag::warn_uncovered_module_header)
               << Mod.getFullModuleName() << RelativePath;
         }
       }
@@ -340,7 +342,7 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
               CurPPLexer->MIOpt.GetDefinedMacro()) {
           if (!isMacroDefined(ControllingMacro) &&
               DefinedMacro != ControllingMacro &&
-              HeaderInfo.FirstTimeLexingFile(FE)) {
+              CurLexer->isFirstTimeLexingFile()) {
 
             // If the edit distance between the two macros is more than 50%,
             // DefinedMacro may not be header guard, or can be header guard of
@@ -390,8 +392,13 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
   // instantiation or a _Pragma.
   if (PragmaAssumeNonNullLoc.isValid() &&
       !isEndOfMacro && !(CurLexer && CurLexer->Is_PragmaLexer)) {
-    Diag(PragmaAssumeNonNullLoc, diag::err_pp_eof_in_assume_nonnull);
-
+    // If we're at the end of generating a preamble, we should record the
+    // unterminated \#pragma clang assume_nonnull so we can restore it later
+    // when the preamble is loaded into the main file.
+    if (isRecordingPreamble() && isInPrimaryFile())
+      PreambleRecordedPragmaAssumeNonNullLoc = PragmaAssumeNonNullLoc;
+    else
+      Diag(PragmaAssumeNonNullLoc, diag::err_pp_eof_in_assume_nonnull);
     // Recover by leaving immediately.
     PragmaAssumeNonNullLoc = SourceLocation();
   }
@@ -417,7 +424,10 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
     }
 
     if (!isEndOfMacro && CurPPLexer &&
-        SourceMgr.getIncludeLoc(CurPPLexer->getFileID()).isValid()) {
+        (SourceMgr.getIncludeLoc(CurPPLexer->getFileID()).isValid() ||
+         // Predefines file doesn't have a valid include location.
+         (PredefinesFileID.isValid() &&
+          CurPPLexer->getFileID() == PredefinesFileID))) {
       // Notify SourceManager to record the number of FileIDs that were created
       // during lexing of the #include'd file.
       unsigned NumFIDs =
@@ -469,10 +479,14 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
                              PPCallbacks::ExitFile, FileType, ExitedFID);
     }
 
-    // Restore conditional stack from the preamble right after exiting from the
-    // predefines file.
-    if (ExitedFromPredefinesFile)
+    // Restore conditional stack as well as the recorded
+    // \#pragma clang assume_nonnull from the preamble right after exiting
+    // from the predefines file.
+    if (ExitedFromPredefinesFile) {
       replayPreambleConditionalStack();
+      if (PreambleRecordedPragmaAssumeNonNullLoc.isValid())
+        PragmaAssumeNonNullLoc = PreambleRecordedPragmaAssumeNonNullLoc;
+    }
 
     if (!isEndOfMacro && CurPPLexer && FoundPCHThroughHeader &&
         (isInPrimaryFile() ||

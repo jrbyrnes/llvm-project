@@ -1,12 +1,19 @@
-// RUN: %clang_cc1 -verify -fopenmp -ferror-limit 150 -o - %s -Wuninitialized
-// RUN: %clang_cc1 -verify -fopenmp -std=c++98 -ferror-limit 150 -o - %s -Wuninitialized
-// RUN: %clang_cc1 -verify -fopenmp -std=c++11 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp45 -fopenmp -fopenmp-version=45 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp45 -fopenmp -fopenmp-version=45 -std=c++98 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp45 -fopenmp -fopenmp-version=45 -std=c++11 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp50 -fopenmp -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp50 -fopenmp -std=c++98 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp50 -fopenmp -std=c++11 -ferror-limit 150 -o - %s -Wuninitialized
 
-// RUN: %clang_cc1 -verify -fopenmp-simd -ferror-limit 150 -o - %s -Wuninitialized
-// RUN: %clang_cc1 -verify -fopenmp-simd -std=c++98 -ferror-limit 150 -o - %s -Wuninitialized
-// RUN: %clang_cc1 -verify -fopenmp-simd -std=c++11 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp45 -fopenmp-simd -fopenmp-version=45 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp45 -fopenmp-simd -fopenmp-version=45 -std=c++98 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp45 -fopenmp-simd -fopenmp-version=45 -std=c++11 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp50 -fopenmp-simd -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp50 -fopenmp-simd -std=c++98 -ferror-limit 150 -o - %s -Wuninitialized
+// RUN: %clang_cc1 -verify=expected,omp50 -fopenmp-simd -std=c++11 -ferror-limit 150 -o - %s -Wuninitialized
 
 typedef void **omp_allocator_handle_t;
+extern const omp_allocator_handle_t omp_null_allocator;
 extern const omp_allocator_handle_t omp_default_mem_alloc;
 extern const omp_allocator_handle_t omp_large_cap_mem_alloc;
 extern const omp_allocator_handle_t omp_const_mem_alloc;
@@ -305,7 +312,7 @@ int main(int argc, char **argv) {
 #pragma omp master taskloop reduction(&& : S2::S2sc) // expected-error {{const-qualified variable cannot be reduction}}
   for (int i = 0; i < 10; ++i)
     foo();
-#pragma omp master taskloop reduction(& : e, g) // expected-error {{calling a private constructor of class 'S4'}} expected-error {{invalid operands to binary expression ('S4' and 'S4')}} expected-error {{calling a private constructor of class 'S5'}} expected-error {{invalid operands to binary expression ('S5' and 'S5')}}
+#pragma omp master taskloop reduction(& : e, g) // expected-error {{calling a private constructor of class 'S4'}} expected-error {{calling a private constructor of class 'S5'}} expected-error {{invalid operands to binary expression ('S5' and 'S5')}}
   for (int i = 0; i < 10; ++i)
     foo();
 #pragma omp master taskloop reduction(+ : h, k, B::x) // expected-error 2 {{threadprivate or thread local variable cannot be reduction}}
@@ -345,6 +352,9 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 10; ++i)
     m++;
 #pragma omp master taskloop nogroup reduction(+ : m) // expected-error {{'reduction' clause cannot be used with 'nogroup' clause}}
+  for (int i = 0; i < 10; ++i)
+    m++;
+#pragma omp master taskloop reduction(task, + : m) // omp45-error 2 {{expected expression}} omp45-warning {{missing ':' after reduction identifier - ignoring}} omp50-error {{'reduction' clause with 'task' modifier allowed only on non-simd parallel or worksharing constructs}}
   for (int i = 0; i < 10; ++i)
     m++;
 

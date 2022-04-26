@@ -95,6 +95,13 @@ std::vector<std::string> ArgList::getAllArgValues(OptSpecifier Id) const {
   return std::vector<std::string>(Values.begin(), Values.end());
 }
 
+void ArgList::addOptInFlag(ArgStringList &Output, OptSpecifier Pos,
+                           OptSpecifier Neg) const {
+  if (Arg *A = getLastArg(Pos, Neg))
+    if (A->getOption().matches(Pos))
+      A->render(*this, Output);
+}
+
 void ArgList::AddAllArgsExcept(ArgStringList &Output,
                                ArrayRef<OptSpecifier> Ids,
                                ArrayRef<OptSpecifier> ExcludeIds) const {
@@ -209,7 +216,7 @@ unsigned InputArgList::MakeIndex(StringRef String0) const {
   unsigned Index = ArgStrings.size();
 
   // Tuck away so we have a reliable const char *.
-  SynthesizedStrings.push_back(String0);
+  SynthesizedStrings.push_back(std::string(String0));
   ArgStrings.push_back(SynthesizedStrings.back().c_str());
 
   return Index;

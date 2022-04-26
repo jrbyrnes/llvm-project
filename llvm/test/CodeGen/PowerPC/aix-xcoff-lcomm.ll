@@ -3,20 +3,18 @@
 
 ; RUN: llc -mtriple powerpc-ibm-aix-xcoff -filetype=obj -o %t.o < %s
 ; RUN: llvm-readobj --section-headers --file-header %t.o | \
-; RUN: FileCheck --check-prefix=OBJ %s
+; RUN:   FileCheck --check-prefix=OBJ %s
 ; RUN: llvm-readobj --syms %t.o | FileCheck --check-prefix=SYMS %s
 
-; RUN: not llc -mtriple powerpc64-ibm-aix-xcoff -filetype=obj < %s 2>&1 | \
-; RUN: FileCheck --check-prefix=OBJ64 %s
-; OBJ64: LLVM ERROR: 64-bit XCOFF object files are not supported yet.
+;; FIXME: currently only fileHeader and sectionHeaders are supported in XCOFF64.
 
 @a = internal global i32 0, align 4
 @b = internal global i64 0, align 8
 @c = internal global i16 0, align 2
 
-; CHECK:      .lcomm a,4,a,2
-; CHECK-NEXT: .lcomm b,8,b,3
-; CHECK-NEXT: .lcomm c,2,c,1
+; CHECK:      .lcomm a,4,a[BS],2
+; CHECK-NEXT: .lcomm b,8,b[BS],3
+; CHECK-NEXT: .lcomm c,2,c[BS],1
 
 ; OBJ:      File: {{.*}}aix-xcoff-lcomm.ll.tmp.o
 ; OBJ-NEXT: Format: aixcoff-rs6000
@@ -24,16 +22,15 @@
 ; OBJ-NEXT: AddressSize: 32bit
 ; OBJ-NEXT: FileHeader {
 ; OBJ-NEXT:   Magic: 0x1DF
-; OBJ-NEXT:   NumberOfSections: 1
+; OBJ-NEXT:   NumberOfSections: 2
 ; OBJ-NEXT:   TimeStamp:
-; OBJ-NEXT:   SymbolTableOffset: 0x3C
-; OBJ-NEXT:   SymbolTableEntries: 6
+; OBJ-NEXT:   SymbolTableOffset: 0x64
+; OBJ-NEXT:   SymbolTableEntries: 9
 ; OBJ-NEXT:   OptionalHeaderSize: 0x0
 ; OBJ-NEXT:   Flags: 0x0
 ; OBJ-NEXT: }
 ; OBJ-NEXT: Sections [
-; OBJ-NEXT:   Section {
-; OBJ-NEXT:     Index: 1
+; OBJ:        Section {{[{][[:space:]] *}}Index: 2
 ; OBJ-NEXT:     Name: .bss
 ; OBJ-NEXT:     PhysicalAddress: 0x0
 ; OBJ-NEXT:     VirtualAddress: 0x0
@@ -52,9 +49,7 @@
 ; SYMS-NEXT: Arch: powerpc
 ; SYMS-NEXT: AddressSize: 32bit
 ; SYMS-NEXT: Symbols [
-; SYMS-NEXT:   Symbol {
-; SYMS-NEXT:     Index: [[#Index:]]
-; SYMS-NEXT:     Name: a
+; SYMS:        Symbol {{[{][[:space:]] *}}Index: [[#Index:]]{{[[:space:]] *}}Name: a
 ; SYMS-NEXT:     Value (RelocatableAddress): 0x0
 ; SYMS-NEXT:     Section: .bss
 ; SYMS-NEXT:     Type: 0x0

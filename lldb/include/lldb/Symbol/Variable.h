@@ -6,12 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_Variable_h_
-#define liblldb_Variable_h_
+#ifndef LLDB_SYMBOL_VARIABLE_H
+#define LLDB_SYMBOL_VARIABLE_H
 
+#include "lldb/Core/Declaration.h"
 #include "lldb/Core/Mangled.h"
 #include "lldb/Expression/DWARFExpression.h"
-#include "lldb/Symbol/Declaration.h"
 #include "lldb/Utility/CompletionRequest.h"
 #include "lldb/Utility/RangeMap.h"
 #include "lldb/Utility/UserID.h"
@@ -33,7 +33,8 @@ public:
            const lldb::SymbolFileTypeSP &symfile_type_sp, lldb::ValueType scope,
            SymbolContextScope *owner_scope, const RangeList &scope_range,
            Declaration *decl, const DWARFExpression &location, bool external,
-           bool artificial, bool static_member = false);
+           bool artificial, bool location_is_constant_data,
+           bool static_member = false);
 
   virtual ~Variable();
 
@@ -64,6 +65,8 @@ public:
 
   lldb::ValueType GetScope() const { return m_scope; }
 
+  const RangeList &GetScopeRange() const { return m_scope_range; }
+
   bool IsExternal() const { return m_external; }
 
   bool IsArtificial() const { return m_artificial; }
@@ -74,7 +77,9 @@ public:
 
   const DWARFExpression &LocationExpression() const { return m_location; }
 
-  bool DumpLocationForAddress(Stream *s, const Address &address);
+  // When given invalid address, it dumps all locations. Otherwise it only dumps
+  // the location that contains this address.
+  bool DumpLocations(Stream *s, const Address &address);
 
   size_t MemorySize() const;
 
@@ -141,4 +146,4 @@ private:
 
 } // namespace lldb_private
 
-#endif // liblldb_Variable_h_
+#endif // LLDB_SYMBOL_VARIABLE_H

@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -emit-llvm -triple x86_64-unknown-linux-gnu -O2 -o - %s | FileCheck -check-prefix=NULL-POINTER-INVALID  %s
-// RUN: %clang_cc1 -emit-llvm -triple x86_64-unknown-linux-gnu -O2 -o - %s -fno-delete-null-pointer-checks | FileCheck -check-prefix=NULL-POINTER-VALID  %s
+// RUN: %clang_cc1 -no-opaque-pointers -emit-llvm -triple x86_64-unknown-linux-gnu -O2 -o - %s | FileCheck -check-prefix=NULL-POINTER-INVALID  %s
+// RUN: %clang_cc1 -no-opaque-pointers -emit-llvm -triple x86_64-unknown-linux-gnu -O2 -o - %s -fno-delete-null-pointer-checks | FileCheck -check-prefix=NULL-POINTER-VALID  %s
 
 // Test that clang does not remove the null pointer check with
 // -fno-delete-null-pointer-checks.
@@ -16,5 +16,5 @@ int null_check(int *P) {
   return *Q;
 }
 
-// NULL-POINTER-INVALID-NOT: attributes #0 = {{.*}} "null-pointer-is-valid"="true"
-// NULL-POINTER-VALID: attributes #0 = {{.*}} "null-pointer-is-valid"="true"
+// NULL-POINTER-INVALID-NOT: attributes #0 = {{.*}} null_pointer_is_valid
+// NULL-POINTER-VALID: attributes #0 = {{.*}} null_pointer_is_valid

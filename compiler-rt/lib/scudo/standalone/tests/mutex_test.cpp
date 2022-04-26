@@ -6,10 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tests/scudo_unit_test.h"
+
 #include "mutex.h"
 
-#include "gtest/gtest.h"
-
+#include <pthread.h>
 #include <string.h>
 
 class TestData {
@@ -42,7 +43,7 @@ public:
   void backoff() {
     volatile T LocalData[Size] = {};
     for (scudo::u32 I = 0; I < Size; I++) {
-      LocalData[I]++;
+      LocalData[I] = LocalData[I] + 1;
       EXPECT_EQ(LocalData[I], 1U);
     }
   }
@@ -51,7 +52,7 @@ private:
   static const scudo::u32 Size = 64U;
   typedef scudo::u64 T;
   scudo::HybridMutex &Mutex;
-  ALIGNED(SCUDO_CACHE_LINE_SIZE) T Data[Size];
+  alignas(SCUDO_CACHE_LINE_SIZE) T Data[Size];
 };
 
 const scudo::u32 NumberOfThreads = 8;
@@ -81,7 +82,6 @@ static void *tryThread(void *Param) {
 
 TEST(ScudoMutexTest, Mutex) {
   scudo::HybridMutex M;
-  M.init();
   TestData Data(M);
   pthread_t Threads[NumberOfThreads];
   for (scudo::u32 I = 0; I < NumberOfThreads; I++)
@@ -92,7 +92,6 @@ TEST(ScudoMutexTest, Mutex) {
 
 TEST(ScudoMutexTest, MutexTry) {
   scudo::HybridMutex M;
-  M.init();
   TestData Data(M);
   pthread_t Threads[NumberOfThreads];
   for (scudo::u32 I = 0; I < NumberOfThreads; I++)

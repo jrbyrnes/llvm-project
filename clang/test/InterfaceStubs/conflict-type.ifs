@@ -7,10 +7,9 @@
 # CHECK-IFS-NEXT: Filename:
 # CHECK-IFS-NEXT: Type Values: Object Func
 
---- !experimental-ifs-v1
-IfsVersion: 1.0
-Triple: x86_64-linux-gnu
-ObjectFileFormat: ELF
+--- !ifs-v1
+IfsVersion: 3.0
+Target: x86_64-linux-gnu
 Symbols:
-  a: { Type: Object, Size: 1 }
+  - { Name: a, Type: Object, Size: 1 }
 ...

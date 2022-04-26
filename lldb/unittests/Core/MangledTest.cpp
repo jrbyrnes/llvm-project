@@ -1,4 +1,4 @@
-//===-- MangledTest.cpp -----------------------------------------*- C++ -*-===//
+//===-- MangledTest.cpp ---------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,6 +8,7 @@
 
 #include "Plugins/ObjectFile/ELF/ObjectFileELF.h"
 #include "Plugins/SymbolFile/Symtab/SymbolFileSymtab.h"
+#include "TestingSupport/SubsystemRAII.h"
 #include "TestingSupport/TestUtilities.h"
 
 #include "lldb/Core/Mangled.h"
@@ -30,27 +31,87 @@ using namespace lldb_private;
 TEST(MangledTest, ResultForValidName) {
   ConstString MangledName("_ZN1a1b1cIiiiEEvm");
   Mangled TheMangled(MangledName);
-  ConstString TheDemangled =
-      TheMangled.GetDemangledName(eLanguageTypeC_plus_plus);
+  ConstString TheDemangled = TheMangled.GetDemangledName();
 
   ConstString ExpectedResult("void a::b::c<int, int, int>(unsigned long)");
+  EXPECT_STREQ(ExpectedResult.GetCString(), TheDemangled.GetCString());
+}
+
+TEST(MangledTest, ResultForBlockInvocation) {
+  ConstString MangledName("___Z1fU13block_pointerFviE_block_invoke");
+  Mangled TheMangled(MangledName);
+  ConstString TheDemangled = TheMangled.GetDemangledName();
+
+  ConstString ExpectedResult(
+      "invocation function for block in f(void (int) block_pointer)");
   EXPECT_STREQ(ExpectedResult.GetCString(), TheDemangled.GetCString());
 }
 
 TEST(MangledTest, EmptyForInvalidName) {
   ConstString MangledName("_ZN1a1b1cmxktpEEvm");
   Mangled TheMangled(MangledName);
-  ConstString TheDemangled =
-      TheMangled.GetDemangledName(eLanguageTypeC_plus_plus);
+  ConstString TheDemangled = TheMangled.GetDemangledName();
 
   EXPECT_STREQ("", TheDemangled.GetCString());
 }
 
+TEST(MangledTest, ResultForValidRustV0Name) {
+  ConstString mangled_name("_RNvC1a4main");
+  Mangled the_mangled(mangled_name);
+  ConstString the_demangled = the_mangled.GetDemangledName();
+
+  ConstString expected_result("a::main");
+  EXPECT_STREQ(expected_result.GetCString(), the_demangled.GetCString());
+}
+
+TEST(MangledTest, EmptyForInvalidRustV0Name) {
+  ConstString mangled_name("_RRR");
+  Mangled the_mangled(mangled_name);
+  ConstString the_demangled = the_mangled.GetDemangledName();
+
+  EXPECT_STREQ("", the_demangled.GetCString());
+}
+
+TEST(MangledTest, ResultForValidDLangName) {
+  ConstString mangled_name("_Dmain");
+  Mangled the_mangled(mangled_name);
+  ConstString the_demangled = the_mangled.GetDemangledName();
+
+  ConstString expected_result("D main");
+  EXPECT_STREQ(expected_result.GetCString(), the_demangled.GetCString());
+}
+
+TEST(MangledTest, EmptyForInvalidDLangName) {
+  ConstString mangled_name("_DDD");
+  Mangled the_mangled(mangled_name);
+  ConstString the_demangled = the_mangled.GetDemangledName();
+
+  EXPECT_STREQ("", the_demangled.GetCString());
+}
+
+TEST(MangledTest, BoolConversionOperator) {
+  {
+    ConstString MangledName("_ZN1a1b1cIiiiEEvm");
+    Mangled TheMangled(MangledName);
+    EXPECT_EQ(true, bool(TheMangled));
+    EXPECT_EQ(false, !TheMangled);
+  }
+  {
+    ConstString UnmangledName("puts");
+    Mangled TheMangled(UnmangledName);
+    EXPECT_EQ(true, bool(TheMangled));
+    EXPECT_EQ(false, !TheMangled);
+  }
+  {
+    Mangled TheMangled{};
+    EXPECT_EQ(false, bool(TheMangled));
+    EXPECT_EQ(true, !TheMangled);
+  }
+}
+
 TEST(MangledTest, NameIndexes_FindFunctionSymbols) {
-  FileSystem::Initialize();
-  HostInfo::Initialize();
-  ObjectFileELF::Initialize();
-  SymbolFileSymtab::Initialize();
+  SubsystemRAII<FileSystem, HostInfo, ObjectFileELF, SymbolFileSymtab>
+      subsystems;
 
   auto ExpectedFile = TestFile::fromYaml(R"(
 --- !ELF
@@ -158,12 +219,12 @@ Symbols:
 )");
   ASSERT_THAT_EXPECTED(ExpectedFile, llvm::Succeeded());
 
-  ModuleSpec Spec{FileSpec(ExpectedFile->name())};
-  auto M = std::make_shared<Module>(Spec);
+  auto M = std::make_shared<Module>(ExpectedFile->moduleSpec());
 
   auto Count = [M](const char *Name, FunctionNameType Type) -> int {
     SymbolContextList SymList;
-    return M->FindFunctionSymbols(ConstString(Name), Type, SymList);
+    M->FindFunctionSymbols(ConstString(Name), Type, SymList);
+    return SymList.GetSize();
   };
 
   // Unmangled
@@ -239,9 +300,4 @@ Symbols:
   EXPECT_EQ(0, Count("_Z12undemangableEvx42", eFunctionNameTypeMethod));
   EXPECT_EQ(0, Count("undemangable", eFunctionNameTypeBase));
   EXPECT_EQ(0, Count("undemangable", eFunctionNameTypeMethod));
-
-  SymbolFileSymtab::Terminate();
-  ObjectFileELF::Terminate();
-  HostInfo::Terminate();
-  FileSystem::Terminate();
 }

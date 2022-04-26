@@ -1,4 +1,7 @@
 ; RUN: llc -verify-machineinstrs -o - %s -mtriple=aarch64-linux-gnu -mattr=+reserve-x18 | FileCheck %s
+; RUN: not --crash llc -verify-machineinstrs -o - %s -mtriple=arm64-apple-darwin 2>&1 | FileCheck %s --check-prefix=DARWIN
+
+; DARWIN: ShadowCallStack attribute not supported on Darwin.
 
 define void @f1() shadowcallstack {
   ; CHECK: f1:
@@ -50,6 +53,14 @@ define i32 @f4() shadowcallstack {
 define i32 @f5() shadowcallstack nounwind {
   ; CHECK: f5:
   ; CHECK-NOT: .cfi_escape
+  %res = call i32 @bar()
+  %res1 = add i32 %res, 1
+  ret i32 %res
+}
+
+define i32 @f6() shadowcallstack nounwind uwtable {
+  ; CHECK: f6:
+  ; CHECK: .cfi_escape 0x16, 0x12, 0x02, 0x82, 0x78
   %res = call i32 @bar()
   %res1 = add i32 %res, 1
   ret i32 %res

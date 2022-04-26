@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include <cassert>
 #include <string>
 
 // Important this comes last because it defines "_REGEX_H_". At least on
@@ -25,7 +26,7 @@ using namespace llvm;
 
 Regex::Regex() : preg(nullptr), error(REG_BADPAT) {}
 
-Regex::Regex(StringRef regex, unsigned Flags) {
+Regex::Regex(StringRef regex, RegexFlags Flags) {
   unsigned flags = 0;
   preg = new llvm_regex();
   preg->re_endp = regex.end();
@@ -37,6 +38,9 @@ Regex::Regex(StringRef regex, unsigned Flags) {
     flags |= REG_EXTENDED;
   error = llvm_regcomp(preg, regex.data(), flags|REG_PEND);
 }
+
+Regex::Regex(StringRef regex, unsigned Flags)
+    : Regex(regex, static_cast<RegexFlags>(Flags)) {}
 
 Regex::Regex(Regex &&regex) {
   preg = regex.preg;
@@ -135,7 +139,7 @@ std::string Regex::sub(StringRef Repl, StringRef String,
 
   // Return the input if there was no match.
   if (!match(String, &Matches, Error))
-    return String;
+    return std::string(String);
 
   // Otherwise splice in the replacement string, starting with the prefix before
   // the match.
@@ -214,10 +218,10 @@ bool Regex::isLiteralERE(StringRef Str) {
 
 std::string Regex::escape(StringRef String) {
   std::string RegexStr;
-  for (unsigned i = 0, e = String.size(); i != e; ++i) {
-    if (strchr(RegexMetachars, String[i]))
+  for (char C : String) {
+    if (strchr(RegexMetachars, C))
       RegexStr += '\\';
-    RegexStr += String[i];
+    RegexStr += C;
   }
 
   return RegexStr;

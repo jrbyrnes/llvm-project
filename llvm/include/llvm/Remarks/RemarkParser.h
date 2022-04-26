@@ -10,12 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_REMARKS_REMARK_PARSER_H
-#define LLVM_REMARKS_REMARK_PARSER_H
+#ifndef LLVM_REMARKS_REMARKPARSER_H
+#define LLVM_REMARKS_REMARKPARSER_H
 
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Remarks/Remark.h"
 #include "llvm/Remarks/RemarkFormat.h"
 #include "llvm/Support/Error.h"
 #include <memory>
@@ -23,11 +21,13 @@
 namespace llvm {
 namespace remarks {
 
+struct Remark;
+
 class EndOfFileError : public ErrorInfo<EndOfFileError> {
 public:
   static char ID;
 
-  EndOfFileError() {}
+  EndOfFileError() = default;
 
   void log(raw_ostream &OS) const override { OS << "End of file reached."; }
   std::error_code convertToErrorCode() const override {
@@ -39,6 +39,8 @@ public:
 struct RemarkParser {
   /// The format of the parser.
   Format ParserFormat;
+  /// Path to prepend when opening an external remark file.
+  std::string ExternalFilePrependPath;
 
   RemarkParser(Format ParserFormat) : ParserFormat(ParserFormat) {}
 
@@ -82,9 +84,10 @@ createRemarkParser(Format ParserFormat, StringRef Buf,
 
 Expected<std::unique_ptr<RemarkParser>>
 createRemarkParserFromMeta(Format ParserFormat, StringRef Buf,
-                           Optional<ParsedStringTable> StrTab = None);
+                           Optional<ParsedStringTable> StrTab = None,
+                           Optional<StringRef> ExternalFilePrependPath = None);
 
 } // end namespace remarks
 } // end namespace llvm
 
-#endif /* LLVM_REMARKS_REMARK_PARSER_H */
+#endif // LLVM_REMARKS_REMARKPARSER_H

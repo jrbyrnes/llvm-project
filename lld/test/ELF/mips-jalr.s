@@ -6,29 +6,29 @@
 # RUN: llvm-readelf -r %t.o | FileCheck -check-prefix=REL %s
 
 # RUN: ld.lld %t.o -shared -o %t.so
-# RUN: llvm-objdump -d --no-show-raw-insn %t.so | FileCheck -check-prefix=SO %s
+# RUN: llvm-objdump -d --no-show-raw-insn %t.so | FileCheck --check-prefix=SO %s
 
 # RUN: ld.lld %t.o --defsym=bar=__start -o %t.so
-# RUN: llvm-objdump -d --no-show-raw-insn %t.so | FileCheck -check-prefix=EXE %s
+# RUN: llvm-objdump -d --no-show-raw-insn %t.so | FileCheck --check-prefix=EXE %s
 
 # REL: R_MIPS_JALR   {{.*}} bar
 # REL: R_MIPS_JALR   {{.*}} foo
 # REL: R_MIPS_JALR   {{.*}} far
 
 # SO: jalr  $25
-# SO: bal   -24 <foo>
+# SO: bal   {{.*}} <foo>
 # SO: jalr  $25
 
 # SO: jr    $25
-# SO: b     -64 <foo>
+# SO: b     {{.*}} <foo>
 # SO: jr    $25
 
-# EXE: bal   -4 <foo>
-# EXE: bal   -24 <foo>
+# EXE: bal   {{.*}} <foo>
+# EXE: bal   {{.*}} <foo>
 # EXE: jalr  $25
 
-# EXE: b     -56 <foo>
-# EXE: b     -64 <foo>
+# EXE: b     {{.*}} <foo>
+# EXE: b     {{.*}} <foo>
 # EXE: jr    $25
 
   .text

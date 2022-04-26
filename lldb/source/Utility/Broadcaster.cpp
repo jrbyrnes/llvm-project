@@ -1,4 +1,4 @@
-//===-- Broadcaster.cpp -----------------------------------------*- C++ -*-===//
+//===-- Broadcaster.cpp ---------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,21 +7,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Utility/Broadcaster.h"
-
 #include "lldb/Utility/Event.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Listener.h"
-#include "lldb/Utility/Log.h"
-#include "lldb/Utility/Logging.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StreamString.h"
 
 #include <algorithm>
 #include <memory>
-#include <type_traits>
 #include <utility>
 
-#include <assert.h>
-#include <stddef.h>
+#include <cassert>
+#include <cstddef>
 
 using namespace lldb;
 using namespace lldb_private;
@@ -29,9 +26,9 @@ using namespace lldb_private;
 Broadcaster::Broadcaster(BroadcasterManagerSP manager_sp, const char *name)
     : m_broadcaster_sp(std::make_shared<BroadcasterImpl>(*this)),
       m_manager_sp(std::move(manager_sp)), m_broadcaster_name(name) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_OBJECT));
+  Log *log = GetLog(LLDBLog::Object);
   LLDB_LOG(log, "{0} Broadcaster::Broadcaster(\"{1}\")",
-           static_cast<void *>(this), GetBroadcasterName().AsCString());
+           static_cast<void *>(this), GetBroadcasterName());
 }
 
 Broadcaster::BroadcasterImpl::BroadcasterImpl(Broadcaster &broadcaster)
@@ -39,9 +36,9 @@ Broadcaster::BroadcasterImpl::BroadcasterImpl(Broadcaster &broadcaster)
       m_hijacking_listeners(), m_hijacking_masks() {}
 
 Broadcaster::~Broadcaster() {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_OBJECT));
+  Log *log = GetLog(LLDBLog::Object);
   LLDB_LOG(log, "{0} Broadcaster::~Broadcaster(\"{1}\")",
-           static_cast<void *>(this), GetBroadcasterName().AsCString());
+           static_cast<void *>(this), GetBroadcasterName());
 
   Clear();
 }
@@ -211,7 +208,11 @@ void Broadcaster::BroadcasterImpl::PrivateBroadcastEvent(EventSP &event_sp,
       hijacking_listener_sp.reset();
   }
 
-  if (Log *log = lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_EVENTS)) {
+  Log *log = GetLog(LLDBLog::Events);
+  if (!log && event_sp->GetData())
+    log = event_sp->GetData()->GetLogChannel();
+
+  if (log) {
     StreamString event_description;
     event_sp->Dump(&event_description);
     LLDB_LOGF(log,
@@ -262,7 +263,7 @@ bool Broadcaster::BroadcasterImpl::HijackBroadcaster(
     const lldb::ListenerSP &listener_sp, uint32_t event_mask) {
   std::lock_guard<std::recursive_mutex> guard(m_listeners_mutex);
 
-  Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_EVENTS));
+  Log *log = GetLog(LLDBLog::Events);
   LLDB_LOG(
       log,
       "{0} Broadcaster(\"{1}\")::HijackBroadcaster (listener(\"{2}\")={3})",
@@ -293,7 +294,7 @@ void Broadcaster::BroadcasterImpl::RestoreBroadcaster() {
 
   if (!m_hijacking_listeners.empty()) {
     ListenerSP listener_sp = m_hijacking_listeners.back();
-    Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_EVENTS));
+    Log *log = GetLog(LLDBLog::Events);
     LLDB_LOG(log,
              "{0} Broadcaster(\"{1}\")::RestoreBroadcaster (about to pop "
              "listener(\"{2}\")={3})",
@@ -317,9 +318,6 @@ bool BroadcastEventSpec::operator<(const BroadcastEventSpec &rhs) const {
   }
   return GetBroadcasterClass() < rhs.GetBroadcasterClass();
 }
-
-BroadcastEventSpec &BroadcastEventSpec::
-operator=(const BroadcastEventSpec &rhs) = default;
 
 BroadcasterManager::BroadcasterManager() : m_manager_mutex() {}
 
@@ -377,8 +375,8 @@ bool BroadcasterManager::UnregisterListenerForEvents(
 
     if (event_bits_to_remove != iter_event_bits) {
       uint32_t new_event_bits = iter_event_bits & ~event_bits_to_remove;
-      to_be_readded.push_back(
-          BroadcastEventSpec(event_spec.GetBroadcasterClass(), new_event_bits));
+      to_be_readded.emplace_back(event_spec.GetBroadcasterClass(),
+                                 new_event_bits);
     }
     m_event_map.erase(iter);
   }
@@ -410,7 +408,7 @@ void BroadcasterManager::RemoveListener(Listener *listener) {
   listener_collection::iterator iter = m_listeners.begin(),
                                 end_iter = m_listeners.end();
 
-  std::find_if(iter, end_iter, predicate);
+  iter = std::find_if(iter, end_iter, predicate);
   if (iter != end_iter)
     m_listeners.erase(iter);
 

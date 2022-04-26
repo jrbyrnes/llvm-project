@@ -7,11 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "InefficientVectorOperationCheck.h"
+#include "../utils/DeclRefExprUtils.h"
+#include "../utils/OptionsUtils.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Lex/Lexer.h"
-#include "../utils/DeclRefExprUtils.h"
-#include "../utils/OptionsUtils.h"
 
 using namespace clang::ast_matchers;
 
@@ -68,6 +68,10 @@ ast_matchers::internal::Matcher<Expr> supportedContainerTypesMatcher() {
       "::std::unordered_map", "::std::array", "::std::deque")));
 }
 
+AST_MATCHER(Expr, hasSideEffects) {
+  return Node.HasSideEffects(Finder->getASTContext());
+}
+
 } // namespace
 
 InefficientVectorOperationCheck::InefficientVectorOperationCheck(
@@ -84,7 +88,7 @@ void InefficientVectorOperationCheck::storeOptions(
   Options.store(Opts, "EnableProto", EnableProto);
 }
 
-void InefficientVectorOperationCheck::AddMatcher(
+void InefficientVectorOperationCheck::addMatcher(
     const DeclarationMatcher &TargetRecordDecl, StringRef VarDeclName,
     StringRef VarDeclStmtName, const DeclarationMatcher &AppendMethodDecl,
     StringRef AppendCallName, MatchFinder *Finder) {
@@ -94,7 +98,7 @@ void InefficientVectorOperationCheck::AddMatcher(
   const auto TargetVarDecl =
       varDecl(hasInitializer(DefaultConstructorCall)).bind(VarDeclName);
   const auto TargetVarDefStmt =
-      declStmt(hasSingleDecl(equalsBoundNode(VarDeclName)))
+      declStmt(hasSingleDecl(equalsBoundNode(std::string(VarDeclName))))
           .bind(VarDeclStmtName);
 
   const auto AppendCallExpr =
@@ -145,7 +149,10 @@ void InefficientVectorOperationCheck::AddMatcher(
   // FIXME: Support more complex range-expressions.
   Finder->addMatcher(
       cxxForRangeStmt(
-          hasRangeInit(declRefExpr(supportedContainerTypesMatcher())),
+          hasRangeInit(
+              anyOf(declRefExpr(supportedContainerTypesMatcher()),
+                    memberExpr(hasObjectExpression(unless(hasSideEffects())),
+                               supportedContainerTypesMatcher()))),
           HasInterestingLoopBody, InInterestingCompoundStmt)
           .bind(RangeLoopName),
       this);
@@ -156,7 +163,7 @@ void InefficientVectorOperationCheck::registerMatchers(MatchFinder *Finder) {
       VectorLikeClasses.begin(), VectorLikeClasses.end())));
   const auto AppendMethodDecl =
       cxxMethodDecl(hasAnyName("push_back", "emplace_back"));
-  AddMatcher(VectorDecl, VectorVarDeclName, VectorVarDeclStmtName,
+  addMatcher(VectorDecl, VectorVarDeclName, VectorVarDeclStmtName,
              AppendMethodDecl, PushBackOrEmplaceBackCallName, Finder);
 
   if (EnableProto) {
@@ -165,10 +172,10 @@ void InefficientVectorOperationCheck::registerMatchers(MatchFinder *Finder) {
 
     // A method's name starts with "add_" might not mean it's an add field
     // call; it could be the getter for a proto field of which the name starts
-    // with "add_". So we exlude const methods.
+    // with "add_". So we exclude const methods.
     const auto AddFieldMethodDecl =
         cxxMethodDecl(matchesName("::add_"), unless(isConst()));
-    AddMatcher(ProtoDecl, ProtoVarDeclName, ProtoVarDeclStmtName,
+    addMatcher(ProtoDecl, ProtoVarDeclName, ProtoVarDeclStmtName,
                AddFieldMethodDecl, ProtoAddFieldCallName, Finder);
   }
 }
@@ -253,7 +260,7 @@ void InefficientVectorOperationCheck::check(
     StringRef LoopEndSource = Lexer::getSourceText(
         CharSourceRange::getTokenRange(LoopEndExpr->getSourceRange()), SM,
         Context->getLangOpts());
-    ReserveSize = LoopEndSource;
+    ReserveSize = std::string(LoopEndSource);
   }
 
   auto Diag = diag(AppendCall->getBeginLoc(),

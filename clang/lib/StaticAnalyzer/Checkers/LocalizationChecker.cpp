@@ -92,7 +92,7 @@ public:
   // When this parameter is set to true, the checker assumes all
   // methods that return NSStrings are unlocalized. Thus, more false
   // positives will be reported.
-  DefaultBool IsAggressive;
+  bool IsAggressive = false;
 
   void checkPreObjCMessage(const ObjCMethodCall &msg, CheckerContext &C) const;
   void checkPostObjCMessage(const ObjCMethodCall &msg, CheckerContext &C) const;
@@ -949,7 +949,7 @@ void NonLocalizedStringChecker::checkPostCall(const CallEvent &Call,
   const IdentifierInfo *Identifier = Call.getCalleeIdentifier();
 
   SVal sv = Call.getReturnValue();
-  if (isAnnotatedAsReturningLocalized(D) || LSF.count(Identifier) != 0) {
+  if (isAnnotatedAsReturningLocalized(D) || LSF.contains(Identifier)) {
     setLocalizedState(sv, C);
   } else if (isNSStringType(RT, C.getASTContext()) &&
              !hasLocalizedState(sv, C)) {
@@ -1077,7 +1077,10 @@ void EmptyLocalizationContextChecker::checkASTDecl(
     AnalysisDeclContext *DCtx = Mgr.getAnalysisDeclContext(M);
 
     const Stmt *Body = M->getBody();
-    assert(Body);
+    if (!Body) {
+      assert(M->isSynthesizedAccessorStub());
+      continue;
+    }
 
     MethodCrawler MC(M->getCanonicalDecl(), BR, this, Mgr, DCtx);
     MC.VisitStmt(Body);
@@ -1138,13 +1141,12 @@ void EmptyLocalizationContextChecker::MethodCrawler::VisitObjCMessageExpr(
     SE = Mgr.getSourceManager().getSLocEntry(SLInfo.first);
   }
 
-  bool Invalid = false;
-  const llvm::MemoryBuffer *BF =
-      Mgr.getSourceManager().getBuffer(SLInfo.first, SL, &Invalid);
-  if (Invalid)
+  llvm::Optional<llvm::MemoryBufferRef> BF =
+      Mgr.getSourceManager().getBufferOrNone(SLInfo.first, SL);
+  if (!BF)
     return;
-
-  Lexer TheLexer(SL, LangOptions(), BF->getBufferStart(),
+  LangOptions LangOpts;
+  Lexer TheLexer(SL, LangOpts, BF->getBufferStart(),
                  BF->getBufferStart() + SLInfo.second, BF->getBufferEnd());
 
   Token I;
@@ -1337,7 +1339,10 @@ bool PluralMisuseChecker::MethodCrawler::EndVisitIfStmt(IfStmt *I) {
 }
 
 bool PluralMisuseChecker::MethodCrawler::VisitIfStmt(const IfStmt *I) {
-  const Expr *Condition = I->getCond()->IgnoreParenImpCasts();
+  const Expr *Condition = I->getCond();
+  if (!Condition)
+    return true;
+  Condition = Condition->IgnoreParenImpCasts();
   if (isCheckingPlurality(Condition)) {
     MatchingStatements.push_back(I);
     InMatchingStatement = true;
@@ -1400,7 +1405,7 @@ void ento::registerNonLocalizedStringChecker(CheckerManager &mgr) {
           checker, "AggressiveReport");
 }
 
-bool ento::shouldRegisterNonLocalizedStringChecker(const LangOptions &LO) {
+bool ento::shouldRegisterNonLocalizedStringChecker(const CheckerManager &mgr) {
   return true;
 }
 
@@ -1409,7 +1414,7 @@ void ento::registerEmptyLocalizationContextChecker(CheckerManager &mgr) {
 }
 
 bool ento::shouldRegisterEmptyLocalizationContextChecker(
-                                                        const LangOptions &LO) {
+                                                    const CheckerManager &mgr) {
   return true;
 }
 
@@ -1417,6 +1422,6 @@ void ento::registerPluralMisuseChecker(CheckerManager &mgr) {
   mgr.registerChecker<PluralMisuseChecker>();
 }
 
-bool ento::shouldRegisterPluralMisuseChecker(const LangOptions &LO) {
+bool ento::shouldRegisterPluralMisuseChecker(const CheckerManager &mgr) {
   return true;
 }

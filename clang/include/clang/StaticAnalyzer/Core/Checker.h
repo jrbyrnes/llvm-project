@@ -285,9 +285,9 @@ public:
 
 class NewAllocator {
   template <typename CHECKER>
-  static void _checkNewAllocator(void *checker, const CXXNewExpr *NE,
-                                 SVal Target, CheckerContext &C) {
-    ((const CHECKER *)checker)->checkNewAllocator(NE, Target, C);
+  static void _checkNewAllocator(void *checker, const CXXAllocatorCall &Call,
+                                 CheckerContext &C) {
+    ((const CHECKER *)checker)->checkNewAllocator(Call, C);
   }
 
 public:
@@ -561,18 +561,6 @@ struct ImplicitNullDerefEvent {
   bool IsDirectDereference;
 
   static int Tag;
-};
-
-/// A helper class which wraps a boolean value set to false by default.
-///
-/// This class should behave exactly like 'bool' except that it doesn't need to
-/// be explicitly initialized.
-struct DefaultBool {
-  bool val;
-  DefaultBool() : val(false) {}
-  /*implicit*/ operator bool&() { return val; }
-  /*implicit*/ operator const bool&() const { return val; }
-  DefaultBool &operator=(bool b) { val = b; return *this; }
 };
 
 } // end ento namespace

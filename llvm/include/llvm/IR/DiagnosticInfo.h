@@ -15,13 +15,16 @@
 #define LLVM_IR_DIAGNOSTICINFO_H
 
 #include "llvm-c/Types.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/Support/CBindingWrapping.h"
-#include "llvm/Support/YAMLTraits.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TypeSize.h"
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -32,11 +35,15 @@ namespace llvm {
 
 // Forward declarations.
 class DiagnosticPrinter;
+class DIFile;
+class DISubprogram;
+class CallInst;
 class Function;
 class Instruction;
-class LLVMContext;
+class InstructionCost;
 class Module;
-class SMDiagnostic;
+class Type;
+class Value;
 
 /// Defines the different supported severity of a diagnostic.
 enum DiagnosticSeverity : char {
@@ -55,6 +62,7 @@ enum DiagnosticKind {
   DK_ResourceLimit,
   DK_StackSize,
   DK_Linker,
+  DK_Lowering,
   DK_DebugMetadataVersion,
   DK_DebugMetadataInvalid,
   DK_ISelFallback,
@@ -74,8 +82,10 @@ enum DiagnosticKind {
   DK_LastMachineRemark = DK_MachineOptimizationRemarkAnalysis,
   DK_MIRParser,
   DK_PGOProfile,
-  DK_MisExpect,
   DK_Unsupported,
+  DK_SrcMgr,
+  DK_DontCall,
+  DK_MisExpect,
   DK_FirstPluginKind // Must be last value to work with
                      // getNextAvailablePluginDiagnosticKind
 };
@@ -128,7 +138,7 @@ using DiagnosticHandlerFunction = std::function<void(const DiagnosticInfo &)>;
 class DiagnosticInfoInlineAsm : public DiagnosticInfo {
 private:
   /// Optional line information. 0 if not set.
-  unsigned LocCookie = 0;
+  uint64_t LocCookie = 0;
   /// Message to be reported.
   const Twine &MsgStr;
   /// Optional origin of the problem.
@@ -146,7 +156,7 @@ public:
   /// \p MsgStr gives the message.
   /// This class does not copy \p MsgStr, therefore the reference must be valid
   /// for the whole life time of the Diagnostic.
-  DiagnosticInfoInlineAsm(unsigned LocCookie, const Twine &MsgStr,
+  DiagnosticInfoInlineAsm(uint64_t LocCookie, const Twine &MsgStr,
                           DiagnosticSeverity Severity = DS_Error)
       : DiagnosticInfo(DK_InlineAsm, Severity), LocCookie(LocCookie),
         MsgStr(MsgStr) {}
@@ -159,7 +169,7 @@ public:
   DiagnosticInfoInlineAsm(const Instruction &I, const Twine &MsgStr,
                           DiagnosticSeverity Severity = DS_Error);
 
-  unsigned getLocCookie() const { return LocCookie; }
+  uint64_t getLocCookie() const { return LocCookie; }
   const Twine &getMsgStr() const { return MsgStr; }
   const Instruction *getInstruction() const { return Instr; }
 
@@ -191,10 +201,9 @@ public:
   /// \p The function that is concerned by this stack size diagnostic.
   /// \p The computed stack size.
   DiagnosticInfoResourceLimit(const Function &Fn, const char *ResourceName,
-                              uint64_t ResourceSize,
+                              uint64_t ResourceSize, uint64_t ResourceLimit,
                               DiagnosticSeverity Severity = DS_Warning,
-                              DiagnosticKind Kind = DK_ResourceLimit,
-                              uint64_t ResourceLimit = 0)
+                              DiagnosticKind Kind = DK_ResourceLimit)
       : DiagnosticInfo(Kind, Severity), Fn(Fn), ResourceName(ResourceName),
         ResourceSize(ResourceSize), ResourceLimit(ResourceLimit) {}
 
@@ -212,13 +221,13 @@ public:
 };
 
 class DiagnosticInfoStackSize : public DiagnosticInfoResourceLimit {
-  virtual void anchor() override;
+  void anchor() override;
 public:
   DiagnosticInfoStackSize(const Function &Fn, uint64_t StackSize,
-                          DiagnosticSeverity Severity = DS_Warning,
-                          uint64_t StackLimit = 0)
-      : DiagnosticInfoResourceLimit(Fn, "stack size", StackSize, Severity,
-                                    DK_StackSize, StackLimit) {}
+                          uint64_t StackLimit,
+                          DiagnosticSeverity Severity = DS_Warning)
+      : DiagnosticInfoResourceLimit(Fn, "stack frame size", StackSize,
+                                    StackLimit, Severity, DK_StackSize) {}
 
   uint64_t getStackSize() const { return getResourceSize(); }
   uint64_t getStackLimit() const { return getResourceLimit(); }
@@ -363,7 +372,7 @@ public:
 
 /// Common features for diagnostics with an associated location.
 class DiagnosticInfoWithLocationBase : public DiagnosticInfo {
-  virtual void anchor() override;
+  void anchor() override;
 public:
   /// \p Fn is the function where the diagnostic is being emitted. \p Loc is
   /// the location information to use in the diagnostic.
@@ -379,7 +388,7 @@ public:
   /// Return a string with the location information for this diagnostic
   /// in the format "file:line:col". If location information is not available,
   /// it returns "<unknown>:0:0".
-  const std::string getLocationStr() const;
+  std::string getLocationStr() const;
 
   /// Return location information for this diagnostic in three parts:
   /// the relative source file path, line number and column.
@@ -433,8 +442,10 @@ public:
     Argument(StringRef Key, unsigned N);
     Argument(StringRef Key, unsigned long N);
     Argument(StringRef Key, unsigned long long N);
+    Argument(StringRef Key, ElementCount EC);
     Argument(StringRef Key, bool B) : Key(Key), Val(B ? "true" : "false") {}
     Argument(StringRef Key, DebugLoc dl);
+    Argument(StringRef Key, InstructionCost C);
   };
 
   /// \p PassName is the name of the pass emitting this diagnostic. \p
@@ -531,9 +542,10 @@ protected:
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               StringRef>::type S) {
+               StringRef>
+               S) {
   R.insert(S);
   return R;
 }
@@ -543,9 +555,10 @@ operator<<(RemarkT &R,
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &&R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               StringRef>::type S) {
+               StringRef>
+               S) {
   R.insert(S);
   return R;
 }
@@ -553,9 +566,10 @@ operator<<(RemarkT &&R,
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               DiagnosticInfoOptimizationBase::Argument>::type A) {
+               DiagnosticInfoOptimizationBase::Argument>
+               A) {
   R.insert(A);
   return R;
 }
@@ -563,9 +577,10 @@ operator<<(RemarkT &R,
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &&R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               DiagnosticInfoOptimizationBase::Argument>::type A) {
+               DiagnosticInfoOptimizationBase::Argument>
+               A) {
   R.insert(A);
   return R;
 }
@@ -573,9 +588,10 @@ operator<<(RemarkT &&R,
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               DiagnosticInfoOptimizationBase::setIsVerbose>::type V) {
+               DiagnosticInfoOptimizationBase::setIsVerbose>
+               V) {
   R.insert(V);
   return R;
 }
@@ -583,9 +599,10 @@ operator<<(RemarkT &R,
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &&R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               DiagnosticInfoOptimizationBase::setIsVerbose>::type V) {
+               DiagnosticInfoOptimizationBase::setIsVerbose>
+               V) {
   R.insert(V);
   return R;
 }
@@ -593,9 +610,10 @@ operator<<(RemarkT &&R,
 template <class RemarkT>
 RemarkT &
 operator<<(RemarkT &R,
-           typename std::enable_if<
+           std::enable_if_t<
                std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
-               DiagnosticInfoOptimizationBase::setExtraArgs>::type EA) {
+               DiagnosticInfoOptimizationBase::setExtraArgs>
+               EA) {
   R.insert(EA);
   return R;
 }
@@ -603,7 +621,7 @@ operator<<(RemarkT &R,
 /// Common features for diagnostics dealing with optimization remarks
 /// that are used by IR passes.
 class DiagnosticInfoIROptimization : public DiagnosticInfoOptimizationBase {
-  virtual void anchor() override;
+  void anchor() override;
 public:
   /// \p PassName is the name of the pass emitting this diagnostic. \p
   /// RemarkName is a textual identifier for the remark (single-word,
@@ -731,6 +749,11 @@ public:
   OptimizationRemarkMissed(const char *PassName, StringRef RemarkName,
                            const Instruction *Inst);
 
+  /// Same as above but \p F is used to derive code region and debug
+  /// location.
+  OptimizationRemarkMissed(const char *PassName, StringRef RemarkName,
+                           const Function *F);
+
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationRemarkMissed;
   }
@@ -783,6 +806,11 @@ public:
   OptimizationRemarkAnalysis(const char *PassName, StringRef RemarkName,
                              const Instruction *Inst);
 
+  /// Same as above but \p F is used to derive code region and debug
+  /// location.
+  OptimizationRemarkAnalysis(const char *PassName, StringRef RemarkName,
+                             const Function *F);
+
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationRemarkAnalysis;
   }
@@ -824,7 +852,7 @@ private:
 /// Diagnostic information for optimization analysis remarks related to
 /// floating-point non-commutativity.
 class OptimizationRemarkAnalysisFPCommute : public OptimizationRemarkAnalysis {
-  virtual void anchor();
+  void anchor() override;
 public:
   /// \p PassName is the name of the pass emitting this diagnostic. If this name
   /// matches the regular expression given in -Rpass-analysis=, then the
@@ -866,7 +894,7 @@ private:
 /// Diagnostic information for optimization analysis remarks related to
 /// pointer aliasing.
 class OptimizationRemarkAnalysisAliasing : public OptimizationRemarkAnalysis {
-  virtual void anchor();
+  void anchor() override;
 public:
   /// \p PassName is the name of the pass emitting this diagnostic. If this name
   /// matches the regular expression given in -Rpass-analysis=, then the
@@ -905,6 +933,7 @@ private:
 };
 
 /// Diagnostic information for machine IR parser.
+// FIXME: Remove this, use DiagnosticInfoSrcMgr instead.
 class DiagnosticInfoMIRParser : public DiagnosticInfo {
   const SMDiagnostic &Diagnostic;
 
@@ -1007,7 +1036,7 @@ public:
 /// Diagnostic information for MisExpect analysis.
 class DiagnosticInfoMisExpect : public DiagnosticInfoWithLocationBase {
 public:
-    DiagnosticInfoMisExpect(const Instruction *Inst, Twine &Msg);
+  DiagnosticInfoMisExpect(const Instruction *Inst, Twine &Msg);
 
   /// \see DiagnosticInfo::print.
   void print(DiagnosticPrinter &DP) const override;
@@ -1021,6 +1050,72 @@ public:
 private:
   /// Message to report.
   const Twine &Msg;
+};
+
+static DiagnosticSeverity getDiagnosticSeverity(SourceMgr::DiagKind DK) {
+  switch (DK) {
+  case llvm::SourceMgr::DK_Error:
+    return DS_Error;
+    break;
+  case llvm::SourceMgr::DK_Warning:
+    return DS_Warning;
+    break;
+  case llvm::SourceMgr::DK_Note:
+    return DS_Note;
+    break;
+  case llvm::SourceMgr::DK_Remark:
+    return DS_Remark;
+    break;
+  }
+  llvm_unreachable("unknown SourceMgr::DiagKind");
+}
+
+/// Diagnostic information for SMDiagnostic reporting.
+class DiagnosticInfoSrcMgr : public DiagnosticInfo {
+  const SMDiagnostic &Diagnostic;
+  StringRef ModName;
+
+  // For inlineasm !srcloc translation.
+  bool InlineAsmDiag;
+  unsigned LocCookie;
+
+public:
+  DiagnosticInfoSrcMgr(const SMDiagnostic &Diagnostic, StringRef ModName,
+                       bool InlineAsmDiag = true, unsigned LocCookie = 0)
+      : DiagnosticInfo(DK_SrcMgr, getDiagnosticSeverity(Diagnostic.getKind())),
+        Diagnostic(Diagnostic), ModName(ModName), InlineAsmDiag(InlineAsmDiag),
+        LocCookie(LocCookie) {}
+
+  StringRef getModuleName() const { return ModName; }
+  bool isInlineAsmDiag() const { return InlineAsmDiag; }
+  const SMDiagnostic &getSMDiag() const { return Diagnostic; }
+  unsigned getLocCookie() const { return LocCookie; }
+  void print(DiagnosticPrinter &DP) const override;
+
+  static bool classof(const DiagnosticInfo *DI) {
+    return DI->getKind() == DK_SrcMgr;
+  }
+};
+
+void diagnoseDontCall(const CallInst &CI);
+
+class DiagnosticInfoDontCall : public DiagnosticInfo {
+  StringRef CalleeName;
+  StringRef Note;
+  unsigned LocCookie;
+
+public:
+  DiagnosticInfoDontCall(StringRef CalleeName, StringRef Note,
+                         DiagnosticSeverity DS, unsigned LocCookie)
+      : DiagnosticInfo(DK_DontCall, DS), CalleeName(CalleeName), Note(Note),
+        LocCookie(LocCookie) {}
+  StringRef getFunctionName() const { return CalleeName; }
+  StringRef getNote() const { return Note; }
+  unsigned getLocCookie() const { return LocCookie; }
+  void print(DiagnosticPrinter &DP) const override;
+  static bool classof(const DiagnosticInfo *DI) {
+    return DI->getKind() == DK_DontCall;
+  }
 };
 
 } // end namespace llvm

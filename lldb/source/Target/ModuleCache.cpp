@@ -1,4 +1,4 @@
-//===--------------------- ModuleCache.cpp ----------------------*- C++ -*-===//
+//===-- ModuleCache.cpp ---------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -13,11 +13,12 @@
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Host/File.h"
 #include "lldb/Host/LockFile.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 
-#include <assert.h>
+#include <cassert>
 
 #include <cstdio>
 
@@ -80,7 +81,7 @@ FileSpec GetSymbolFileSpec(const FileSpec &module_file_spec) {
 
 void DeleteExistingModule(const FileSpec &root_dir_spec,
                           const FileSpec &sysroot_module_path_spec) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_MODULES));
+  Log *log = GetLog(LLDBLog::Modules);
   UUID module_uuid;
   {
     auto module_sp =
@@ -159,7 +160,7 @@ ModuleLock::ModuleLock(const FileSpec &root_dir_spec, const UUID &uuid,
   m_file_spec = JoinPath(lock_dir_spec, uuid.GetAsString().c_str());
 
   auto file = FileSystem::Instance().Open(
-      m_file_spec, File::eOpenOptionWrite | File::eOpenOptionCanCreate |
+      m_file_spec, File::eOpenOptionWriteOnly | File::eOpenOptionCanCreate |
                        File::eOpenOptionCloseOnExec);
   if (file)
     m_file_up = std::move(file.get());
@@ -169,7 +170,7 @@ ModuleLock::ModuleLock(const FileSpec &root_dir_spec, const UUID &uuid,
     return;
   }
 
-  m_lock.reset(new lldb_private::LockFile(m_file_up->GetDescriptor()));
+  m_lock = std::make_unique<lldb_private::LockFile>(m_file_up->GetDescriptor());
   error = m_lock->WriteLock(0, 1);
   if (error.Fail())
     error.SetErrorStringWithFormat("Failed to lock file: %s",

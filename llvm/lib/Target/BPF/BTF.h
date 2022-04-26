@@ -113,7 +113,7 @@ struct CommonType {
   /// "Size" tells the size of the type it is describing.
   ///
   /// "Type" is used by PTR, TYPEDEF, VOLATILE, CONST, RESTRICT,
-  /// FUNC, FUNC_PROTO and VAR.
+  /// FUNC, FUNC_PROTO, VAR, DECL_TAG and TYPE_TAG.
   /// "Type" is a type_id referring to another type.
   union {
     uint32_t Size;
@@ -176,12 +176,18 @@ struct BTFParam {
   uint32_t Type;
 };
 
+/// BTF_KIND_FUNC can be global, static or extern.
+enum : uint8_t {
+  FUNC_STATIC = 0,
+  FUNC_GLOBAL = 1,
+  FUNC_EXTERN = 2,
+};
+
 /// Variable scoping information.
 enum : uint8_t {
   VAR_STATIC = 0,           ///< Linkage: InternalLinkage
   VAR_GLOBAL_ALLOCATED = 1, ///< Linkage: ExternalLinkage
-  VAR_GLOBAL_TENTATIVE = 2, ///< Linkage: CommonLinkage
-  VAR_GLOBAL_EXTERNAL = 3,  ///< Linkage: ExternalLinkage
+  VAR_GLOBAL_EXTERNAL = 2,  ///< Linkage: ExternalLinkage
 };
 
 /// BTF_KIND_DATASEC are followed by multiple "struct BTFDataSecVar".

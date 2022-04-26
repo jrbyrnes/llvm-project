@@ -6,13 +6,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_ClangDeclVendor_h_
-#define liblldb_ClangDeclVendor_h_
+#ifndef LLDB_SOURCE_PLUGINS_EXPRESSIONPARSER_CLANG_CLANGDECLVENDOR_H
+#define LLDB_SOURCE_PLUGINS_EXPRESSIONPARSER_CLANG_CLANGDECLVENDOR_H
 
-#include "lldb/Core/ClangForward.h"
 #include "lldb/Symbol/DeclVendor.h"
 
-#include "clang/AST/ExternalASTMerger.h"
+namespace clang {
+class NamedDecl;
+}
 
 namespace lldb_private {
 
@@ -21,21 +22,12 @@ class ClangDeclVendor : public DeclVendor {
 public:
   ClangDeclVendor(DeclVendorKind kind) : DeclVendor(kind) {}
 
-  virtual ~ClangDeclVendor() {}
+  virtual ~ClangDeclVendor() = default;
 
-  /// Interface for ExternalASTMerger. Returns an ImporterSource allowing type
-  /// completion.
-  ///
-  /// \return
-  ///     An ImporterSource for this ClangDeclVendor.
-  virtual clang::ExternalASTMerger::ImporterSource GetImporterSource() = 0;
+  using DeclVendor::FindDecls;
 
   uint32_t FindDecls(ConstString name, bool append, uint32_t max_matches,
-                     std::vector<CompilerDecl> &decls) override;
-
-  virtual uint32_t FindDecls(ConstString name, bool append,
-                             uint32_t max_matches,
-                             std::vector<clang::NamedDecl *> &decls) = 0;
+                     std::vector<clang::NamedDecl *> &decls);
 
   static bool classof(const DeclVendor *vendor) {
     return vendor->GetKind() >= eClangDeclVendor &&
@@ -43,7 +35,8 @@ public:
   }
 
 private:
-  DISALLOW_COPY_AND_ASSIGN(ClangDeclVendor);
+  ClangDeclVendor(const ClangDeclVendor &) = delete;
+  const ClangDeclVendor &operator=(const ClangDeclVendor &) = delete;
 };
 } // namespace lldb_private
 

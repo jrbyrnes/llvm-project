@@ -1,4 +1,4 @@
-//===-- NativeRegisterContextLinux.cpp --------------------------*- C++ -*-===//
+//===-- NativeRegisterContextLinux.cpp ------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -19,11 +19,6 @@
 using namespace lldb_private;
 using namespace lldb_private::process_linux;
 
-NativeRegisterContextLinux::NativeRegisterContextLinux(
-    NativeThreadProtocol &native_thread,
-    RegisterInfoInterface *reg_info_interface_p)
-    : NativeRegisterContextRegisterInfo(native_thread, reg_info_interface_p) {}
-
 lldb::ByteOrder NativeRegisterContextLinux::GetByteOrder() const {
   return m_thread.GetProcess().GetByteOrder();
 }
@@ -34,7 +29,7 @@ Status NativeRegisterContextLinux::ReadRegisterRaw(uint32_t reg_index,
   if (!reg_info)
     return Status("register %" PRIu32 " not found", reg_index);
 
-  return DoReadRegisterValue(reg_info->byte_offset, reg_info->name,
+  return DoReadRegisterValue(GetPtraceOffset(reg_index), reg_info->name,
                              reg_info->byte_size, reg_value);
 }
 
@@ -91,7 +86,8 @@ NativeRegisterContextLinux::WriteRegisterRaw(uint32_t reg_index,
                   "for write register index %" PRIu32,
                   __FUNCTION__, reg_to_write);
 
-  return DoWriteRegisterValue(reg_info->byte_offset, reg_info->name, reg_value);
+  return DoWriteRegisterValue(GetPtraceOffset(reg_index), reg_info->name,
+                              reg_value);
 }
 
 Status NativeRegisterContextLinux::ReadGPR() {
@@ -134,7 +130,7 @@ Status NativeRegisterContextLinux::DoReadRegisterValue(uint32_t offset,
                                                        const char *reg_name,
                                                        uint32_t size,
                                                        RegisterValue &value) {
-  Log *log(ProcessPOSIXLog::GetLogIfAllCategoriesSet(POSIX_LOG_REGISTERS));
+  Log *log = GetLog(POSIXLog::Registers);
 
   long data;
   Status error = NativeProcessLinux::PtraceWrapper(
@@ -151,7 +147,7 @@ Status NativeRegisterContextLinux::DoReadRegisterValue(uint32_t offset,
 
 Status NativeRegisterContextLinux::DoWriteRegisterValue(
     uint32_t offset, const char *reg_name, const RegisterValue &value) {
-  Log *log(ProcessPOSIXLog::GetLogIfAllCategoriesSet(POSIX_LOG_REGISTERS));
+  Log *log = GetLog(POSIXLog::Registers);
 
   void *buf = reinterpret_cast<void *>(value.GetAsUInt64());
   LLDB_LOG(log, "{0}: {1}", reg_name, buf);

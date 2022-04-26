@@ -1,5 +1,4 @@
 ; RUN: opt < %s -S -passes=msan 2>&1 | FileCheck %s
-; RUN: opt < %s -msan -S | FileCheck %s
 
 target datalayout = "E-m:m-i8:8:32-i16:16:32-i64:64-n32:64-S128"
 target triple = "mips64--linux"
@@ -21,8 +20,7 @@ define i32 @foo(i32 %guard, ...) {
 ; CHECK: [[B:%.*]] = add i64 0, [[A]]
 ; CHECK: [[C:%.*]] = alloca {{.*}} [[B]]
 
-; CHECK: [[STACK:%.*]] = bitcast {{.*}} @__msan_va_arg_tls to i8*
-; CHECK: call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 [[C]], i8* align 8 [[STACK]], i64 [[B]], i1 false)
+; CHECK: call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 [[C]], i8* align 8 bitcast ({{.*}} @__msan_va_arg_tls to i8*), i64 [[B]], i1 false)
 
 declare void @llvm.lifetime.start.p0i8(i64, i8* nocapture) #1
 declare void @llvm.va_start(i8*) #2

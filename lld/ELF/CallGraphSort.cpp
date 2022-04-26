@@ -16,9 +16,9 @@
 ///
 /// Definitions:
 /// * Cluster
-///   * An ordered list of input sections which are layed out as a unit. At the
+///   * An ordered list of input sections which are laid out as a unit. At the
 ///     beginning of the algorithm each input section has its own cluster and
-///     the weight of the cluster is the sum of the weight of all incomming
+///     the weight of the cluster is the sum of the weight of all incoming
 ///     edges.
 /// * Call-Chain Clustering (C³) Heuristic
 ///   * Defines when and how clusters are combined. Pick the highest weighted
@@ -26,7 +26,7 @@
 ///     penalize it too much.
 /// * Density
 ///   * The weight of the cluster divided by the size of the cluster. This is a
-///     proxy for the ammount of execution time spent per byte of the cluster.
+///     proxy for the amount of execution time spent per byte of the cluster.
 ///
 /// It does so given a call graph profile by the following:
 /// * Build a weighted call graph from the call graph profile
@@ -41,16 +41,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "CallGraphSort.h"
-#include "OutputSections.h"
-#include "SymbolTable.h"
+#include "InputFiles.h"
+#include "InputSection.h"
 #include "Symbols.h"
+#include "llvm/Support/FileSystem.h"
 
 #include <numeric>
 
 using namespace llvm;
-
-namespace lld {
-namespace elf {
+using namespace lld;
+using namespace lld::elf;
 
 namespace {
 struct Edge {
@@ -69,7 +69,7 @@ struct Cluster {
 
   int next;
   int prev;
-  size_t size = 0;
+  uint64_t size;
   uint64_t weight = 0;
   uint64_t initialWeight = 0;
   Edge bestPred = {-1, 0};
@@ -86,7 +86,7 @@ private:
   std::vector<const InputSectionBase *> sections;
 };
 
-// Maximum ammount the combined cluster density can be worse than the original
+// Maximum amount the combined cluster density can be worse than the original
 // cluster to consider merging.
 constexpr int MAX_DENSITY_DEGRADATION = 8;
 
@@ -115,8 +115,8 @@ CallGraphSort::CallGraphSort() {
 
   // Create the graph.
   for (std::pair<SectionPair, uint64_t> &c : profile) {
-    const auto *fromSB = cast<InputSectionBase>(c.first.first->repl);
-    const auto *toSB = cast<InputSectionBase>(c.first.second->repl);
+    const auto *fromSB = cast<InputSectionBase>(c.first.first);
+    const auto *toSB = cast<InputSectionBase>(c.first.second);
     uint64_t weight = c.second;
 
     // Ignore edges between input sections belonging to different output
@@ -224,14 +224,14 @@ DenseMap<const InputSectionBase *, int> CallGraphSort::run() {
 
   DenseMap<const InputSectionBase *, int> orderMap;
   int curOrder = 1;
-  for (int leader : sorted)
+  for (int leader : sorted) {
     for (int i = leader;;) {
       orderMap[sections[i]] = curOrder++;
       i = clusters[i].next;
       if (i == leader)
         break;
     }
-
+  }
   if (!config->printSymbolOrder.empty()) {
     std::error_code ec;
     raw_fd_ostream os(config->printSymbolOrder, ec, sys::fs::OF_None);
@@ -260,14 +260,11 @@ DenseMap<const InputSectionBase *, int> CallGraphSort::run() {
   return orderMap;
 }
 
-// Sort sections by the profile data provided by -callgraph-profile-file
+// Sort sections by the profile data provided by --callgraph-profile-file.
 //
 // This first builds a call graph based on the profile data then merges sections
-// according to the C³ huristic. All clusters are then sorted by a density
+// according to the C³ heuristic. All clusters are then sorted by a density
 // metric to further improve locality.
-DenseMap<const InputSectionBase *, int> computeCallGraphProfileOrder() {
+DenseMap<const InputSectionBase *, int> elf::computeCallGraphProfileOrder() {
   return CallGraphSort().run();
 }
-
-} // namespace elf
-} // namespace lld

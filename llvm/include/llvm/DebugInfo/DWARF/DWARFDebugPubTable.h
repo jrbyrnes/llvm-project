@@ -10,15 +10,17 @@
 #define LLVM_DEBUGINFO_DWARF_DWARFDEBUGPUBTABLE_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/Dwarf.h"
-#include "llvm/DebugInfo/DWARF/DWARFObject.h"
 #include <cstdint>
 #include <vector>
 
 namespace llvm {
 
 class raw_ostream;
+class DWARFDataExtractor;
+class Error;
 
 /// Represents structure for holding and parsing .debug_pub* tables.
 class DWARFDebugPubTable {
@@ -42,7 +44,10 @@ public:
   struct Set {
     /// The total length of the entries for that set, not including the length
     /// field itself.
-    uint32_t Length;
+    uint64_t Length;
+
+    /// The DWARF format of the set.
+    dwarf::DwarfFormat Format;
 
     /// This number is specific to the name lookup table and is independent of
     /// the DWARF version number.
@@ -54,7 +59,7 @@ public:
 
     /// The size in bytes of the contents of the .debug_info section generated
     /// to represent that compilation unit.
-    uint32_t Size;
+    uint64_t Size;
 
     std::vector<Entry> Entries;
   };
@@ -64,11 +69,13 @@ private:
 
   /// gnu styled tables contains additional information.
   /// This flag determines whether or not section we parse is debug_gnu* table.
-  bool GnuStyle;
+  bool GnuStyle = false;
 
 public:
-  DWARFDebugPubTable(const DWARFObject &Obj, const DWARFSection &Sec,
-                     bool LittleEndian, bool GnuStyle);
+  DWARFDebugPubTable() = default;
+
+  void extract(DWARFDataExtractor Data, bool GnuStyle,
+               function_ref<void(Error)> RecoverableErrorHandler);
 
   void dump(raw_ostream &OS) const;
 

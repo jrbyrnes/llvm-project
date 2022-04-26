@@ -44,6 +44,48 @@ foreach(arch ${BUILTIN_TEST_ARCH})
     string(REPLACE ";" " " BUILTINS_TEST_TARGET_CFLAGS "${BUILTINS_TEST_TARGET_CFLAGS}")
   endif()
 
+  if (${arch} MATCHES "arm|aarch64|arm64" AND COMPILER_RT_HAS_FLOAT16)
+    list(APPEND BUILTINS_TEST_TARGET_CFLAGS -DCOMPILER_RT_HAS_FLOAT16)
+    string(REPLACE ";" " " BUILTINS_TEST_TARGET_CFLAGS "${BUILTINS_TEST_TARGET_CFLAGS}")
+  endif()
+
+  if(COMPILER_RT_ENABLE_CET)
+    if(NOT arch MATCHES "i?86|x86_64|AMD64")
+      message(SEND_ERROR "${arch} does not support CET")
+    endif()
+    if(COMPILER_RT_HAS_FCF_PROTECTION_FLAG)
+      list(APPEND BUILTINS_TEST_TARGET_CFLAGS -fcf-protection=full)
+      string(REPLACE ";" " " BUILTINS_TEST_TARGET_CFLAGS "${BUILTINS_TEST_TARGET_CFLAGS}")
+    endif()
+  endif()
+
+  # Compute builtins available in library and add them as lit features.
+  if(APPLE)
+    # TODO: Support other Apple platforms.
+    set(BUILTIN_LIB_TARGET_NAME "clang_rt.builtins_${arch}_osx")
+  else()
+    set(BUILTIN_LIB_TARGET_NAME "clang_rt.builtins-${arch}")
+  endif()
+  if (NOT TARGET "${BUILTIN_LIB_TARGET_NAME}")
+    message(FATAL_ERROR "Target ${BUILTIN_LIB_TARGET_NAME} does not exist")
+  endif()
+  get_target_property(BUILTIN_LIB_SOURCES "${BUILTIN_LIB_TARGET_NAME}" SOURCES)
+  list(LENGTH BUILTIN_LIB_SOURCES BUILTIN_LIB_SOURCES_LENGTH)
+  if (BUILTIN_LIB_SOURCES_LENGTH EQUAL 0)
+    message(FATAL_ERROR "Failed to find source files for ${arch} builtin library")
+  endif()
+  set(BUILTINS_LIT_SOURCE_FEATURES "")
+  foreach (file_name ${BUILTIN_LIB_SOURCES})
+    # Strip off any directories and file extensions. This approach means we add
+    # add a single feature if there is a C source file or assembly override
+    # present in the builtin library.
+    # E.g.
+    # "hexagon/udivsi3.S" => "udivsi3"
+    # "udivsi3.c" => "udivsi3"
+    get_filename_component(FILE_NAME_FILTERED "${file_name}" NAME_WE)
+    list(APPEND BUILTINS_LIT_SOURCE_FEATURES "librt_has_${FILE_NAME_FILTERED}")
+  endforeach()
+
   string(TOUPPER ${arch} ARCH_UPPER_CASE)
   set(CONFIG_NAME ${ARCH_UPPER_CASE}${OS_NAME}Config)
   configure_lit_site_cfg(

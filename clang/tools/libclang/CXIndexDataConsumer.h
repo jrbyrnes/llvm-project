@@ -332,10 +332,9 @@ class CXIndexDataConsumer : public index::IndexDataConsumer {
 
 public:
   CXIndexDataConsumer(CXClientData clientData, IndexerCallbacks &indexCallbacks,
-                  unsigned indexOptions, CXTranslationUnit cxTU)
-    : Ctx(nullptr), ClientData(clientData), CB(indexCallbacks),
-      IndexOptions(indexOptions), CXTU(cxTU),
-      StrScratch(), StrAdapterCount(0) { }
+                      unsigned indexOptions, CXTranslationUnit cxTU)
+      : Ctx(nullptr), ClientData(clientData), CB(indexCallbacks),
+        IndexOptions(indexOptions), CXTU(cxTU), StrAdapterCount(0) {}
 
   ASTContext &getASTContext() const { return *Ctx; }
   CXTranslationUnit getCXTU() const { return CXTU; }
@@ -363,9 +362,9 @@ public:
 
   void enteredMainFile(const FileEntry *File);
 
-  void ppIncludedFile(SourceLocation hashLoc,
-                      StringRef filename, const FileEntry *File,
-                      bool isImport, bool isAngled, bool isModuleImport);
+  void ppIncludedFile(SourceLocation hashLoc, StringRef filename,
+                      Optional<FileEntryRef> File, bool isImport, bool isAngled,
+                      bool isModuleImport);
 
   void importedModule(const ImportDecl *ImportD);
   void importedPCH(const FileEntry *File);
@@ -431,13 +430,13 @@ public:
   static bool isTemplateImplicitInstantiation(const Decl *D);
 
 private:
-  bool handleDeclOccurence(const Decl *D, index::SymbolRoleSet Roles,
-                           ArrayRef<index::SymbolRelation> Relations,
-                           SourceLocation Loc, ASTNodeInfo ASTNode) override;
+  bool handleDeclOccurrence(const Decl *D, index::SymbolRoleSet Roles,
+                            ArrayRef<index::SymbolRelation> Relations,
+                            SourceLocation Loc, ASTNodeInfo ASTNode) override;
 
-  bool handleModuleOccurence(const ImportDecl *ImportD, const Module *Mod,
-                             index::SymbolRoleSet Roles,
-                             SourceLocation Loc) override;
+  bool handleModuleOccurrence(const ImportDecl *ImportD, const Module *Mod,
+                              index::SymbolRoleSet Roles,
+                              SourceLocation Loc) override;
 
   void finish() override;
 

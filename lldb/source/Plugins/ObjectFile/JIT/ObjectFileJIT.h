@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef liblldb_ObjectFileJIT_h_
-#define liblldb_ObjectFileJIT_h_
+#ifndef LLDB_SOURCE_PLUGINS_OBJECTFILE_JIT_OBJECTFILEJIT_H
+#define LLDB_SOURCE_PLUGINS_OBJECTFILE_JIT_OBJECTFILEJIT_H
 
 #include "lldb/Core/Address.h"
 #include "lldb/Symbol/ObjectFile.h"
@@ -26,17 +26,19 @@ public:
 
   static void Terminate();
 
-  static lldb_private::ConstString GetPluginNameStatic();
+  static llvm::StringRef GetPluginNameStatic() { return "jit"; }
 
-  static const char *GetPluginDescriptionStatic();
+  static llvm::StringRef GetPluginDescriptionStatic() {
+    return "JIT code object file";
+  }
 
   static lldb_private::ObjectFile *
-  CreateInstance(const lldb::ModuleSP &module_sp, lldb::DataBufferSP &data_sp,
+  CreateInstance(const lldb::ModuleSP &module_sp, lldb::DataBufferSP data_sp,
                  lldb::offset_t data_offset, const lldb_private::FileSpec *file,
                  lldb::offset_t file_offset, lldb::offset_t length);
 
   static lldb_private::ObjectFile *CreateMemoryInstance(
-      const lldb::ModuleSP &module_sp, lldb::DataBufferSP &data_sp,
+      const lldb::ModuleSP &module_sp, lldb::WritableDataBufferSP data_sp,
       const lldb::ProcessSP &process_sp, lldb::addr_t header_addr);
 
   static size_t GetModuleSpecifications(const lldb_private::FileSpec &file,
@@ -65,7 +67,7 @@ public:
 
   uint32_t GetAddressByteSize() const override;
 
-  lldb_private::Symtab *GetSymtab() override;
+  void ParseSymtab(lldb_private::Symtab &symtab) override;
 
   bool IsStripped() override;
 
@@ -96,12 +98,10 @@ public:
   ObjectFile::Strata CalculateStrata() override;
 
   // PluginInterface protocol
-  lldb_private::ConstString GetPluginName() override;
-
-  uint32_t GetPluginVersion() override;
+  llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
 
 protected:
   lldb::ObjectFileJITDelegateWP m_delegate_wp;
 };
 
-#endif // liblldb_ObjectFileJIT_h_
+#endif // LLDB_SOURCE_PLUGINS_OBJECTFILE_JIT_OBJECTFILEJIT_H

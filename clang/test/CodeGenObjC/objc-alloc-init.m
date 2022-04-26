@@ -1,14 +1,14 @@
-// RUN: %clang_cc1 %s -fobjc-exceptions -fexceptions -fobjc-runtime=macosx-10.14.4 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=OPTIMIZED --check-prefix=EITHER
-// RUN: %clang_cc1 %s -fobjc-exceptions -fexceptions -fobjc-runtime=macosx-10.14.3 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=NOT_OPTIMIZED --check-prefix=EITHER
-// RUN: %clang_cc1 %s -fobjc-exceptions -fexceptions -fobjc-runtime=ios-12.2 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=OPTIMIZED --check-prefix=EITHER
-// RUN: %clang_cc1 %s -fobjc-exceptions -fexceptions -fobjc-runtime=ios-12.1 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=NOT_OPTIMIZED --check-prefix=EITHER
+// RUN: %clang_cc1 -no-opaque-pointers %s -fobjc-exceptions -fexceptions -fobjc-runtime=macosx-10.14.4 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=OPTIMIZED --check-prefix=EITHER
+// RUN: %clang_cc1 -no-opaque-pointers %s -fobjc-exceptions -fexceptions -fobjc-runtime=macosx-10.14.3 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=NOT_OPTIMIZED --check-prefix=EITHER
+// RUN: %clang_cc1 -no-opaque-pointers %s -fobjc-exceptions -fexceptions -fobjc-runtime=ios-12.2 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=OPTIMIZED --check-prefix=EITHER
+// RUN: %clang_cc1 -no-opaque-pointers %s -fobjc-exceptions -fexceptions -fobjc-runtime=ios-12.1 -emit-llvm -O0 -o - | FileCheck %s --check-prefix=NOT_OPTIMIZED --check-prefix=EITHER
 
 @interface X
 +(X *)alloc;
 -(X *)init;
 @end
 
-void f() {
+void f(void) {
   [[X alloc] init];
   // OPTIMIZED: call i8* @objc_alloc_init(
   // NOT_OPTIMIZED: call i8* @objc_alloc(
@@ -22,13 +22,22 @@ void f() {
 }
 
 @interface Y : X
++(Class)class;
 +(void)meth;
 -(void)instanceMeth;
 @end
 
 @implementation Y
++(Class)class {
+  return self;
+}
 +(void)meth {
   [[self alloc] init];
+  // OPTIMIZED: call i8* @objc_alloc_init(
+  // NOT_OPTIMIZED: call i8* @objc_alloc(
+}
++ (void)meth2 {
+  [[[self class] alloc] init];
   // OPTIMIZED: call i8* @objc_alloc_init(
   // NOT_OPTIMIZED: call i8* @objc_alloc(
 }
@@ -36,7 +45,7 @@ void f() {
   // EITHER-NOT: call i8* @objc_alloc
   // EITHER: call {{.*}} @objc_msgSend
   // EITHER: call {{.*}} @objc_msgSend
-  [[self alloc] init];
+  [[(id)self alloc] init];
 }
 @end
 

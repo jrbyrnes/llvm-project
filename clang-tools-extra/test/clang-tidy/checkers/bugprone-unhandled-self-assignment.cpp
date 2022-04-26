@@ -3,11 +3,11 @@
 namespace std {
 
 template <class T>
-void swap(T x, T y) {
+void swap(T &x, T &y) {
 }
 
 template <class T>
-T &&move(T x) {
+T &&move(T &x) {
 }
 
 template <class T>
@@ -212,6 +212,21 @@ private:
   T *p;
 };
 
+// https://bugs.llvm.org/show_bug.cgi?id=44499
+class Foo2;
+template <int a>
+bool operator!=(Foo2 &, Foo2 &) {
+  class Bar2 {
+    Bar2 &operator=(const Bar2 &other) {
+      // CHECK-MESSAGES: [[@LINE-1]]:11: warning: operator=() does not handle self-assignment properly [bugprone-unhandled-self-assignment]
+      p = other.p;
+      return *this;
+    }
+
+    int *p;
+  };
+}
+
 ///////////////////////////////////////////////////////////////////
 /// Test cases correctly ignored by the check.
 
@@ -282,6 +297,21 @@ public:
 private:
   T *p;
 };
+
+// https://bugs.llvm.org/show_bug.cgi?id=44499
+class Foo;
+template <int a>
+bool operator!=(Foo &, Foo &) {
+  class Bar {
+    Bar &operator=(const Bar &other) {
+      if (this != &other) {
+      }
+      return *this;
+    }
+
+    int *p;
+  };
+}
 
 // There is no warning if the copy assignment operator gets the object by value.
 class PassedByValue {
@@ -373,7 +403,7 @@ private:
 class CopyAndMove2 {
 public:
   CopyAndMove2 &operator=(const CopyAndMove2 &object) {
-    *this = std::move(CopyAndMove2(object));
+    *this = CopyAndMove2(object);
     return *this;
   }
 

@@ -1,13 +1,11 @@
+; Test misexpect doesn't issue diagnostics when a branch is marked unpredictable
+
 ; RUN: llvm-profdata merge %S/Inputs/misexpect-branch-correct.proftext -o %t.profdata
 
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pgo-warn-misexpect -pass-remarks=misexpect 2>&1 | FileCheck %s
-
-; New PM
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -pass-remarks=misexpect -S  2>&1 | FileCheck %s
 
 ; CHECK-NOT: warning: {{.*}}
 ; CHECK-NOT: remark: {{.*}}
-; CHECK-NOT: !"misexpect"
 
 
 ; ModuleID = 'misexpect-branch-unpredictable.c'

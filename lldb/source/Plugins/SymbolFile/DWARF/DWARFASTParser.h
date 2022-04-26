@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef SymbolFileDWARF_DWARFASTParser_h_
-#define SymbolFileDWARF_DWARFASTParser_h_
+#ifndef LLDB_SOURCE_PLUGINS_SYMBOLFILE_DWARF_DWARFASTPARSER_H
+#define LLDB_SOURCE_PLUGINS_SYMBOLFILE_DWARF_DWARFASTPARSER_H
 
 #include "DWARFDefines.h"
 #include "lldb/Core/PluginInterface.h"
@@ -24,7 +24,7 @@ class SymbolFileDWARF;
 
 class DWARFASTParser {
 public:
-  virtual ~DWARFASTParser() {}
+  virtual ~DWARFASTParser() = default;
 
   virtual lldb::TypeSP ParseTypeFromDWARF(const lldb_private::SymbolContext &sc,
                                           const DWARFDIE &die,
@@ -32,7 +32,8 @@ public:
 
   virtual lldb_private::Function *
   ParseFunctionFromDWARF(lldb_private::CompileUnit &comp_unit,
-                         const DWARFDIE &die) = 0;
+                         const DWARFDIE &die,
+                         const lldb_private::AddressRange &range) = 0;
 
   virtual bool
   CompleteTypeFromDWARF(const DWARFDIE &die, lldb_private::Type *type,
@@ -55,4 +56,4 @@ public:
                       const lldb_private::ExecutionContext *exe_ctx = nullptr);
 };
 
-#endif // SymbolFileDWARF_DWARFASTParser_h_
+#endif // LLDB_SOURCE_PLUGINS_SYMBOLFILE_DWARF_DWARFASTPARSER_H

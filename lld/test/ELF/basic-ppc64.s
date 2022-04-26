@@ -14,7 +14,7 @@
   li 3,55
   sc
 
-// CHECK:Format: ELF64-ppc64
+// CHECK:      Format: elf64-powerpc
 // LE-NEXT:    Arch: powerpc64le
 // BE-NEXT:    Arch: powerpc64{{$}}
 // CHECK-NEXT: AddressSize: 64bit
@@ -33,7 +33,7 @@
 // CHECK-NEXT:  Type: SharedObject (0x3)
 // CHECK-NEXT:  Machine: EM_PPC64 (0x15)
 // CHECK-NEXT:  Version: 1
-// CHECK-NEXT:  Entry: 0x1022C
+// CHECK-NEXT:  Entry: 0x0
 // CHECK-NEXT:  ProgramHeaderOffset: 0x40
 // CHECK-NEXT:  SectionHeaderOffset: 0x330
 // CHECK-NEXT:  Flags [ (0x2)

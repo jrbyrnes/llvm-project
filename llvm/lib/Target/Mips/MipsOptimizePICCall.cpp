@@ -170,7 +170,7 @@ static void eraseGPOpnd(MachineInstr &MI) {
   for (unsigned I = 0; I < MI.getNumOperands(); ++I) {
     MachineOperand &MO = MI.getOperand(I);
     if (MO.isReg() && MO.getReg() == Reg) {
-      MI.RemoveOperand(I);
+      MI.removeOperand(I);
       return;
     }
   }
@@ -218,8 +218,7 @@ bool OptimizePICCall::runOnMachineFunction(MachineFunction &F) {
     MBBI.preVisit(ScopedHT);
     Changed |= visitNode(MBBI);
     const MachineDomTreeNode *Node = MBBI.getNode();
-    const std::vector<MachineDomTreeNode *> &Children = Node->getChildren();
-    WorkList.append(Children.begin(), Children.end());
+    WorkList.append(Node->begin(), Node->end());
   }
 
   return Changed;

@@ -11,12 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_BACKGROUND_INDEX_REBUILD_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_BACKGROUND_INDEX_REBUILD_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_BACKGROUNDREBUILD_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_BACKGROUNDREBUILD_H
 
 #include "index/FileIndex.h"
 #include "index/Index.h"
-#include "llvm/Support/Threading.h"
 #include <cstddef>
 
 namespace clang {
@@ -70,7 +69,7 @@ public:
   // Ensures we won't start any more rebuilds.
   void shutdown();
 
-  // Thresholds for rebuilding as TUs get indexed.
+  // Thresholds for rebuilding as TUs get indexed. Exposed for testing.
   const unsigned TUsBeforeFirstBuild; // Typically one per worker thread.
   const unsigned TUsBeforeRebuild = 100;
 

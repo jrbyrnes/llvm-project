@@ -1,4 +1,4 @@
-// RUN: %check_clang_tidy %s readability-const-return-type %t
+// RUN: %check_clang_tidy -std=c++14 %s readability-const-return-type %t
 
 //  p# = positive test
 //  n# = negative test
@@ -36,6 +36,9 @@ const T p32(T t) { return t; }
 // not consider it const-qualified without knowing `T`.
 template <typename T>
 typename std::add_const<T>::type n15(T v) { return v; }
+
+template <bool B>
+struct MyStruct {};
 
 template <typename A>
 class Klazz {
@@ -128,9 +131,45 @@ const Klazz<const int> p12() {}
 // CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const int>'
 // CHECK-FIXES: Klazz<const int> p12() {}
 
+const Klazz<const Klazz<const int>> p33() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<
+// CHECK-FIXES: Klazz<const Klazz<const int>> p33() {}
+
 const Klazz<const int>* const p13() {}
 // CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const int> *
 // CHECK-FIXES: const Klazz<const int>* p13() {}
+
+const Klazz<const int>* const volatile p14() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const int> *
+// CHECK-FIXES: const Klazz<const int>* volatile p14() {}
+
+const MyStruct<0 < 1> p34() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const MyStruct<0 < 1>'
+// CHECK-FIXES: MyStruct<0 < 1> p34() {}
+
+MyStruct<0 < 1> const p35() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const MyStruct<0 < 1>'
+// CHECK-FIXES: MyStruct<0 < 1> p35() {}
+
+Klazz<MyStruct<0 < 1> const> const p36() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const MyStru
+// CHECK-FIXES: Klazz<MyStruct<0 < 1> const> p36() {}
+
+const Klazz<MyStruct<0 < 1> const> *const p37() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const MyStru
+// CHECK-FIXES: const Klazz<MyStruct<0 < 1> const> *p37() {}
+
+Klazz<const MyStruct<0 < 1>> const p38() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const MyStru
+// CHECK-FIXES: Klazz<const MyStruct<0 < 1>> p38() {}
+
+const Klazz<const MyStruct<0 < 1>> p39() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<
+// CHECK-FIXES: Klazz<const MyStruct<0 < 1>> p39() {}
+
+const Klazz<const MyStruct<(0 > 1)>> p40() {}
+// CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const Klazz<const MyStru
+// CHECK-FIXES: Klazz<const MyStruct<(0 > 1)>> p40() {}
 
 // re-declaration of p15.
 const int p15();
@@ -232,3 +271,54 @@ const int n14();
 
 int **const * n_multiple_ptr();
 int *const & n_pointer_ref();
+
+class PVBase {
+public:
+  virtual const int getC() = 0;
+  // CHECK-MESSAGES: [[@LINE-1]]:3: warning: return type 'const int' is 'const'-qualified at the top level, which may reduce code readability without improving const correctness
+  // CHECK-NOT-FIXES: virtual int getC() = 0;
+};
+
+class PVDerive : public PVBase {
+public:
+  const int getC() { return 1; }
+  // CHECK-MESSAGES: [[@LINE-1]]:3: warning: return type 'const int' is 'const'-qualified at the top level, which may reduce code readability without improving const correctness
+  // CHECK-NOT-FIXES: int getC() { return 1; }
+};
+
+// Don't warn about const auto types, because it may be impossible to make them non-const
+// without a significant semantics change. Since `auto` drops cv-qualifiers,
+// tests check `decltype(auto)`.
+decltype(auto) n16() {
+  static const int i = 42;
+  return i;
+}
+
+// Don't warn about `decltype(<expr>)` types
+const int n17i = 1;
+decltype(n17i) n17() {
+  return 17;
+}
+
+// Do warn when on decltype types with the local const qualifier
+// `const decltype(auto)` won't compile, so check only `const decltype(<expr>)`
+const decltype(n17i) n18() {
+  // CHECK-MESSAGES: [[@LINE-1]]:1: warning: return type 'const decltype(n17i)
+  // CHECK-FIXES: decltype(n17i) n18() {
+  return 18;
+}
+
+// `volatile` modifier doesn't affect the checker
+volatile decltype(n17i) n19() {
+  return 19;
+}
+
+// Don't warn about `__typeof__(<expr>)` types
+__typeof__(n17i) n20() {
+  return 20;
+}
+
+// Don't warn about `__typeof__(type)` types
+__typeof__(const int) n21() {
+  return 21;
+}

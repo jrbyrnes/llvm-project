@@ -10,6 +10,8 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/Lex/PPCallbacks.h"
+#include "clang/Lex/Preprocessor.h"
 
 using namespace clang::ast_matchers;
 
@@ -24,24 +26,33 @@ AST_MATCHER(VarDecl, isLocalVarDecl) { return Node.isLocalVarDecl(); }
 InitVariablesCheck::InitVariablesCheck(StringRef Name,
                                        ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context),
-      IncludeStyle(utils::IncludeSorter::parseIncludeStyle(
-          Options.getLocalOrGlobal("IncludeStyle", "llvm"))),
-      MathHeader(Options.get("MathHeader", "math.h")) {}
+      IncludeInserter(Options.getLocalOrGlobal("IncludeStyle",
+                                               utils::IncludeSorter::IS_LLVM),
+                      areDiagsSelfContained()),
+      MathHeader(Options.get("MathHeader", "<math.h>")) {}
+
+void InitVariablesCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
+  Options.store(Opts, "IncludeStyle", IncludeInserter.getStyle());
+  Options.store(Opts, "MathHeader", MathHeader);
+}
 
 void InitVariablesCheck::registerMatchers(MatchFinder *Finder) {
-  Finder->addMatcher(varDecl(unless(hasInitializer(anything())),
-                             unless(isInstantiated()), isLocalVarDecl(),
-                             unless(isStaticLocal()), isDefinition())
-                         .bind("vardecl"),
-                     this);
+  std::string BadDecl = "badDecl";
+  Finder->addMatcher(
+      varDecl(unless(hasInitializer(anything())), unless(isInstantiated()),
+              isLocalVarDecl(), unless(isStaticLocal()), isDefinition(),
+              unless(hasParent(cxxCatchStmt())),
+              optionally(hasParent(declStmt(hasParent(
+                  cxxForRangeStmt(hasLoopVariable(varDecl().bind(BadDecl))))))),
+              unless(equalsBoundNode(BadDecl)))
+          .bind("vardecl"),
+      this);
 }
 
 void InitVariablesCheck::registerPPCallbacks(const SourceManager &SM,
                                              Preprocessor *PP,
                                              Preprocessor *ModuleExpanderPP) {
-  IncludeInserter =
-      std::make_unique<utils::IncludeInserter>(SM, getLangOpts(), IncludeStyle);
-  PP->addPPCallbacks(IncludeInserter->CreatePPCallbacks());
+  IncludeInserter.registerPreprocessor(PP);
 }
 
 void InitVariablesCheck::check(const MatchFinder::MatchResult &Result) {
@@ -68,10 +79,12 @@ void InitVariablesCheck::check(const MatchFinder::MatchResult &Result) {
     return;
 
   QualType TypePtr = MatchedDecl->getType();
-  const char *InitializationString = nullptr;
+  llvm::Optional<const char *> InitializationString = llvm::None;
   bool AddMathInclude = false;
 
-  if (TypePtr->isIntegerType())
+  if (TypePtr->isEnumeralType())
+    InitializationString = nullptr;
+  else if (TypePtr->isIntegerType())
     InitializationString = " = 0";
   else if (TypePtr->isFloatingType()) {
     InitializationString = " = NAN";
@@ -86,20 +99,18 @@ void InitVariablesCheck::check(const MatchFinder::MatchResult &Result) {
   if (InitializationString) {
     auto Diagnostic =
         diag(MatchedDecl->getLocation(), "variable %0 is not initialized")
-        << MatchedDecl
-        << FixItHint::CreateInsertion(
-               MatchedDecl->getLocation().getLocWithOffset(
-                   MatchedDecl->getName().size()),
-               InitializationString);
+        << MatchedDecl;
+    if (*InitializationString != nullptr)
+      Diagnostic << FixItHint::CreateInsertion(
+          MatchedDecl->getLocation().getLocWithOffset(
+              MatchedDecl->getName().size()),
+          *InitializationString);
     if (AddMathInclude) {
-      auto IncludeHint = IncludeInserter->CreateIncludeInsertion(
-          Source.getFileID(MatchedDecl->getBeginLoc()), MathHeader, false);
-      if (IncludeHint)
-        Diagnostic << *IncludeHint;
+      Diagnostic << IncludeInserter.createIncludeInsertion(
+          Source.getFileID(MatchedDecl->getBeginLoc()), MathHeader);
     }
   }
 }
-
 } // namespace cppcoreguidelines
 } // namespace tidy
 } // namespace clang

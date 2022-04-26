@@ -9,7 +9,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm-c/Target.h"
-#include "llvm/MC/SubtargetFeature.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -24,17 +23,21 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/MC/MCTargetOptionsCommandFlags.inc"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/MC/MCTargetOptionsCommandFlags.h"
+#include "llvm/MC/SubtargetFeature.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileUtilities.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Host.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+
+static mc::RegisterMCTargetOptionsFlags MOF;
 
 static cl::opt<std::string>
     TripleName("triple", cl::desc("Target triple to assemble for, "
@@ -161,18 +164,21 @@ int AssembleOneInput(const uint8_t *Data, size_t Size) {
     abort();
   }
 
-  std::unique_ptr<MCAsmInfo> MAI(TheTarget->createMCAsmInfo(*MRI, TripleName));
+  MCTargetOptions MCOptions = mc::InitMCTargetOptionsFromFlags();
+  std::unique_ptr<MCAsmInfo> MAI(
+      TheTarget->createMCAsmInfo(*MRI, TripleName, MCOptions));
   if (!MAI) {
     errs() << "Unable to create target asm info!";
     abort();
   }
 
+  std::unique_ptr<MCSubtargetInfo> STI(
+      TheTarget->createMCSubtargetInfo(TripleName, MCPU, FeaturesStr));
 
-  MCObjectFileInfo MOFI;
-  MCContext Ctx(MAI.get(), MRI.get(), &MOFI, &SrcMgr);
-
-  static const bool UsePIC = false;
-  MOFI.InitMCObjectFileInfo(TheTriple, UsePIC, Ctx);
+  MCContext Ctx(TheTriple, MAI.get(), MRI.get(), STI.get(), &SrcMgr);
+  std::unique_ptr<MCObjectFileInfo> MOFI(
+      TheTarget->createMCObjectFileInfo(Ctx, /*PIC=*/false));
+  Ctx.setObjectFileInfo(MOFI.get());
 
   const unsigned OutputAsmVariant = 0;
   std::unique_ptr<MCInstrInfo> MCII(TheTarget->createMCInstrInfo());
@@ -188,12 +194,8 @@ int AssembleOneInput(const uint8_t *Data, size_t Size) {
   }
 
   const char *ProgName = "llvm-mc-fuzzer";
-  std::unique_ptr<MCSubtargetInfo> STI(
-      TheTarget->createMCSubtargetInfo(TripleName, MCPU, FeaturesStr));
   std::unique_ptr<MCCodeEmitter> CE = nullptr;
   std::unique_ptr<MCAsmBackend> MAB = nullptr;
-
-  MCTargetOptions MCOptions = InitMCTargetOptionsFromFlags();
 
   std::string OutputString;
   raw_string_ostream Out(OutputString);
@@ -227,7 +229,7 @@ int AssembleOneInput(const uint8_t *Data, size_t Size) {
       OS = BOS.get();
     }
 
-    MCCodeEmitter *CE = TheTarget->createMCCodeEmitter(*MCII, *MRI, Ctx);
+    MCCodeEmitter *CE = TheTarget->createMCCodeEmitter(*MCII, Ctx);
     MCAsmBackend *MAB = TheTarget->createMCAsmBackend(*STI, *MRI, MCOptions);
     Str.reset(TheTarget->createMCObjectStreamer(
         TheTriple, Ctx, std::unique_ptr<MCAsmBackend>(MAB),

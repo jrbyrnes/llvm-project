@@ -1,5 +1,5 @@
 // RUN: %check_clang_tidy %s modernize-use-equals-default %t -- \
-// RUN:   -config="{CheckOptions: [{key: modernize-use-equals-default.IgnoreMacros, value: 0}]}" \
+// RUN:   -config="{CheckOptions: [{key: modernize-use-equals-default.IgnoreMacros, value: false}]}" \
 // RUN:   -- -fno-delayed-template-parsing -fexceptions
 
 // Out of line definition.
@@ -119,7 +119,7 @@ Empty &Empty::operator=(const Empty &Other) { return *this; }
 struct BF {
   BF() = default;
   BF(const BF &Other) : Field1(Other.Field1), Field2(Other.Field2), Field3(Other.Field3),
-                        Field4(Other.Field4) {}
+                        Field4(Other.Field4) {};
   // CHECK-MESSAGES: :[[@LINE-2]]:3: warning: use '= default'
   // CHECK-FIXES: BF(const BF &Other) {{$}}
   // CHECK-FIXES:                     = default;

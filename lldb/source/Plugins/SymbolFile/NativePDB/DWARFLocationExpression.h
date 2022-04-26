@@ -6,14 +6,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLDB_PLUGINS_SYMBOLFILE_NATIVEPDB_DWARFLOCATIONEXPRESSION_H
-#define LLDB_PLUGINS_SYMBOLFILE_NATIVEPDB_DWARFLOCATIONEXPRESSION_H
+#ifndef LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_DWARFLOCATIONEXPRESSION_H
+#define LLDB_SOURCE_PLUGINS_SYMBOLFILE_NATIVEPDB_DWARFLOCATIONEXPRESSION_H
 
 #include "lldb/lldb-forward.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
+#include <map>
 
 namespace llvm {
 class APSInt;
+class StringRef;
 namespace codeview {
 class TypeIndex;
 }
@@ -38,6 +41,10 @@ DWARFExpression MakeGlobalLocationExpression(uint16_t section, uint32_t offset,
 DWARFExpression MakeConstantLocationExpression(
     llvm::codeview::TypeIndex underlying_ti, llvm::pdb::TpiStream &tpi,
     const llvm::APSInt &constant, lldb::ModuleSP module);
+DWARFExpression MakeEnregisteredLocationExpressionForClass(
+    std::map<uint64_t, std::pair<llvm::codeview::RegisterId, uint32_t>>
+        &members_info,
+    lldb::ModuleSP module);
 } // namespace npdb
 } // namespace lldb_private
 

@@ -2,8 +2,8 @@ set(LLVM_TARGET_DEFINITIONS Options.td)
 tablegen(LLVM Options.inc -gen-opt-parser-defs)
 add_public_tablegen_target(ELFOptionsTableGen)
 
-if(NOT LLD_BUILT_STANDALONE)
-  set(tablegen_deps intrinsics_gen)
+if(LLVM_ENABLE_ZLIB)
+  set(imported_libs ZLIB::ZLIB)
 endif()
 
 add_lld_library(lldELF
@@ -52,17 +52,20 @@ add_lld_library(lldELF
   BitWriter
   Core
   DebugInfoDWARF
+  Demangle
   LTO
   MC
   Object
   Option
+  Passes
   Support
 
   LINK_LIBS
   lldCommon
+  ${imported_libs}
   ${LLVM_PTHREAD_LIB}
 
   DEPENDS
   ELFOptionsTableGen
-  ${tablegen_deps}
+  intrinsics_gen
   )

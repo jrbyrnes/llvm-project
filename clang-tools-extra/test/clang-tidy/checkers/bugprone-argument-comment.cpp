@@ -1,4 +1,4 @@
-// RUN: %check_clang_tidy %s bugprone-argument-comment %t
+// RUN: %check_clang_tidy %s bugprone-argument-comment %t -- -- -I %S/Inputs/bugprone-argument-comment
 
 // FIXME: clang-tidy should provide a -verify mode to make writing these checks
 // easier and more accurate.
@@ -115,3 +115,44 @@ void g() { f6(/*xxy=*/0, 0); }
 // CHECK-NOTES: [[@LINE-3]]:13: note: 'xxx' declared here
 // CHECK-FIXES: void g() { f6(/*xxy=*/0, 0); }
 }
+
+
+namespace std {
+template <typename T>
+class vector {
+public:
+  void assign(int __n, const T &__val);
+};
+template<typename T>
+void swap(T& __a, T& __b);
+} // namespace std
+namespace ignore_std_functions {
+void test(int a, int b) {
+  std::vector<int> s;
+  // verify the check is not fired on std functions.
+  s.assign(1, /*value=*/2);
+  std::swap(a, /*num=*/b);
+}
+} // namespace ignore_std_functions
+
+namespace regular_header {
+#include "header-with-decl.h"
+void test() {
+  my_header_function(/*not_arg=*/1);
+// CHECK-NOTES: [[@LINE-1]]:22: warning: argument name 'not_arg' in comment does not match parameter name 'arg'
+// CHECK-NOTES: header-with-decl.h:1:29: note: 'arg' declared here
+// CHECK-FIXES: my_header_function(/*not_arg=*/1);
+}
+} // namespace regular_header
+
+namespace system_header {
+#include "system-header-with-decl.h"
+void test() {
+  my_system_header_function(/*not_arg=*/1);
+}
+} // namespace system_header
+
+void testInvalidSlocCxxConstructExpr() {
+  __builtin_va_list __args;
+  // __builtin_va_list has no defination in any source file
+} 

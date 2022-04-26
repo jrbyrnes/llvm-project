@@ -1,4 +1,4 @@
-# RUN: yaml2obj %s > %t
+# RUN: yaml2obj %s -o %t
 # RUN: %lldb -c %t -o 'process plugin dump --all' | \
 # RUN:   FileCheck --check-prefix=CHECK-DIR --check-prefix=CHECK-APPDATA \
 # RUN:   --check-prefix=CHECK-BUILD --check-prefix=CHECK-VERSION \
@@ -61,7 +61,7 @@
 --- !minidump
 Streams:         
   - Type:            SystemInfo
-    Processor Arch:  ARM64
+    Processor Arch:  BP_ARM64
     Platform ID:     Linux
     CSD Version:     '15E216'
     CPU:             

@@ -1,4 +1,4 @@
-//===-- ObjectFileJIT.cpp ---------------------------------------*- C++ -*-===//
+//===-- ObjectFileJIT.cpp -------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -39,6 +39,8 @@
 using namespace lldb;
 using namespace lldb_private;
 
+LLDB_PLUGIN_DEFINE(ObjectFileJIT)
+
 char ObjectFileJIT::ID;
 
 void ObjectFileJIT::Initialize() {
@@ -51,17 +53,8 @@ void ObjectFileJIT::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
 }
 
-lldb_private::ConstString ObjectFileJIT::GetPluginNameStatic() {
-  static ConstString g_name("jit");
-  return g_name;
-}
-
-const char *ObjectFileJIT::GetPluginDescriptionStatic() {
-  return "JIT code object file";
-}
-
 ObjectFile *ObjectFileJIT::CreateInstance(const lldb::ModuleSP &module_sp,
-                                          DataBufferSP &data_sp,
+                                          DataBufferSP data_sp,
                                           lldb::offset_t data_offset,
                                           const FileSpec *file,
                                           lldb::offset_t file_offset,
@@ -72,7 +65,7 @@ ObjectFile *ObjectFileJIT::CreateInstance(const lldb::ModuleSP &module_sp,
 }
 
 ObjectFile *ObjectFileJIT::CreateMemoryInstance(const lldb::ModuleSP &module_sp,
-                                                DataBufferSP &data_sp,
+                                                WritableDataBufferSP data_sp,
                                                 const ProcessSP &process_sp,
                                                 lldb::addr_t header_addr) {
   // JIT'ed object file is backed by the ObjectFileJITDelegate, never read from
@@ -98,7 +91,7 @@ ObjectFileJIT::ObjectFileJIT(const lldb::ModuleSP &module_sp,
   }
 }
 
-ObjectFileJIT::~ObjectFileJIT() {}
+ObjectFileJIT::~ObjectFileJIT() = default;
 
 bool ObjectFileJIT::ParseHeader() {
   // JIT code is never in a file, nor is it required to have any header
@@ -113,22 +106,10 @@ uint32_t ObjectFileJIT::GetAddressByteSize() const {
   return m_data.GetAddressByteSize();
 }
 
-Symtab *ObjectFileJIT::GetSymtab() {
-  ModuleSP module_sp(GetModule());
-  if (module_sp) {
-    std::lock_guard<std::recursive_mutex> guard(module_sp->GetMutex());
-    if (m_symtab_up == nullptr) {
-      m_symtab_up.reset(new Symtab(this));
-      std::lock_guard<std::recursive_mutex> symtab_guard(
-          m_symtab_up->GetMutex());
-      ObjectFileJITDelegateSP delegate_sp(m_delegate_wp.lock());
-      if (delegate_sp)
-        delegate_sp->PopulateSymtab(this, *m_symtab_up);
-      // TODO: get symbols from delegate
-      m_symtab_up->Finalize();
-    }
-  }
-  return m_symtab_up.get();
+void ObjectFileJIT::ParseSymtab(Symtab &symtab) {
+  ObjectFileJITDelegateSP delegate_sp(m_delegate_wp.lock());
+  if (delegate_sp)
+    delegate_sp->PopulateSymtab(this, symtab);
 }
 
 bool ObjectFileJIT::IsStripped() {
@@ -137,7 +118,7 @@ bool ObjectFileJIT::IsStripped() {
 
 void ObjectFileJIT::CreateSections(SectionList &unified_section_list) {
   if (!m_sections_up) {
-    m_sections_up.reset(new SectionList());
+    m_sections_up = std::make_unique<SectionList>();
     ObjectFileJITDelegateSP delegate_sp(m_delegate_wp.lock());
     if (delegate_sp) {
       delegate_sp->PopulateSectionList(this, *m_sections_up);
@@ -161,7 +142,8 @@ void ObjectFileJIT::Dump(Stream *s) {
 
     SectionList *sections = GetSectionList();
     if (sections)
-      sections->Dump(s, nullptr, true, UINT32_MAX);
+      sections->Dump(s->AsRawOstream(), s->GetIndentLevel(), nullptr, true,
+                     UINT32_MAX);
 
     if (m_symtab_up)
       m_symtab_up->Dump(s, nullptr, eSortOrderNone);
@@ -195,13 +177,6 @@ ArchSpec ObjectFileJIT::GetArchitecture() {
     return delegate_sp->GetArchitecture();
   return ArchSpec();
 }
-
-// PluginInterface protocol
-lldb_private::ConstString ObjectFileJIT::GetPluginName() {
-  return GetPluginNameStatic();
-}
-
-uint32_t ObjectFileJIT::GetPluginVersion() { return 1; }
 
 bool ObjectFileJIT::SetLoadAddress(Target &target, lldb::addr_t value,
                                    bool value_is_offset) {

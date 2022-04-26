@@ -2,7 +2,7 @@ User Guides
 ===========
 
 NOTE: If you are a user who is only interested in using an LLVM-based compiler,
-you should look into `Clang <http://clang.llvm.org>`_ instead. The
+you should look into `Clang <https://clang.llvm.org>`_ instead. The
 documentation here is intended for users who have a need to work with the
 intermediate LLVM representation.
 
@@ -19,6 +19,7 @@ intermediate LLVM representation.
    Benchmarking
    BigEndianNEON
    BuildingADistribution
+   CFIVerify
    CMake
    CMakePrimer
    CodeGenerator
@@ -26,24 +27,33 @@ intermediate LLVM representation.
    CommandLine
    CompileCudaWithLLVM
    CoverageMappingFormat
+   CycleTerminology
    DebuggingJITedCode
    Docker
    ExtendingLLVM
    GoldPlugin
    HowToBuildOnARM
    HowToBuildWithPGO
+   HowToBuildWindowsItaniumPrograms
    HowToCrossCompileBuiltinsOnArm
    HowToCrossCompileLLVM
+   HowToUpdateDebugInfo
    LinkTimeOptimization
    LoopTerminology
    MarkdownQuickstartTemplate
    MemorySSA
    MergeFunctions
    MCJITDesignAndImplementation
+   MisExpect
+   ORCv2
+   OpaquePointers
+   JITLink
+   NewPassManager
    NVPTXUsage
    Phabricator
    Passes
    ReportingGuide
+   ResponseGuide
    Remarks
    SourceLevelDebugging
    StackSafetyAnalysis
@@ -52,6 +62,7 @@ intermediate LLVM representation.
    TableGenFundamentals
    Vectorizers
    WritingAnLLVMPass
+   WritingAnLLVMNewPMPass
    WritingAnLLVMBackend
    yaml2obj
 
@@ -70,10 +81,13 @@ Clang
 `How to build the C, C++, ObjC, and ObjC++ front end`__
    Instructions for building the clang front-end from source.
 
-   .. __: http://clang.llvm.org/get_started.html
+   .. __: https://clang.llvm.org/get_started.html
 
 :doc:`CoverageMappingFormat`
   This describes the format and encoding used for LLVM’s code coverage mapping.
+
+:doc:`CFIVerify`
+  A description of the verification tool for Control Flow Integrity.
 
 LLVM Builds and Distributions
 -----------------------------
@@ -91,13 +105,20 @@ LLVM Builds and Distributions
 
 :doc:`Support Library <SupportLibrary>`
    This document describes the LLVM Support Library (``lib/Support``) and
-   how to keep LLVM source code portable
+   how to keep LLVM source code portable.
+
+:doc:`AdvancedBuilds`
+   This document describes more advanced build configurations.
 
 Optimizations
 -------------
 
 :doc:`WritingAnLLVMPass`
    Information on how to write LLVM transformations and analyses.
+
+:doc:`WritingAnLLVMNewPMPass`
+   Information on how to write LLVM transformations under the new pass
+   manager.
 
 :doc:`Passes`
    A list of optimizations and analyses implemented in LLVM.
@@ -118,6 +139,9 @@ Optimizations
 
 :doc:`LoopTerminology`
   A document describing Loops and associated terms as used in LLVM.
+
+:doc:`CycleTerminology`
+  A document describing cycles as a generalization of loops.
 
 :doc:`Vectorizers`
    This document describes the current status of vectorization in LLVM.
@@ -158,6 +182,14 @@ JIT
 :doc:`MCJITDesignAndImplementation`
    Describes the inner workings of MCJIT execution engine.
 
+:doc:`ORCv2`
+   Describes the design and implementation of the ORC APIs, including some
+   usage examples, and a guide for users transitioning from ORCv1 to ORCv2.
+
+:doc:`JITLink`
+   Describes the design and APIs for the JITLink library, ORC's new JIT
+   linker.
+
 :doc:`DebuggingJITedCode`
    How to debug JITed code with GDB.
 
@@ -174,6 +206,9 @@ Additional Topics
    Gives the steps necessary when adding a new constrained math intrinsic
    to LLVM.
 
+:doc:`HowToBuildWindowsItaniumPrograms`
+   Notes on assembling a Windows Itanium environment.
+
 :doc:`HowToCrossCompileBuiltinsOnArm`
    Notes on cross-building and testing the compiler-rt builtins for Arm.
 
@@ -189,3 +224,12 @@ Additional Topics
 
 :doc:`AMDGPUUsage`
    This document describes using the AMDGPU backend to compile GPU kernels.
+
+:doc:`AMDGPUDwarfExtensionsForHeterogeneousDebugging`
+   This document describes DWARF extensions to support heterogeneous debugging
+   for targets such as the AMDGPU backend.
+
+:doc:`AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack/AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack`
+   This document describes a DWARF extension to allow location descriptions on
+   the DWARF expression stack. It is part of
+   :doc:`AMDGPUDwarfExtensionsForHeterogeneousDebugging`.

@@ -1,8 +1,20 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: llvm-mc -triple=x86_64-apple-macosx10.9 -filetype=obj -o %t/macho_reloc.o %s
-# RUN: llvm-jitlink -noexec -define-abs external_data=0xdeadbeef -define-abs external_func=0xcafef00d -check=%s %t/macho_reloc.o
+# RUN: llvm-jitlink -noexec \
+# RUN:    -slab-allocate 100Kb -slab-address 0xfff00000 -slab-page-size 4096 \
+# RUN:    -abs external_data=0x1 -abs external_func=0x2 \
+# RUN:    -check=%s %t/macho_reloc.o
+#
+# Test standard MachO relocations. Simulates slab allocation in the top 1Mb of
+# memory and places external symbols in the lowest page to prevent GOT and stub
+# elimination.
 
         .section        __TEXT,__text,regular,pure_instructions
+
+# Check that common symbols work.
+# jitlink-check: *{4}common_symbol = 0
+# jitlink-check: common_symbol[1:0] = 0
+.comm   common_symbol,4,2
 
         .align  4, 0x90
 Lanon_func:
@@ -38,6 +50,17 @@ _main:
         .align  4, 0x90
 test_gotld:
         movq    external_data@GOTPCREL(%rip), %rax
+        retq
+
+
+# Check X86_64_RELOC_GOTPCREL handling with cmp instructions, which have
+# negative addends.
+#
+# jitlink-check: decode_operand(test_gotcmpq, 3) = got_addr(macho_reloc.o, external_data) - next_pc(test_gotcmpq)
+        .globl  test_gotcmpq
+        .align  4, 0x90
+test_gotcmpq:
+        cmpq    $0, external_data@GOTPCREL(%rip)
         retq
 
 # Check that calls to external functions trigger the generation of stubs and GOT
@@ -84,22 +107,26 @@ signed4:
         movl $0xAAAAAAAA, named_data(%rip)
 
         .globl signedanon
-# jitlink-check: decode_operand(signedanon, 4) = section_addr(macho_reloc.o, __data) - next_pc(signedanon)
+# jitlink-check: decode_operand(signedanon, 4) = \
+# jitlink-check:     section_addr(macho_reloc.o, __DATA,__data) - next_pc(signedanon)
 signedanon:
         movq Lanon_data(%rip), %rax
 
         .globl signed1anon
-# jitlink-check: decode_operand(signed1anon, 3) = section_addr(macho_reloc.o, __data) - next_pc(signed1anon)
+# jitlink-check: decode_operand(signed1anon, 3) = \
+# jitlink-check:     section_addr(macho_reloc.o, __DATA,__data) - next_pc(signed1anon)
 signed1anon:
         movb $0xAA, Lanon_data(%rip)
 
         .globl signed2anon
-# jitlink-check: decode_operand(signed2anon, 3) = section_addr(macho_reloc.o, __data) - next_pc(signed2anon)
+# jitlink-check: decode_operand(signed2anon, 3) = \
+# jitlink-check:     section_addr(macho_reloc.o, __DATA,__data) - next_pc(signed2anon)
 signed2anon:
         movw $0xAAAA, Lanon_data(%rip)
 
         .globl signed4anon
-# jitlink-check: decode_operand(signed4anon, 3) = section_addr(macho_reloc.o, __data) - next_pc(signed4anon)
+# jitlink-check: decode_operand(signed4anon, 3) = \
+# jitlink-check:     section_addr(macho_reloc.o, __DATA,__data) - next_pc(signed4anon)
 signed4anon:
         movl $0xAAAAAAAA, Lanon_data(%rip)
 
@@ -118,16 +145,18 @@ Lanon_data:
 # anonymous.
 #
 # Note: +8 offset in expression below to accounts for sizeof(Lanon_data).
-# jitlink-check: *{8}(section_addr(macho_reloc.o, __data) + 8) = (section_addr(macho_reloc.o, __data) + 8) - named_data + 2
+# jitlink-check: *{8}(section_addr(macho_reloc.o, __DATA,__data) + 8) = \
+# jitlink-check:     (section_addr(macho_reloc.o, __DATA,__data) + 8) - named_data - 2
         .p2align  3
 Lanon_minuend_quad:
-        .quad Lanon_minuend_quad - named_data + 2
+        .quad Lanon_minuend_quad - named_data - 2
 
 # Note: +16 offset in expression below to accounts for sizeof(Lanon_data) + sizeof(Lanon_minuend_long).
-# jitlink-check: *{4}(section_addr(macho_reloc.o, __data) + 16) = ((section_addr(macho_reloc.o, __data) + 16) - named_data + 2)[31:0]
+# jitlink-check: *{4}(section_addr(macho_reloc.o, __DATA,__data) + 16) = \
+# jitlink-check:     ((section_addr(macho_reloc.o, __DATA,__data) + 16) - named_data - 2)[31:0]
         .p2align  2
 Lanon_minuend_long:
-        .long Lanon_minuend_long - named_data + 2
+        .long Lanon_minuend_long - named_data - 2
 
 # Named quad storage target (first named atom in __data).
         .globl named_data
@@ -163,7 +192,7 @@ named_func_addr_long:
 # Check X86_64_RELOC_UNSIGNED / quad / non-extern handling by putting the
 # address of a local anonymous function into a quad symbol.
 #
-# jitlink-check: *{8}anon_func_addr_quad = section_addr(macho_reloc.o, __text)
+# jitlink-check: *{8}anon_func_addr_quad = section_addr(macho_reloc.o, __TEXT,__text)
         .globl  anon_func_addr_quad
         .p2align  3
 anon_func_addr_quad:
@@ -171,19 +200,21 @@ anon_func_addr_quad:
 
 # X86_64_RELOC_SUBTRACTOR Quad/Long in named storage with anonymous minuend
 #
-# jitlink-check: *{8}anon_minuend_quad1 = section_addr(macho_reloc.o, __data) - anon_minuend_quad1 + 2
+# jitlink-check: *{8}anon_minuend_quad1 = \
+# jitlink-check:     section_addr(macho_reloc.o, __DATA,__data) - anon_minuend_quad1 - 2
 # Only the form "B: .quad LA - B + C" is tested. The form "B: .quad B - LA + C" is
 # invalid because the subtrahend can not be local.
         .globl  anon_minuend_quad1
         .p2align  3
 anon_minuend_quad1:
-        .quad Lanon_data - anon_minuend_quad1 + 2
+        .quad Lanon_data - anon_minuend_quad1 - 2
 
-# jitlink-check: *{4}anon_minuend_long1 = (section_addr(macho_reloc.o, __data) - anon_minuend_long1 + 2)[31:0]
+# jitlink-check: *{4}anon_minuend_long1 = \
+# jitlink-check:     (section_addr(macho_reloc.o, __DATA,__data) - anon_minuend_long1 - 2)[31:0]
         .globl  anon_minuend_long1
         .p2align  2
 anon_minuend_long1:
-        .long Lanon_data - anon_minuend_long1 + 2
+        .long Lanon_data - anon_minuend_long1 - 2
 
 # Check X86_64_RELOC_SUBTRACTOR Quad/Long in named storage with minuend and subtrahend.
 # Both forms "A: .quad A - B + C" and "A: .quad B - A + C" are tested.
@@ -221,11 +252,11 @@ minuend_long3:
 # (i.e. is part of an alt_entry chain that includes 'A').
 #
 # Check "A: .long B - C + D" where 'B' is an alt_entry for 'A'.
-# jitlink-check: *{4}subtractor_with_alt_entry_minuend_long = (subtractor_with_alt_entry_minuend_long_B - named_data + 2)[31:0]
+# jitlink-check: *{4}subtractor_with_alt_entry_minuend_long = (subtractor_with_alt_entry_minuend_long_B - named_data - 2)[31:0]
         .globl  subtractor_with_alt_entry_minuend_long
         .p2align  2
 subtractor_with_alt_entry_minuend_long:
-        .long subtractor_with_alt_entry_minuend_long_B - named_data + 2
+        .long subtractor_with_alt_entry_minuend_long_B - named_data - 2
 
         .globl  subtractor_with_alt_entry_minuend_long_B
         .p2align  2
@@ -234,11 +265,11 @@ subtractor_with_alt_entry_minuend_long_B:
         .long 0
 
 # Check "A: .quad B - C + D" where 'B' is an alt_entry for 'A'.
-# jitlink-check: *{8}subtractor_with_alt_entry_minuend_quad = (subtractor_with_alt_entry_minuend_quad_B - named_data + 2)
+# jitlink-check: *{8}subtractor_with_alt_entry_minuend_quad = (subtractor_with_alt_entry_minuend_quad_B - named_data - 2)
         .globl  subtractor_with_alt_entry_minuend_quad
         .p2align  3
 subtractor_with_alt_entry_minuend_quad:
-        .quad subtractor_with_alt_entry_minuend_quad_B - named_data + 2
+        .quad subtractor_with_alt_entry_minuend_quad_B - named_data - 2
 
         .globl  subtractor_with_alt_entry_minuend_quad_B
         .p2align  3
@@ -247,11 +278,11 @@ subtractor_with_alt_entry_minuend_quad_B:
         .quad 0
 
 # Check "A: .long B - C + D" where 'C' is an alt_entry for 'A'.
-# jitlink-check: *{4}subtractor_with_alt_entry_subtrahend_long = (named_data - subtractor_with_alt_entry_subtrahend_long_B + 2)[31:0]
+# jitlink-check: *{4}subtractor_with_alt_entry_subtrahend_long = (named_data - subtractor_with_alt_entry_subtrahend_long_B - 2)[31:0]
         .globl  subtractor_with_alt_entry_subtrahend_long
         .p2align  2
 subtractor_with_alt_entry_subtrahend_long:
-        .long named_data - subtractor_with_alt_entry_subtrahend_long_B + 2
+        .long named_data - subtractor_with_alt_entry_subtrahend_long_B - 2
 
         .globl  subtractor_with_alt_entry_subtrahend_long_B
         .p2align  2
@@ -260,11 +291,11 @@ subtractor_with_alt_entry_subtrahend_long_B:
         .long 0
 
 # Check "A: .quad B - C + D" where 'B' is an alt_entry for 'A'.
-# jitlink-check: *{8}subtractor_with_alt_entry_subtrahend_quad = (named_data - subtractor_with_alt_entry_subtrahend_quad_B + 2)
+# jitlink-check: *{8}subtractor_with_alt_entry_subtrahend_quad = (named_data - subtractor_with_alt_entry_subtrahend_quad_B - 2)
         .globl  subtractor_with_alt_entry_subtrahend_quad
         .p2align  3
 subtractor_with_alt_entry_subtrahend_quad:
-        .quad named_data - subtractor_with_alt_entry_subtrahend_quad_B + 2
+        .quad named_data - subtractor_with_alt_entry_subtrahend_quad_B - 2
 
         .globl  subtractor_with_alt_entry_subtrahend_quad_B
         .p2align  3
@@ -289,14 +320,14 @@ test_got:
 # ORC responsibility set, which is automatically marked live and would couse
 # spurious passes.
 #
-# jitlink-check: *{8}section_addr(macho_reloc.o, __nds_test_sect) = 0
+# jitlink-check: *{8}section_addr(macho_reloc.o, __DATA,__nds_test_sect) = 0
         .section        __DATA,__nds_test_sect,regular,no_dead_strip
         .quad 0
 
 # Check that unreferenced local symbols that have been marked no-dead-strip are
 # not dead-striped.
 #
-# jitlink-check: *{8}section_addr(macho_reloc.o, __nds_test_nlst) = 0
+# jitlink-check: *{8}section_addr(macho_reloc.o, __DATA,__nds_test_nlst) = 0
         .section       __DATA,__nds_test_nlst,regular
         .no_dead_strip no_dead_strip_test_symbol
 no_dead_strip_test_symbol:

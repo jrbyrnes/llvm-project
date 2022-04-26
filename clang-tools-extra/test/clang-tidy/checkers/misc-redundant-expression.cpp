@@ -81,6 +81,13 @@ int TestSimpleEquivalent(int X, int Y) {
   if (P2.a[P1.x + 2] < P2.x && P2.a[(P1.x) + (2)] < (P2.x)) return 1;
   // CHECK-MESSAGES: :[[@LINE-1]]:29: warning: both sides of operator are equivalent
 
+  if (X && Y && X) return 1;
+  // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: operator has equivalent nested operands
+  if (X || (Y || X)) return 1;
+  // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: operator has equivalent nested operands
+  if ((X ^ Y) ^ (Y ^ X)) return 1;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: operator has equivalent nested operands
+
   return 0;
 }
 
@@ -106,6 +113,7 @@ int Valid(int X, int Y) {
   if (++X != ++X) return 1;
   if (P.a[X]++ != P.a[X]++) return 1;
   if (P.a[X++] != P.a[X++]) return 1;
+  if (X && X++ && X) return 1;
 
   if ("abc" == "ABC") return 1;
   if (foo(bar(0)) < (foo(bat(0, 1)))) return 1;
@@ -114,6 +122,7 @@ int Valid(int X, int Y) {
 
 #define COND_OP_MACRO 9
 #define COND_OP_OTHER_MACRO 9
+#define COND_OP_THIRD_MACRO COND_OP_MACRO
 int TestConditional(int x, int y) {
   int k = 0;
   k += (y < 0) ? x : x;
@@ -122,11 +131,27 @@ int TestConditional(int x, int y) {
   // CHECK-MESSAGES: :[[@LINE-1]]:24: warning: 'true' and 'false' expressions are equivalent
   k += (y < 0) ? COND_OP_MACRO : COND_OP_MACRO;
   // CHECK-MESSAGES: :[[@LINE-1]]:32: warning: 'true' and 'false' expressions are equivalent
+  k += (y < 0) ? COND_OP_MACRO + COND_OP_OTHER_MACRO : COND_OP_MACRO + COND_OP_OTHER_MACRO;
+  // CHECK-MESSAGES: :[[@LINE-1]]:54: warning: 'true' and 'false' expressions are equivalent
 
   // Do not match for conditional operators with a macro and a const.
   k += (y < 0) ? COND_OP_MACRO : 9;
   // Do not match for conditional operators with expressions from different macros.
   k += (y < 0) ? COND_OP_MACRO : COND_OP_OTHER_MACRO;
+  // Do not match for conditional operators when a macro is defined to another macro
+  k += (y < 0) ? COND_OP_MACRO : COND_OP_THIRD_MACRO;
+#undef COND_OP_THIRD_MACRO
+#define   COND_OP_THIRD_MACRO 8
+  k += (y < 0) ? COND_OP_MACRO : COND_OP_THIRD_MACRO;
+#undef COND_OP_THIRD_MACRO
+
+  k += (y < 0) ? sizeof(I64) : sizeof(I64);
+  // CHECK-MESSAGES: :[[@LINE-1]]:30: warning: 'true' and 'false' expressions are equivalent
+  k += (y < 0) ? sizeof(TestConditional(k,y)) : sizeof(TestConditional(k,y));
+  // CHECK-MESSAGES: :[[@LINE-1]]:47: warning: 'true' and 'false' expressions are equivalent
+  // No warning if the expression arguments are different.
+  k += (y < 0) ? sizeof(TestConditional(k,y)) : sizeof(Valid(k,y));
+
   return k;
 }
 #undef COND_OP_MACRO
@@ -134,7 +159,7 @@ int TestConditional(int x, int y) {
 
 // Overloaded operators that compare two instances of a struct.
 struct MyStruct {
-  int x;  
+  int x;
   bool operator==(const MyStruct& rhs) const {return this->x == rhs.x; } // not modifing
   bool operator>=(const MyStruct& rhs) const { return this->x >= rhs.x; } // not modifing
   bool operator<=(MyStruct& rhs) const { return this->x <= rhs.x; }
@@ -145,6 +170,15 @@ bool operator!=(const MyStruct& lhs, const MyStruct& rhs) { return lhs.x == rhs.
 bool operator<(const MyStruct& lhs, const MyStruct& rhs) { return lhs.x < rhs.x; } // not modifing
 bool operator>(const MyStruct& lhs, MyStruct& rhs) { rhs.x--; return lhs.x > rhs.x; }
 bool operator||(MyStruct& lhs, const MyStruct& rhs) { lhs.x++; return lhs.x || rhs.x; }
+
+struct MyStruct1 {
+  bool x;
+  MyStruct1(bool x) : x(x) {};
+  operator bool() { return x; }
+};
+
+MyStruct1 operator&&(const MyStruct1& lhs, const MyStruct1& rhs) { return lhs.x && rhs.x; }
+MyStruct1 operator||(MyStruct1& lhs, MyStruct1& rhs) { return lhs.x && rhs.x; }
 
 bool TestOverloadedOperator(MyStruct& S) {
   if (S == Q) return false;
@@ -162,6 +196,15 @@ bool TestOverloadedOperator(MyStruct& S) {
   // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: both sides of overloaded operator are equivalent
   if (S >= S) return true;
   // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: both sides of overloaded operator are equivalent
+
+  MyStruct1 U(false);
+  MyStruct1 V(true);
+
+  // valid because the operator is not const
+  if ((U || V) || U) return true;
+
+  if (U && V && U && V) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:19: warning: overloaded operator has equivalent nested operands
 
   return true;
 }
@@ -326,6 +369,11 @@ struct S {
 bool operator<=(const S &s, int i) { return s.x <= i; } // not modifying
 bool operator>=(const S &s, const int &i) { return s.x >= i; } // not modifying
 
+bool operator==(int i, const S &s) { return s == i; } // not modifying
+bool operator<(const int &i, const S &s) { return s > i; } // not modifying
+bool operator<=(const int &i, const S &s) { return s >= i; } // not modifying
+bool operator>(const int &i, const S &s) { return s < i; } // not modifying
+
 struct S2 {
   S2() { x = 1; }
   int x;
@@ -409,6 +457,25 @@ int TestLogical(int X, int Y){
   // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: logical expression is always false
   if (s1 >= 1 || s1 <= 1) return true;
   // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: logical expression is always true
+  if (s1 >= 2 && s1 <= 0) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: logical expression is always false
+
+  // Same test as above but with swapped LHS/RHS on one side of the logical operator.
+  if (1 == s1 && s1 == 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: equivalent expression on both sides of logical operator
+  if (1 == s1 || s1 != 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: logical expression is always true
+  if (1 < s1 && s1 < 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: logical expression is always false
+  if (1 <= s1 || s1 <= 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: logical expression is always true
+  if (2 < s1 && 0 > s1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: logical expression is always false
+
+  // Test for absence of false positives (issue #54011).
+  if (s1 == 1 || s1 == 2) return true;
+  if (s1 > 1 && s1 < 3) return true;
+  if (s1 >= 2 || s1 <= 0) return true;
 
   // Test for overloaded operators that may modify their params.
   S2 s2;
@@ -750,4 +817,29 @@ struct Bar {
     return foo < GetFoo() && foo < maybe_foo;
   }
 };
+
+template <class... Values>
+struct Bar2 {
+  static_assert((... && (sizeof(Values) > 0)) == (... && (sizeof(Values) > 0)));
+  // FIXME: It's not clear that we should be diagnosing this. The `&&` operator
+  // here is unresolved and could resolve to an overloaded operator that might
+  // have side-effects on its operands. For other constructs with the same
+  // property (eg, the `S2` cases above) we suppress this diagnostic. This
+  // started failing when Clang started properly modeling the fold-expression as
+  // containing an unresolved operator name.
+  // FIXME-MESSAGES: :[[@LINE-1]]:47: warning: both sides of operator are equivalent [misc-redundant-expression]
+};
+
+} // namespace no_crash
+
+int TestAssignSideEffect(int i) {
+  int k = i;
+
+  if ((k = k + 1) != 1 || (k = k + 1) != 2)
+    return 0;
+
+  if ((k = foo(0)) != 1 || (k = foo(0)) != 2)
+    return 1;
+
+  return 2;
 }

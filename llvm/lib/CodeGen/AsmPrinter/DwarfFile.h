@@ -14,7 +14,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/DIE.h"
-#include "llvm/IR/Metadata.h"
 #include "llvm/Support/Allocator.h"
 #include <map>
 #include <memory>
@@ -26,10 +25,12 @@ class AsmPrinter;
 class DbgEntity;
 class DbgVariable;
 class DbgLabel;
+class DINode;
 class DwarfCompileUnit;
 class DwarfUnit;
 class LexicalScope;
 class MCSection;
+class MDNode;
 
 // Data structure to hold a range for range lists.
 struct RangeSpan {
@@ -37,21 +38,12 @@ struct RangeSpan {
   const MCSymbol *End;
 };
 
-class RangeSpanList {
-private:
+struct RangeSpanList {
   // Index for locating within the debug_range section this particular span.
-  MCSymbol *RangeSym;
+  MCSymbol *Label;
   const DwarfCompileUnit *CU;
   // List of ranges.
   SmallVector<RangeSpan, 2> Ranges;
-
-public:
-  RangeSpanList(MCSymbol *Sym, const DwarfCompileUnit &CU,
-                SmallVector<RangeSpan, 2> Ranges)
-      : RangeSym(Sym), CU(&CU), Ranges(std::move(Ranges)) {}
-  MCSymbol *getSym() const { return RangeSym; }
-  const DwarfCompileUnit &getCU() const { return *CU; }
-  const SmallVectorImpl<RangeSpan> &getRanges() const { return Ranges; }
 };
 
 class DwarfFile {
@@ -79,10 +71,6 @@ class DwarfFile {
   /// DWARF v5: The symbol that designates the base of the range list table.
   /// The table is shared by all units.
   MCSymbol *RnglistsTableBaseSym = nullptr;
-
-  /// DWARF v5: The symbol that designates the base of the locations list table.
-  /// The table is shared by all units.
-  MCSymbol *LoclistsTableBaseSym = nullptr;
 
   /// The variables of a lexical scope.
   struct ScopeVars {
@@ -160,9 +148,6 @@ public:
 
   MCSymbol *getRnglistsTableBaseSym() const { return RnglistsTableBaseSym; }
   void setRnglistsTableBaseSym(MCSymbol *Sym) { RnglistsTableBaseSym = Sym; }
-
-  MCSymbol *getLoclistsTableBaseSym() const { return LoclistsTableBaseSym; }
-  void setLoclistsTableBaseSym(MCSymbol *Sym) { LoclistsTableBaseSym = Sym; }
 
   /// \returns false if the variable was merged with a previous one.
   bool addScopeVariable(LexicalScope *LS, DbgVariable *Var);

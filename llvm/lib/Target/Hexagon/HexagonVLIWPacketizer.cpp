@@ -40,6 +40,7 @@
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/DebugLoc.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/MC/MCInstrDesc.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
@@ -111,9 +112,9 @@ namespace {
     }
 
   private:
-    const HexagonInstrInfo *HII;
-    const HexagonRegisterInfo *HRI;
-    const bool Minimal;
+    const HexagonInstrInfo *HII = nullptr;
+    const HexagonRegisterInfo *HRI = nullptr;
+    const bool Minimal = false;
   };
 
 } // end anonymous namespace
@@ -130,7 +131,7 @@ INITIALIZE_PASS_END(HexagonPacketizer, "hexagon-packetizer",
                     "Hexagon Packetizer", false, false)
 
 HexagonPacketizerList::HexagonPacketizerList(MachineFunction &MF,
-      MachineLoopInfo &MLI, AliasAnalysis *AA,
+      MachineLoopInfo &MLI, AAResults *AA,
       const MachineBranchProbabilityInfo *MBPI, bool Minimal)
     : VLIWPacketizerList(MF, MLI, AA), MBPI(MBPI), MLI(&MLI),
       Minimal(Minimal) {
@@ -202,6 +203,10 @@ static MachineBasicBlock::iterator moveInstrOut(MachineInstr &MI,
 }
 
 bool HexagonPacketizer::runOnMachineFunction(MachineFunction &MF) {
+  // FIXME: This pass causes verification failures.
+  MF.getProperties().set(
+      MachineFunctionProperties::Property::FailsVerification);
+
   auto &HST = MF.getSubtarget<HexagonSubtarget>();
   HII = HST.getInstrInfo();
   HRI = HST.getRegisterInfo();
@@ -229,17 +234,14 @@ bool HexagonPacketizer::runOnMachineFunction(MachineFunction &MF) {
   // dependence between Insn 0 and Insn 2. This can lead to incorrect
   // packetization
   for (MachineBasicBlock &MB : MF) {
-    auto End = MB.end();
-    auto MI = MB.begin();
-    while (MI != End) {
-      auto NextI = std::next(MI);
-      if (MI->isKill()) {
-        MB.erase(MI);
-        End = MB.end();
-      }
-      MI = NextI;
-    }
+    for (MachineInstr &MI : llvm::make_early_inc_range(MB))
+      if (MI.isKill())
+        MB.erase(&MI);
   }
+
+  // TinyCore with Duplexes: Translate to big-instructions.
+  if (HST.isTinyCoreWithDuplex())
+    HII->translateInstrsForDup(MF, true);
 
   // Loop over all of the basic blocks.
   for (auto &MB : MF) {
@@ -266,6 +268,10 @@ bool HexagonPacketizer::runOnMachineFunction(MachineFunction &MF) {
     }
   }
 
+  // TinyCore with Duplexes: Translate to tiny-instructions.
+  if (HST.isTinyCoreWithDuplex())
+    HII->translateInstrsForDup(MF, false);
+
   Packetizer.unpacketizeSoloInstrs(MF);
   return true;
 }
@@ -288,7 +294,7 @@ bool HexagonPacketizerList::tryAllocateResourcesForConstExt(bool Reserve) {
   bool Avail = ResourceTracker->canReserveResources(*ExtMI);
   if (Reserve && Avail)
     ResourceTracker->reserveResources(*ExtMI);
-  MF.DeleteMachineInstr(ExtMI);
+  MF.deleteMachineInstr(ExtMI);
   return Avail;
 }
 
@@ -308,7 +314,7 @@ bool HexagonPacketizerList::isCallDependent(const MachineInstr &MI,
   //   r0 = ...
   //   J2_jumpr r0
   if (DepType == SDep::Data) {
-    for (const MachineOperand MO : MI.operands())
+    for (const MachineOperand &MO : MI.operands())
       if (MO.isReg() && MO.getReg() == DepReg && !MO.isImplicit())
         return true;
   }
@@ -880,11 +886,12 @@ bool HexagonPacketizerList::canPromoteToDotNew(const MachineInstr &MI,
 
   // Create a dot new machine instruction to see if resources can be
   // allocated. If not, bail out now.
-  int NewOpcode = HII->getDotNewOp(MI);
+  int NewOpcode = (RC != &Hexagon::PredRegsRegClass) ? HII->getDotNewOp(MI) :
+    HII->getDotNewPredOp(MI, MBPI);
   const MCInstrDesc &D = HII->get(NewOpcode);
   MachineInstr *NewMI = MF.CreateMachineInstr(D, DebugLoc());
   bool ResourcesAvailable = ResourceTracker->canReserveResources(*NewMI);
-  MF.DeleteMachineInstr(NewMI);
+  MF.deleteMachineInstr(NewMI);
   if (!ResourcesAvailable)
     return false;
 
@@ -1051,12 +1058,11 @@ bool HexagonPacketizerList::ignorePseudoInstruction(const MachineInstr &MI,
   // we ignore the instruction.
   const MCInstrDesc& TID = MI.getDesc();
   auto *IS = ResourceTracker->getInstrItins()->beginStage(TID.getSchedClass());
-  unsigned FuncUnits = IS->getUnits();
-  return !FuncUnits;
+  return !IS->getUnits();
 }
 
 bool HexagonPacketizerList::isSoloInstruction(const MachineInstr &MI) {
-  // Ensure any bundles created by gather packetize remain seperate.
+  // Ensure any bundles created by gather packetize remain separate.
   if (MI.isBundle())
     return true;
 
@@ -1077,6 +1083,11 @@ bool HexagonPacketizerList::isSoloInstruction(const MachineInstr &MI) {
   if (HII->isSolo(MI))
     return true;
 
+  if (MI.getOpcode() == Hexagon::PATCHABLE_FUNCTION_ENTER ||
+      MI.getOpcode() == Hexagon::PATCHABLE_FUNCTION_EXIT ||
+      MI.getOpcode() == Hexagon::PATCHABLE_TAIL_CALL)
+    return true;
+
   if (MI.getOpcode() == Hexagon::A2_nop)
     return true;
 
@@ -1095,6 +1106,11 @@ static bool cannotCoexistAsymm(const MachineInstr &MI, const MachineInstr &MJ,
   const MachineFunction *MF = MI.getParent()->getParent();
   if (MF->getSubtarget<HexagonSubtarget>().hasV60OpsOnly() &&
       HII.isHVXMemWithAIndirect(MI, MJ))
+    return true;
+
+  // Don't allow a store and an instruction that must be in slot0 and
+  // doesn't allow a slot1 instruction.
+  if (MI.mayStore() && HII.isRestrictNoSlot1Store(MJ) && HII.isPureSlot0(MJ))
     return true;
 
   // An inline asm cannot be together with a branch, because we may not be
@@ -1148,12 +1164,9 @@ bool HexagonPacketizerList::cannotCoexist(const MachineInstr &MI,
 void HexagonPacketizerList::unpacketizeSoloInstrs(MachineFunction &MF) {
   for (auto &B : MF) {
     MachineBasicBlock::iterator BundleIt;
-    MachineBasicBlock::instr_iterator NextI;
-    for (auto I = B.instr_begin(), E = B.instr_end(); I != E; I = NextI) {
-      NextI = std::next(I);
-      MachineInstr &MI = *I;
+    for (MachineInstr &MI : llvm::make_early_inc_range(B.instrs())) {
       if (MI.isBundle())
-        BundleIt = I;
+        BundleIt = MI.getIterator();
       if (!MI.isInsideBundle())
         continue;
 
@@ -1519,6 +1532,13 @@ bool HexagonPacketizerList::isLegalToPacketizeTogether(SUnit *SUI, SUnit *SUJ) {
       bool IsVecJ = HII->isHVXVec(J);
       bool IsVecI = HII->isHVXVec(I);
 
+      // Don't reorder the loads if there is an order dependence. This would
+      // occur if the first instruction must go in slot0.
+      if (LoadJ && LoadI && HII->isPureSlot0(J)) {
+        FoundSequentialDependence = true;
+        break;
+      }
+
       if (Slot1Store && MF.getSubtarget<HexagonSubtarget>().hasV65Ops() &&
           ((LoadJ && StoreI && !NVStoreI) ||
            (StoreJ && LoadI && !NVStoreJ)) &&
@@ -1689,9 +1709,12 @@ HexagonPacketizerList::addToPacket(MachineInstr &MI) {
   MachineBasicBlock::iterator MII = MI.getIterator();
   MachineBasicBlock *MBB = MI.getParent();
 
-  if (CurrentPacketMIs.empty())
+  if (CurrentPacketMIs.empty()) {
     PacketStalls = false;
+    PacketStallCycles = 0;
+  }
   PacketStalls |= producesStall(MI);
+  PacketStallCycles = std::max(PacketStallCycles, calcStall(MI));
 
   if (MI.isImplicitDef()) {
     // Add to the packet to allow subsequent instructions to be checked
@@ -1801,6 +1824,8 @@ void HexagonPacketizerList::endPacket(MachineBasicBlock *MBB,
     setmemShufDisabled(false);
   }
 
+  PacketHasDuplex = false;
+  PacketHasSLOT0OnlyInsn = false;
   ResourceTracker->clearResources();
   LLVM_DEBUG(dbgs() << "End packet\n");
 }
@@ -1808,16 +1833,48 @@ void HexagonPacketizerList::endPacket(MachineBasicBlock *MBB,
 bool HexagonPacketizerList::shouldAddToPacket(const MachineInstr &MI) {
   if (Minimal)
     return false;
-  return !producesStall(MI);
+
+  if (producesStall(MI))
+    return false;
+
+  // If TinyCore with Duplexes is enabled, check if this MI can form a Duplex
+  // with any other instruction in the existing packet.
+  auto &HST = MI.getParent()->getParent()->getSubtarget<HexagonSubtarget>();
+  // Constraint 1: Only one duplex allowed per packet.
+  // Constraint 2: Consider duplex checks only if there is atleast one
+  // instruction in a packet.
+  // Constraint 3: If one of the existing instructions in the packet has a
+  // SLOT0 only instruction that can not be duplexed, do not attempt to form
+  // duplexes. (TODO: This will invalidate the L4_return* instructions to form a
+  // duplex)
+  if (HST.isTinyCoreWithDuplex() && CurrentPacketMIs.size() > 0 &&
+      !PacketHasDuplex) {
+    // Check for SLOT0 only non-duplexable instruction in packet.
+    for (auto &MJ : CurrentPacketMIs)
+      PacketHasSLOT0OnlyInsn |= HII->isPureSlot0(*MJ);
+    // Get the Big Core Opcode (dup_*).
+    int Opcode = HII->getDuplexOpcode(MI, false);
+    if (Opcode >= 0) {
+      // We now have an instruction that can be duplexed.
+      for (auto &MJ : CurrentPacketMIs) {
+        if (HII->isDuplexPair(MI, *MJ) && !PacketHasSLOT0OnlyInsn) {
+          PacketHasDuplex = true;
+          return true;
+        }
+      }
+      // If it can not be duplexed, check if there is a valid transition in DFA
+      // with the original opcode.
+      MachineInstr &MIRef = const_cast<MachineInstr &>(MI);
+      MIRef.setDesc(HII->get(Opcode));
+      return ResourceTracker->canReserveResources(MIRef);
+    }
+  }
+
+  return true;
 }
 
 // V60 forward scheduling.
-bool HexagonPacketizerList::producesStall(const MachineInstr &I) {
-  // If the packet already stalls, then ignore the stall from a subsequent
-  // instruction in the same packet.
-  if (PacketStalls)
-    return false;
-
+unsigned int HexagonPacketizerList::calcStall(const MachineInstr &I) {
   // Check whether the previous packet is in a different loop. If this is the
   // case, there is little point in trying to avoid a stall because that would
   // favor the rare case (loop entry) over the common case (loop iteration).
@@ -1829,10 +1886,12 @@ bool HexagonPacketizerList::producesStall(const MachineInstr &I) {
     auto *OldBB = OldPacketMIs.front()->getParent();
     auto *ThisBB = I.getParent();
     if (MLI->getLoopFor(OldBB) != MLI->getLoopFor(ThisBB))
-      return false;
+      return 0;
   }
 
   SUnit *SUI = MIToSUnit[const_cast<MachineInstr *>(&I)];
+  if (!SUI)
+    return 0;
 
   // If the latency is 0 and there is a data dependence between this
   // instruction and any instruction in the current packet, we disregard any
@@ -1861,7 +1920,7 @@ bool HexagonPacketizerList::producesStall(const MachineInstr &I) {
       if (Pred.getSUnit() == SUJ)
         if ((Pred.getLatency() == 0 && Pred.isAssignedRegDep()) ||
             HII->isNewValueJump(I) || HII->isToBeScheduledASAP(*J, I))
-          return false;
+          return 0;
   }
 
   // Check if the latency is greater than one between this instruction and any
@@ -1870,10 +1929,20 @@ bool HexagonPacketizerList::producesStall(const MachineInstr &I) {
     SUnit *SUJ = MIToSUnit[J];
     for (auto &Pred : SUI->Preds)
       if (Pred.getSUnit() == SUJ && Pred.getLatency() > 1)
-        return true;
+        return Pred.getLatency();
   }
 
-  return false;
+  return 0;
+}
+
+bool HexagonPacketizerList::producesStall(const MachineInstr &I) {
+  unsigned int Latency = calcStall(I);
+  if (Latency == 0)
+    return false;
+  // Ignore stall unless it stalls more than previous instruction in packet
+  if (PacketStalls)
+    return Latency > PacketStallCycles;
+  return true;
 }
 
 //===----------------------------------------------------------------------===//

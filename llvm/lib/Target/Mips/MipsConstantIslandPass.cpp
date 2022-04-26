@@ -127,9 +127,9 @@ static unsigned int longformBranchOpcode(unsigned int Opcode) {
   llvm_unreachable("Unknown branch type");
 }
 
-// FIXME: need to go through this whole constant islands port and check the math
-// for branch ranges and clean this up and make some functions to calculate things
-// that are done many times identically.
+// FIXME: need to go through this whole constant islands port and check
+// the math for branch ranges and clean this up and make some functions
+// to calculate things that are done many times identically.
 // Need to refactor some of the code to call this routine.
 static unsigned int branchMaxOffsets(unsigned int Opcode) {
   unsigned Bits, Scale;
@@ -529,7 +529,7 @@ MipsConstantIslands::doInitialPlacement(std::vector<MachineInstr*> &CPEMIs) {
   MF->push_back(BB);
 
   // MachineConstantPool measures alignment in bytes. We measure in log2(bytes).
-  const Align MaxAlign(MCP->getConstantPoolAlignment());
+  const Align MaxAlign = MCP->getConstantPoolAlign();
 
   // Mark the basic block as required by the const-pool.
   // If AlignConstantIslands isn't set, use 4-byte alignment for everything.
@@ -552,16 +552,15 @@ MipsConstantIslands::doInitialPlacement(std::vector<MachineInstr*> &CPEMIs) {
 
   const DataLayout &TD = MF->getDataLayout();
   for (unsigned i = 0, e = CPs.size(); i != e; ++i) {
-    unsigned Size = TD.getTypeAllocSize(CPs[i].getType());
+    unsigned Size = CPs[i].getSizeInBytes(TD);
     assert(Size >= 4 && "Too small constant pool entry");
-    unsigned Align = CPs[i].getAlignment();
-    assert(isPowerOf2_32(Align) && "Invalid alignment");
+    Align Alignment = CPs[i].getAlign();
     // Verify that all constant pool entries are a multiple of their alignment.
     // If not, we would have to pad them out so that instructions stay aligned.
-    assert((Size % Align) == 0 && "CP Entry not multiple of 4 bytes!");
+    assert(isAligned(Alignment, Size) && "CP Entry not multiple of 4 bytes!");
 
     // Insert CONSTPOOL_ENTRY before entries with a smaller alignment.
-    unsigned LogAlign = Log2_32(Align);
+    unsigned LogAlign = Log2(Alignment);
     MachineBasicBlock::iterator InsAt = InsPoint[LogAlign];
 
     MachineInstr *CPEMI =
@@ -579,7 +578,7 @@ MipsConstantIslands::doInitialPlacement(std::vector<MachineInstr*> &CPEMIs) {
     CPEntries.emplace_back(1, CPEntry(CPEMI, i));
     ++NumCPEs;
     LLVM_DEBUG(dbgs() << "Moved CPI#" << i << " to end of function, size = "
-                      << Size << ", align = " << Align << '\n');
+                      << Size << ", align = " << Alignment.value() << '\n');
   }
   LLVM_DEBUG(BB->dump());
 }
@@ -594,12 +593,7 @@ static bool BBHasFallthrough(MachineBasicBlock *MBB) {
     return false;
 
   MachineBasicBlock *NextBB = &*std::next(MBBI);
-  for (MachineBasicBlock::succ_iterator I = MBB->succ_begin(),
-       E = MBB->succ_end(); I != E; ++I)
-    if (*I == NextBB)
-      return true;
-
-  return false;
+  return llvm::is_contained(MBB->successors(), NextBB);
 }
 
 /// findConstPoolEntry - Given the constpool index and CONSTPOOL_ENTRY MI,
@@ -610,9 +604,9 @@ MipsConstantIslands::CPEntry
   std::vector<CPEntry> &CPEs = CPEntries[CPI];
   // Number of entries per constpool index should be small, just do a
   // linear search.
-  for (unsigned i = 0, e = CPEs.size(); i != e; ++i) {
-    if (CPEs[i].CPEMI == CPEMI)
-      return &CPEs[i];
+  for (CPEntry &CPE : CPEs) {
+    if (CPE.CPEMI == CPEMI)
+      return &CPE;
   }
   return nullptr;
 }
@@ -628,7 +622,7 @@ Align MipsConstantIslands::getCPEAlign(const MachineInstr &CPEMI) {
 
   unsigned CPI = CPEMI.getOperand(1).getIndex();
   assert(CPI < MCP->getConstants().size() && "Invalid constant pool index.");
-  return Align(MCP->getConstants()[CPI].getAlignment());
+  return MCP->getConstants()[CPI].getAlign();
 }
 
 /// initializeFunctionInfo - Do the initial scan of the function, building up
@@ -643,8 +637,8 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
   // has any inline assembly in it. If so, we have to be conservative about
   // alignment assumptions, as we don't know for sure the size of any
   // instructions in the inline assembly.
-  for (MachineFunction::iterator I = MF->begin(), E = MF->end(); I != E; ++I)
-    computeBlockSize(&*I);
+  for (MachineBasicBlock &MBB : *MF)
+    computeBlockSize(&MBB);
 
   // Compute block offsets.
   adjustBBOffsetsAfter(&MF->front());
@@ -736,8 +730,8 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
         continue;
 
       // Scan the instructions for constant pool operands.
-      for (unsigned op = 0, e = MI.getNumOperands(); op != e; ++op)
-        if (MI.getOperand(op).isCPI()) {
+      for (const MachineOperand &MO : MI.operands())
+        if (MO.isCPI()) {
           // We found one.  The addressing mode tells us the max displacement
           // from the PC that this instruction permits.
 
@@ -765,7 +759,7 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
             break;
           }
           // Remember that this is a user of a CP entry.
-          unsigned CPI = MI.getOperand(op).getIndex();
+          unsigned CPI = MO.getIndex();
           MachineInstr *CPEMI = CPEMIs[CPI];
           unsigned MaxOffs = ((1 << Bits)-1) * Scale;
           unsigned LongFormMaxOffs = ((1 << LongFormBits)-1) * LongFormScale;
@@ -940,7 +934,7 @@ bool MipsConstantIslands::isWaterInRange(unsigned UserOffset,
   MachineFunction::const_iterator NextBlock = ++Water->getIterator();
   if (NextBlock == MF->end()) {
     NextBlockOffset = BBInfo[Water->getNumber()].postOffset();
-    NextBlockAlignment = Align::None();
+    NextBlockAlignment = Align(1);
   } else {
     NextBlockOffset = BBInfo[NextBlock->getNumber()].Offset;
     NextBlockAlignment = NextBlock->getAlignment();
@@ -1058,27 +1052,27 @@ int MipsConstantIslands::findInRangeCPEntry(CPUser& U, unsigned UserOffset)
   // No.  Look for previously created clones of the CPE that are in range.
   unsigned CPI = CPEMI->getOperand(1).getIndex();
   std::vector<CPEntry> &CPEs = CPEntries[CPI];
-  for (unsigned i = 0, e = CPEs.size(); i != e; ++i) {
+  for (CPEntry &CPE : CPEs) {
     // We already tried this one
-    if (CPEs[i].CPEMI == CPEMI)
+    if (CPE.CPEMI == CPEMI)
       continue;
     // Removing CPEs can leave empty entries, skip
-    if (CPEs[i].CPEMI == nullptr)
+    if (CPE.CPEMI == nullptr)
       continue;
-    if (isCPEntryInRange(UserMI, UserOffset, CPEs[i].CPEMI, U.getMaxDisp(),
-                     U.NegOk)) {
-      LLVM_DEBUG(dbgs() << "Replacing CPE#" << CPI << " with CPE#"
-                        << CPEs[i].CPI << "\n");
+    if (isCPEntryInRange(UserMI, UserOffset, CPE.CPEMI, U.getMaxDisp(),
+                         U.NegOk)) {
+      LLVM_DEBUG(dbgs() << "Replacing CPE#" << CPI << " with CPE#" << CPE.CPI
+                        << "\n");
       // Point the CPUser node to the replacement
-      U.CPEMI = CPEs[i].CPEMI;
+      U.CPEMI = CPE.CPEMI;
       // Change the CPI in the instruction operand to refer to the clone.
-      for (unsigned j = 0, e = UserMI->getNumOperands(); j != e; ++j)
-        if (UserMI->getOperand(j).isCPI()) {
-          UserMI->getOperand(j).setIndex(CPEs[i].CPI);
+      for (MachineOperand &MO : UserMI->operands())
+        if (MO.isCPI()) {
+          MO.setIndex(CPE.CPI);
           break;
         }
       // Adjust the refcount of the clone...
-      CPEs[i].RefCount++;
+      CPE.RefCount++;
       // ...and the original.  If we didn't remove the old entry, none of the
       // addresses changed, so we don't need another pass.
       return decrementCPEReferenceCount(CPI, CPEMI) ? 2 : 1;
@@ -1114,27 +1108,27 @@ int MipsConstantIslands::findLongFormInRangeCPEntry
   // No.  Look for previously created clones of the CPE that are in range.
   unsigned CPI = CPEMI->getOperand(1).getIndex();
   std::vector<CPEntry> &CPEs = CPEntries[CPI];
-  for (unsigned i = 0, e = CPEs.size(); i != e; ++i) {
+  for (CPEntry &CPE : CPEs) {
     // We already tried this one
-    if (CPEs[i].CPEMI == CPEMI)
+    if (CPE.CPEMI == CPEMI)
       continue;
     // Removing CPEs can leave empty entries, skip
-    if (CPEs[i].CPEMI == nullptr)
+    if (CPE.CPEMI == nullptr)
       continue;
-    if (isCPEntryInRange(UserMI, UserOffset, CPEs[i].CPEMI,
-                         U.getLongFormMaxDisp(), U.NegOk)) {
-      LLVM_DEBUG(dbgs() << "Replacing CPE#" << CPI << " with CPE#"
-                        << CPEs[i].CPI << "\n");
+    if (isCPEntryInRange(UserMI, UserOffset, CPE.CPEMI, U.getLongFormMaxDisp(),
+                         U.NegOk)) {
+      LLVM_DEBUG(dbgs() << "Replacing CPE#" << CPI << " with CPE#" << CPE.CPI
+                        << "\n");
       // Point the CPUser node to the replacement
-      U.CPEMI = CPEs[i].CPEMI;
+      U.CPEMI = CPE.CPEMI;
       // Change the CPI in the instruction operand to refer to the clone.
-      for (unsigned j = 0, e = UserMI->getNumOperands(); j != e; ++j)
-        if (UserMI->getOperand(j).isCPI()) {
-          UserMI->getOperand(j).setIndex(CPEs[i].CPI);
+      for (MachineOperand &MO : UserMI->operands())
+        if (MO.isCPI()) {
+          MO.setIndex(CPE.CPI);
           break;
         }
       // Adjust the refcount of the clone...
-      CPEs[i].RefCount++;
+      CPE.RefCount++;
       // ...and the original.  If we didn't remove the old entry, none of the
       // addresses changed, so we don't need another pass.
       return decrementCPEReferenceCount(CPI, CPEMI) ? 2 : 1;
@@ -1398,9 +1392,9 @@ bool MipsConstantIslands::handleConstantPoolUser(unsigned CPUserIndex) {
   adjustBBOffsetsAfter(&*--NewIsland->getIterator());
 
   // Finally, change the CPI in the instruction operand to be ID.
-  for (unsigned i = 0, e = UserMI->getNumOperands(); i != e; ++i)
-    if (UserMI->getOperand(i).isCPI()) {
-      UserMI->getOperand(i).setIndex(ID);
+  for (MachineOperand &MO : UserMI->operands())
+    if (MO.isCPI()) {
+      MO.setIndex(ID);
       break;
     }
 
@@ -1441,15 +1435,14 @@ void MipsConstantIslands::removeDeadCPEMI(MachineInstr *CPEMI) {
 /// are zero.
 bool MipsConstantIslands::removeUnusedCPEntries() {
   unsigned MadeChange = false;
-  for (unsigned i = 0, e = CPEntries.size(); i != e; ++i) {
-      std::vector<CPEntry> &CPEs = CPEntries[i];
-      for (unsigned j = 0, ee = CPEs.size(); j != ee; ++j) {
-        if (CPEs[j].RefCount == 0 && CPEs[j].CPEMI) {
-          removeDeadCPEMI(CPEs[j].CPEMI);
-          CPEs[j].CPEMI = nullptr;
-          MadeChange = true;
-        }
+  for (std::vector<CPEntry> &CPEs : CPEntries) {
+    for (CPEntry &CPE : CPEs) {
+      if (CPE.RefCount == 0 && CPE.CPEMI) {
+        removeDeadCPEMI(CPE.CPEMI);
+        CPE.CPEMI = nullptr;
+        MadeChange = true;
       }
+    }
   }
   return MadeChange;
 }
@@ -1519,8 +1512,8 @@ MipsConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     // we know that RA is saved because we always save it right now.
     // this requirement will be relaxed later but we also have an alternate
     // way to implement this that I will implement that does not need jal.
-    // We should have a way to back out this alignment restriction if we "can" later.
-    // but it is not harmful.
+    // We should have a way to back out this alignment restriction
+    // if we "can" later. but it is not harmful.
     //
     DestBB->setAlignment(Align(4));
     Br.MaxDisp = ((1<<24)-1) * 2;
@@ -1639,10 +1632,10 @@ MipsConstantIslands::fixupConditionalBr(ImmBranch &Br) {
 void MipsConstantIslands::prescanForConstants() {
   unsigned J = 0;
   (void)J;
-  for (MachineFunction::iterator B =
-         MF->begin(), E = MF->end(); B != E; ++B) {
-    for (MachineBasicBlock::instr_iterator I =
-        B->instr_begin(), EB = B->instr_end(); I != EB; ++I) {
+  for (MachineBasicBlock &B : *MF) {
+    for (MachineBasicBlock::instr_iterator I = B.instr_begin(),
+                                           EB = B.instr_end();
+         I != EB; ++I) {
       switch(I->getDesc().getOpcode()) {
         case Mips::LwConstant32: {
           PrescannedForConstants = true;
@@ -1656,12 +1649,12 @@ void MipsConstantIslands::prescanForConstants() {
             Type *Int32Ty =
               Type::getInt32Ty(MF->getFunction().getContext());
             const Constant *C = ConstantInt::get(Int32Ty, V);
-            unsigned index = MCP->getConstantPoolIndex(C, 4);
+            unsigned index = MCP->getConstantPoolIndex(C, Align(4));
             I->getOperand(2).ChangeToImmediate(index);
             LLVM_DEBUG(dbgs() << "constant island constant " << *I << "\n");
             I->setDesc(TII->get(Mips::LwRxPcTcp16));
-            I->RemoveOperand(1);
-            I->RemoveOperand(1);
+            I->removeOperand(1);
+            I->removeOperand(1);
             I->addOperand(MachineOperand::CreateCPI(index, 0));
             I->addOperand(MachineOperand::CreateImm(4));
           }

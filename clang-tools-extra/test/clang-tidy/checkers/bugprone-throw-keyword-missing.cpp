@@ -94,11 +94,20 @@ void nameContainsExceptionThrownTest(int i) {
 template <class Exception>
 void f(int i, Exception excToBeThrown) {}
 
-void funcCallWithTempExcTest() {
-  f(5, RegularException());
+template <class SomeType>
+void templ(int i) {
+  if (i > 0)
+    SomeType();
 }
 
-// Global variable initilization test.
+void funcCallWithTempExcTest() {
+  f(5, RegularException());
+
+  templ<RegularException>(4);
+  templ<RegularClass>(4);
+}
+
+// Global variable initialization test.
 RegularException exc = RegularException();
 RegularException *excptr = new RegularException();
 
@@ -109,6 +118,7 @@ void localVariableInitTest() {
 
 class CtorInitializerListTest {
   RegularException exc;
+  RegularException exc2{};
 
   CtorInitializerListTest() : exc(RegularException()) {}
 
@@ -164,4 +174,15 @@ struct ExceptionRAII {
 
 void exceptionRAIITest() {
   ExceptionRAII E;
+}
+
+namespace std {
+typedef decltype(sizeof(void*)) size_t;
+}
+
+void* operator new(std::size_t, void*);
+
+void placeMentNewTest() {
+  alignas(RegularException) unsigned char expr[sizeof(RegularException)];
+  new (expr) RegularException{};
 }

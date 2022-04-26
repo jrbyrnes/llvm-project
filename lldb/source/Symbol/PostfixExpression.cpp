@@ -1,4 +1,4 @@
-//===-- PostfixExpression.cpp -----------------------------------*- C++ -*-===//
+//===-- PostfixExpression.cpp ---------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -18,6 +18,7 @@
 
 using namespace lldb_private;
 using namespace lldb_private::postfix;
+using namespace lldb_private::dwarf;
 
 static llvm::Optional<BinaryOpNode::OpType>
 GetBinaryOpType(llvm::StringRef token) {

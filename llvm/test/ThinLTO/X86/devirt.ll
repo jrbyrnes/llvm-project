@@ -31,10 +31,11 @@
 ; NOENABLESPLITFLAG-DAG: typeidCompatibleVTable: (name: "_ZTS1B", summary: ((offset: 16, [[B]])))
 ; NOENABLESPLITFLAG-DAG: typeidCompatibleVTable: (name: "_ZTS1C", summary: ((offset: 16, [[C]])))
 ; Type Id on _ZTV1D should have been promoted
-; NOENABLESPLITFLAG-DAG: typeidCompatibleVTable: (name: "1${{.*}}", summary: ((offset: 16, [[D]])))
+; NOENABLESPLITFLAG-DAG: typeidCompatibleVTable: (name: "1.{{.*}}", summary: ((offset: 16, [[D]])))
 
-; Legacy PM, Index based WPD
+; Index based WPD
 ; RUN: llvm-lto2 run %t2.o -save-temps -pass-remarks=. \
+; RUN:   -whole-program-visibility \
 ; RUN:   -o %t3 \
 ; RUN:   -r=%t2.o,test,px \
 ; RUN:   -r=%t2.o,_ZN1A1nEi,p \
@@ -46,8 +47,11 @@
 ; RUN:   -r=%t2.o,_ZTV1D,px 2>&1 | FileCheck %s --check-prefix=REMARK
 ; RUN: llvm-dis %t3.1.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR
 
-; New PM, Index based WPD
-; RUN: llvm-lto2 run %t2.o -save-temps -use-new-pm -pass-remarks=. \
+; Check that we're able to prevent specific function from being
+; devirtualized when running index based WPD.
+; RUN: llvm-lto2 run %t2.o -save-temps -pass-remarks=. \
+; RUN:   -whole-program-visibility \
+; RUN:   -wholeprogramdevirt-skip=_ZN1A1nEi \
 ; RUN:   -o %t3 \
 ; RUN:   -r=%t2.o,test,px \
 ; RUN:   -r=%t2.o,_ZN1A1nEi,p \
@@ -56,34 +60,11 @@
 ; RUN:   -r=%t2.o,_ZN1D1mEi,p \
 ; RUN:   -r=%t2.o,_ZTV1B,px \
 ; RUN:   -r=%t2.o,_ZTV1C,px \
-; RUN:   -r=%t2.o,_ZTV1D,px 2>&1 | FileCheck %s --check-prefix=REMARK
-; RUN: llvm-dis %t3.1.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR
+; RUN:   -r=%t2.o,_ZTV1D,px 2>&1 | FileCheck %s --check-prefix=SKIP
 
-; Legacy PM
 ; FIXME: Fix machine verifier issues and remove -verify-machineinstrs=0. PR39436.
 ; RUN: llvm-lto2 run %t.o -save-temps -pass-remarks=. \
-; RUN:   -verify-machineinstrs=0 \
-; RUN:   -o %t3 \
-; RUN:   -r=%t.o,test,px \
-; RUN:   -r=%t.o,_ZN1A1nEi,p \
-; RUN:   -r=%t.o,_ZN1B1fEi,p \
-; RUN:   -r=%t.o,_ZN1C1fEi,p \
-; RUN:   -r=%t.o,_ZN1D1mEi,p \
-; RUN:   -r=%t.o,_ZTV1B, \
-; RUN:   -r=%t.o,_ZTV1C, \
-; RUN:   -r=%t.o,_ZTV1D, \
-; RUN:   -r=%t.o,_ZN1A1nEi, \
-; RUN:   -r=%t.o,_ZN1B1fEi, \
-; RUN:   -r=%t.o,_ZN1C1fEi, \
-; RUN:   -r=%t.o,_ZN1D1mEi, \
-; RUN:   -r=%t.o,_ZTV1B,px \
-; RUN:   -r=%t.o,_ZTV1C,px \
-; RUN:   -r=%t.o,_ZTV1D,px 2>&1 | FileCheck %s --check-prefix=REMARK --dump-input=fail
-; RUN: llvm-dis %t3.1.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR
-
-; New PM
-; FIXME: Fix machine verifier issues and remove -verify-machineinstrs=0. PR39436.
-; RUN: llvm-lto2 run %t.o -save-temps -use-new-pm -pass-remarks=. \
+; RUN:   -whole-program-visibility \
 ; RUN:   -verify-machineinstrs=0 \
 ; RUN:   -o %t3 \
 ; RUN:   -r=%t.o,test,px \
@@ -105,6 +86,8 @@
 
 ; REMARK-DAG: single-impl: devirtualized a call to _ZN1A1nEi
 ; REMARK-DAG: single-impl: devirtualized a call to _ZN1D1mEi
+
+; SKIP-NOT: devirtualized a call to _ZN1A1nEi
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-grtev4-linux-gnu"
@@ -133,7 +116,10 @@ entry:
 
   ; Check that the call was devirtualized.
   ; CHECK-IR: %call = tail call i32 @_ZN1A1nEi
-  %call = tail call i32 %fptr1(%struct.A* nonnull %obj, i32 %a)
+  ; Ensure !prof and !callees metadata for indirect call promotion removed.
+  ; CHECK-IR-NOT: prof
+  ; CHECK-IR-NOT: callees
+  %call = tail call i32 %fptr1(%struct.A* nonnull %obj, i32 %a), !prof !5, !callees !6
 
   %3 = bitcast i8** %vtable to i32 (%struct.A*, i32)**
   %fptr22 = load i32 (%struct.A*, i32)*, i32 (%struct.A*, i32)** %3, align 8
@@ -186,3 +172,5 @@ attributes #0 = { noinline optnone }
 !2 = !{i64 16, !"_ZTS1C"}
 !3 = !{i64 16, !4}
 !4 = distinct !{}
+!5 = !{!"VP", i32 0, i64 1, i64 1621563287929432257, i64 1}
+!6 = !{i32 (%struct.A*, i32)* @_ZN1A1nEi}

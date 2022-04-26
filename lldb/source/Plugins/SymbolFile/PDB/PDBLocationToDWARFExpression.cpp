@@ -1,4 +1,4 @@
-//===-- PDBLocationToDWARFExpression.cpp ------------------------*- C++ -*-===//
+//===-- PDBLocationToDWARFExpression.cpp ----------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -25,6 +25,7 @@
 using namespace lldb;
 using namespace lldb_private;
 using namespace lldb_private::npdb;
+using namespace lldb_private::dwarf;
 using namespace llvm::pdb;
 
 static std::unique_ptr<IPDBFrameData>

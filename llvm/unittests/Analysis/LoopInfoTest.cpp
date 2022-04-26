@@ -11,6 +11,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Support/SourceMgr.h"
 #include "gtest/gtest.h"
@@ -285,6 +286,7 @@ TEST(LoopInfoTest, CanonicalLoop) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -343,6 +345,7 @@ TEST(LoopInfoTest, LoopWithInverseGuardSuccs) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -401,6 +404,7 @@ TEST(LoopInfoTest, LoopWithSwappedGuardCmp) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -459,6 +463,7 @@ TEST(LoopInfoTest, LoopWithInverseLatchSuccs) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -517,6 +522,7 @@ TEST(LoopInfoTest, LoopWithLatchCmpNE) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -576,6 +582,7 @@ TEST(LoopInfoTest, LoopWithGuardCmpSLE) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -631,6 +638,7 @@ TEST(LoopInfoTest, LoopNonConstantStep) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -689,6 +697,7 @@ TEST(LoopInfoTest, LoopUnsignedBounds) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -747,6 +756,7 @@ TEST(LoopInfoTest, DecreasingLoop) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -804,6 +814,7 @@ TEST(LoopInfoTest, CannotFindDirection) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -865,6 +876,7 @@ TEST(LoopInfoTest, ZextIndVar) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "indvars.iv");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -1037,6 +1049,7 @@ TEST(LoopInfoTest, UnguardedLoop) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), nullptr);
         EXPECT_FALSE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -1094,6 +1107,7 @@ TEST(LoopInfoTest, UnguardedLoopWithControlFlow) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -1164,6 +1178,7 @@ TEST(LoopInfoTest, LoopNest) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "j");
         EXPECT_EQ(L->getLoopGuardBranch(), OuterGuard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
 
         // Next two basic blocks are for.outer and for.inner.preheader - skip
         // them.
@@ -1188,6 +1203,7 @@ TEST(LoopInfoTest, LoopNest) {
         EXPECT_EQ(L->getInductionVariable(SE)->getName(), "i");
         EXPECT_EQ(L->getLoopGuardBranch(), InnerGuard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -1269,6 +1285,7 @@ TEST(LoopInfoTest, AuxiliaryIV) {
             L->isAuxiliaryInductionVariable(Instruction_mulopcode, SE));
         EXPECT_EQ(L->getLoopGuardBranch(), Guard);
         EXPECT_TRUE(L->isGuarded());
+        EXPECT_TRUE(L->isRotatedForm());
       });
 }
 
@@ -1444,4 +1461,126 @@ TEST(LoopInfoTest, LoopNonLatchUniqueExitBlocks) {
     L->getUniqueNonLatchExitBlocks(Exits);
     EXPECT_TRUE(Exits.size() == 1);
   });
+}
+
+// Test that a pointer-chasing loop is not rotated.
+TEST(LoopInfoTest, LoopNotRotated) {
+  const char *ModuleStr =
+      "target datalayout = \"e-m:o-i64:64-f80:128-n8:16:32:64-S128\"\n"
+      "define void @foo(i32* %elem) {\n"
+      "entry:\n"
+      "  br label %while.cond\n"
+      "while.cond:\n"
+      "  %elem.addr.0 = phi i32* [ %elem, %entry ], [ %incdec.ptr, %while.body "
+      "]\n"
+      "  %tobool = icmp eq i32* %elem.addr.0, null\n"
+      "  br i1 %tobool, label %while.end, label %while.body\n"
+      "while.body:\n"
+      "  %incdec.ptr = getelementptr inbounds i32, i32* %elem.addr.0, i64 1\n"
+      "  br label %while.cond\n"
+      "while.end:\n"
+      "  ret void\n"
+      "}\n";
+
+  // Parse the module.
+  LLVMContext Context;
+  std::unique_ptr<Module> M = makeLLVMModule(Context, ModuleStr);
+
+  runWithLoopInfo(*M, "foo", [&](Function &F, LoopInfo &LI) {
+    Function::iterator FI = F.begin();
+    // First basic block is entry - skip it.
+    BasicBlock *Header = &*(++FI);
+    assert(Header->getName() == "while.cond");
+    Loop *L = LI.getLoopFor(Header);
+    EXPECT_NE(L, nullptr);
+
+    // This loop is in simplified form.
+    EXPECT_TRUE(L->isLoopSimplifyForm());
+
+    // This loop is not rotated.
+    EXPECT_FALSE(L->isRotatedForm());
+  });
+}
+
+TEST(LoopInfoTest, LoopUserBranch) {
+  const char *ModuleStr =
+      "target datalayout = \"e-m:o-i64:64-f80:128-n8:16:32:64-S128\"\n"
+      "define void @foo(i32* %B, i64 signext %nx, i1 %cond) {\n"
+      "entry:\n"
+      "  br i1 %cond, label %bb, label %guard\n"
+      "guard:\n"
+      "  %cmp.guard = icmp slt i64 0, %nx\n"
+      "  br i1 %cmp.guard, label %for.i.preheader, label %for.end\n"
+      "for.i.preheader:\n"
+      "  br label %for.i\n"
+      "for.i:\n"
+      "  %i = phi i64 [ 0, %for.i.preheader ], [ %inc13, %for.i ]\n"
+      "  %Bi = getelementptr inbounds i32, i32* %B, i64 %i\n"
+      "  store i32 0, i32* %Bi, align 4\n"
+      "  %inc13 = add nsw i64 %i, 1\n"
+      "  %cmp = icmp slt i64 %inc13, %nx\n"
+      "  br i1 %cmp, label %for.i, label %for.i.exit\n"
+      "for.i.exit:\n"
+      "  br label %bb\n"
+      "bb:\n"
+      "  br label %for.end\n"
+      "for.end:\n"
+      "  ret void\n"
+      "}\n";
+
+  // Parse the module.
+  LLVMContext Context;
+  std::unique_ptr<Module> M = makeLLVMModule(Context, ModuleStr);
+
+  runWithLoopInfo(*M, "foo", [&](Function &F, LoopInfo &LI) {
+    Function::iterator FI = F.begin();
+    FI = ++FI;
+    assert(FI->getName() == "guard");
+
+    FI = ++FI;
+    BasicBlock *Header = &*(++FI);
+    assert(Header->getName() == "for.i");
+
+    Loop *L = LI.getLoopFor(Header);
+    EXPECT_NE(L, nullptr);
+
+    // L should not have a guard branch
+    EXPECT_EQ(L->getLoopGuardBranch(), nullptr);
+  });
+}
+
+TEST(LoopInfoTest, LoopInductionVariable) {
+  const char *ModuleStr =
+      "define i32 @foo(i32* %addr) {\n"
+      "entry:\n"
+      "  br label %for.body\n"
+      "for.body:\n"
+      "  %sum.08 = phi i32 [ 0, %entry ], [ %add, %for.body ]\n"
+      "  %addr.addr.06 = phi i32* [ %addr, %entry ], [ %incdec.ptr, %for.body "
+      "]\n"
+      "  %count.07 = phi i32 [ 6000, %entry ], [ %dec, %for.body ]\n"
+      "  %0 = load i32, i32* %addr.addr.06, align 4\n"
+      "  %add = add nsw i32 %0, %sum.08\n"
+      "  %dec = add nsw i32 %count.07, -1\n"
+      "  %incdec.ptr = getelementptr inbounds i32, i32* %addr.addr.06, i64 1\n"
+      "  %cmp = icmp ugt i32 %count.07, 1\n"
+      "  br i1 %cmp, label %for.body, label %for.end\n"
+      "for.end:\n"
+      "  %cmp1 = icmp eq i32 %add, -1\n"
+      "  %conv = zext i1 %cmp1 to i32\n"
+      "  ret i32 %conv\n"
+      "}\n";
+
+  // Parse the module.
+  LLVMContext Context;
+  std::unique_ptr<Module> M = makeLLVMModule(Context, ModuleStr);
+
+  runWithLoopInfoPlus(
+      *M, "foo", [&](Function &F, LoopInfo &LI, ScalarEvolution &SE) {
+        Function::iterator FI = F.begin();
+        BasicBlock *Header = &*(++FI);
+        Loop *L = LI.getLoopFor(Header);
+        EXPECT_NE(L, nullptr);
+        EXPECT_EQ(L->getInductionVariable(SE)->getName(), "count.07");
+      });
 }

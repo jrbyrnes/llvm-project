@@ -1,8 +1,6 @@
 ; Test that instrumentaiton works fine for the case of failing the split critical edges.
-; RUN: opt < %s -pgo-instr-gen -S | FileCheck %s --check-prefix=GEN
 ; RUN: opt < %s -passes=pgo-instr-gen -S | FileCheck %s --check-prefix=GEN
 ; RUN: llvm-profdata merge %S/Inputs/PR41279.proftext -o %t.profdata
-; RUN: opt < %s -pgo-instr-use -pgo-test-profile-file=%t.profdata -S | FileCheck %s --check-prefix=USE
 ; RUN: opt < %s -passes=pgo-instr-use -pgo-test-profile-file=%t.profdata -S | FileCheck %s --check-prefix=USE
 
 declare void @f3({ i8*, i64 }*, { i8*, i64 }*, i64)
@@ -27,7 +25,7 @@ define void @foo({ i8*, i64 }*, { i8*, i64 }*) personality i32 (...)* @__CxxFram
 6:
   cleanupret from %17 unwind to caller
 ; GEN: 6:
-; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 60927483247, i32 4, i32 2)
+; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 {{[0-9]+}}, i32 4, i32 2)
 
 7:
   store i8 1, i8* %3, align 1
@@ -50,13 +48,13 @@ define void @foo({ i8*, i64 }*, { i8*, i64 }*) personality i32 (...)* @__CxxFram
   store i8 0, i8* %3, align 1
   br label %14
 ; GEN: 12:
-; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 60927483247, i32 4, i32 1)
+; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 {{[0-9]+}}, i32 4, i32 1)
 
 13:
   call void @f3({ i8*, i64 }* %0, { i8*, i64 }* %1, i64 1)
   br label %14
 ; GEN: 13:
-; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 60927483247, i32 4, i32 0)
+; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 {{[0-9]+}}, i32 4, i32 0)
 
 14:
   ret void
@@ -65,7 +63,7 @@ define void @foo({ i8*, i64 }*, { i8*, i64 }*) personality i32 (...)* @__CxxFram
   store i8 0, i8* %3, align 1
   br label %6
 ; GEN: 15:
-; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 60927483247, i32 4, i32 3)
+; GEN:  call void @llvm.instrprof.increment(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @__profn_foo, i32 0, i32 0), i64 {{[0-9]+}}, i32 4, i32 3)
 
 16:
   %17 = cleanuppad within none []

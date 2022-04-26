@@ -16,6 +16,7 @@
 #include "RISCVTargetMachine.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelectorImpl.h"
+#include "llvm/IR/IntrinsicsRISCV.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "riscv-isel"
@@ -68,8 +69,7 @@ private:
 RISCVInstructionSelector::RISCVInstructionSelector(
     const RISCVTargetMachine &TM, const RISCVSubtarget &STI,
     const RISCVRegisterBankInfo &RBI)
-    : InstructionSelector(), STI(STI), TII(*STI.getInstrInfo()),
-      TRI(*STI.getRegisterInfo()), RBI(RBI),
+    : STI(STI), TII(*STI.getInstrInfo()), TRI(*STI.getRegisterInfo()), RBI(RBI),
 
 #define GET_GLOBALISEL_PREDICATES_INIT
 #include "RISCVGenGlobalISel.inc"

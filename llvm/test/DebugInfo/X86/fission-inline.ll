@@ -58,7 +58,7 @@
 
 ; CHECK:      DW_TAG_subprogram
 ; CHECK-NEXT:   DW_AT_name {{.*}} "f2<int>"
-; CHECK-NOT: DW_
+; CHECK-NEXT:   DW_AT_inline
 ; CHECK:      DW_TAG_subprogram
 ; CHECK-NEXT:   DW_AT_low_pc [DW_FORM_addr]
 ; CHECK-NEXT:   DW_AT_high_pc
@@ -90,8 +90,8 @@ entry:
 
 declare void @_Z2f1v() #1
 
-attributes #0 = { uwtable "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
-attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { uwtable "less-precise-fpmad"="false" "frame-pointer"="all" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #1 = { "less-precise-fpmad"="false" "frame-pointer"="all" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!22, !23}

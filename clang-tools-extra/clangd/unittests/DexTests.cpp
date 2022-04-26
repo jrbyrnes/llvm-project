@@ -6,18 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "FuzzyMatch.h"
 #include "TestFS.h"
 #include "TestIndex.h"
 #include "index/Index.h"
-#include "index/Merge.h"
 #include "index/SymbolID.h"
 #include "index/dex/Dex.h"
 #include "index/dex/Iterator.h"
 #include "index/dex/Token.h"
 #include "index/dex/Trigram.h"
 #include "llvm/Support/ScopedPrinter.h"
-#include "llvm/Support/raw_ostream.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include <string>
@@ -255,7 +252,7 @@ TEST(DexIterators, StringRepresentation) {
   auto I2 = L1.iterator(&Tok);
   EXPECT_EQ(llvm::to_string(*I2), "T=L2");
 
-  auto Tree = C.limit(C.intersect(move(I1), move(I2)), 10);
+  auto Tree = C.limit(C.intersect(std::move(I1), std::move(I2)), 10);
   // AND reorders its children, we don't care which order it prints.
   EXPECT_THAT(llvm::to_string(*Tree), AnyOf("(LIMIT 10 (& [1 3 5] T=L2))",
                                             "(LIMIT 10 (& T=L2 [1 3 5]))"));
@@ -366,42 +363,56 @@ trigramsAre(std::initializer_list<std::string> Trigrams) {
   return tokensAre(Trigrams, Token::Kind::Trigram);
 }
 
+std::vector<Token> identifierTrigramTokens(llvm::StringRef S) {
+  std::vector<Trigram> Trigrams;
+  generateIdentifierTrigrams(S, Trigrams);
+  std::vector<Token> Tokens;
+  for (Trigram T : Trigrams)
+    Tokens.emplace_back(Token::Kind::Trigram, T.str());
+  return Tokens;
+}
+
 TEST(DexTrigrams, IdentifierTrigrams) {
-  EXPECT_THAT(generateIdentifierTrigrams("X86"),
-              trigramsAre({"x86", "x", "x8"}));
+  EXPECT_THAT(identifierTrigramTokens("X86"), trigramsAre({"x86", "x", "x8"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("nl"), trigramsAre({"nl", "n"}));
+  EXPECT_THAT(identifierTrigramTokens("nl"), trigramsAre({"nl", "n"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("n"), trigramsAre({"n"}));
+  EXPECT_THAT(identifierTrigramTokens("n"), trigramsAre({"n"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("clangd"),
+  EXPECT_THAT(identifierTrigramTokens("clangd"),
               trigramsAre({"c", "cl", "cla", "lan", "ang", "ngd"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("abc_def"),
-              trigramsAre({"a", "ab", "ad", "abc", "abd", "ade", "bcd", "bde",
-                           "cde", "def"}));
+  EXPECT_THAT(identifierTrigramTokens("abc_def"),
+              trigramsAre({"a", "d", "ab", "ad", "de", "abc", "abd", "ade",
+                           "bcd", "bde", "cde", "def"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("a_b_c_d_e_"),
-              trigramsAre({"a", "a_", "ab", "abc", "bcd", "cde"}));
+  EXPECT_THAT(identifierTrigramTokens("a_b_c_d_e_"),
+              trigramsAre({"a", "b", "ab", "bc", "abc", "bcd", "cde"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("unique_ptr"),
-              trigramsAre({"u", "un", "up", "uni", "unp", "upt", "niq", "nip",
-                           "npt", "iqu", "iqp", "ipt", "que", "qup", "qpt",
-                           "uep", "ept", "ptr"}));
+  EXPECT_THAT(identifierTrigramTokens("unique_ptr"),
+              trigramsAre({"u",   "p",   "un",  "up",  "pt",  "uni", "unp",
+                           "upt", "niq", "nip", "npt", "iqu", "iqp", "ipt",
+                           "que", "qup", "qpt", "uep", "ept", "ptr"}));
 
-  EXPECT_THAT(
-      generateIdentifierTrigrams("TUDecl"),
-      trigramsAre({"t", "tu", "td", "tud", "tde", "ude", "dec", "ecl"}));
+  EXPECT_THAT(identifierTrigramTokens("TUDecl"),
+              trigramsAre({"t", "d", "tu", "td", "de", "tud", "tde", "ude",
+                           "dec", "ecl"}));
 
-  EXPECT_THAT(generateIdentifierTrigrams("IsOK"),
-              trigramsAre({"i", "is", "io", "iso", "iok", "sok"}));
+  EXPECT_THAT(identifierTrigramTokens("IsOK"),
+              trigramsAre({"i", "o", "is", "ok", "io", "iso", "iok", "sok"}));
 
-  EXPECT_THAT(
-      generateIdentifierTrigrams("abc_defGhij__klm"),
-      trigramsAre({"a",   "ab",  "ad",  "abc", "abd", "ade", "adg", "bcd",
-                   "bde", "bdg", "cde", "cdg", "def", "deg", "dgh", "dgk",
-                   "efg", "egh", "egk", "fgh", "fgk", "ghi", "ghk", "gkl",
-                   "hij", "hik", "hkl", "ijk", "ikl", "jkl", "klm"}));
+  EXPECT_THAT(identifierTrigramTokens("_pb"),
+              trigramsAre({"_", "_p", "p", "pb"}));
+  EXPECT_THAT(identifierTrigramTokens("__pb"),
+              trigramsAre({"_", "_p", "p", "pb"}));
+
+  EXPECT_THAT(identifierTrigramTokens("abc_defGhij__klm"),
+              trigramsAre({"a",   "d",   "ab",  "ad",  "dg",  "de",  "abc",
+                           "abd", "ade", "adg", "bcd", "bde", "bdg", "cde",
+                           "cdg", "def", "deg", "dgh", "dgk", "efg", "egh",
+                           "egk", "fgh", "fgk", "ghi", "ghk", "gkl", "hij",
+                           "hik", "hkl", "ijk", "ikl", "jkl", "klm"}));
+  EXPECT_THAT(identifierTrigramTokens(""), IsEmpty());
 }
 
 TEST(DexTrigrams, QueryTrigrams) {
@@ -411,8 +422,16 @@ TEST(DexTrigrams, QueryTrigrams) {
 
   EXPECT_THAT(generateQueryTrigrams(""), trigramsAre({}));
   EXPECT_THAT(generateQueryTrigrams("_"), trigramsAre({"_"}));
-  EXPECT_THAT(generateQueryTrigrams("__"), trigramsAre({"__"}));
-  EXPECT_THAT(generateQueryTrigrams("___"), trigramsAre({}));
+  EXPECT_THAT(generateQueryTrigrams("__"), trigramsAre({"_"}));
+  EXPECT_THAT(generateQueryTrigrams("___"), trigramsAre({"_"}));
+
+  EXPECT_THAT(generateQueryTrigrams("m_"), trigramsAre({"m"}));
+
+  EXPECT_THAT(generateQueryTrigrams("p_b"), trigramsAre({"pb"}));
+  EXPECT_THAT(generateQueryTrigrams("pb_"), trigramsAre({"pb"}));
+  EXPECT_THAT(generateQueryTrigrams("_p"), trigramsAre({"_p"}));
+  EXPECT_THAT(generateQueryTrigrams("_pb_"), trigramsAre({"pb"}));
+  EXPECT_THAT(generateQueryTrigrams("__pb"), trigramsAre({"pb"}));
 
   EXPECT_THAT(generateQueryTrigrams("X86"), trigramsAre({"x86"}));
 
@@ -517,25 +536,45 @@ TEST(DexTest, FuzzyMatch) {
 }
 
 TEST(DexTest, ShortQuery) {
-  auto I = Dex::build(generateSymbols({"OneTwoThreeFour"}), RefSlab(),
+  auto I = Dex::build(generateSymbols({"_OneTwoFourSix"}), RefSlab(),
                       RelationSlab());
   FuzzyFindRequest Req;
   Req.AnyScope = true;
   bool Incomplete;
 
-  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("OneTwoThreeFour"));
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
   EXPECT_FALSE(Incomplete) << "Empty string is not a short query";
 
-  Req.Query = "t";
+  Req.Query = "o";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
+  EXPECT_TRUE(Incomplete) << "Using first head as unigram";
+
+  Req.Query = "_o";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
+  EXPECT_TRUE(Incomplete) << "Using delimiter and first head as bigram";
+
+  Req.Query = "on";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
+  EXPECT_TRUE(Incomplete) << "Using first head and tail as bigram";
+
+  Req.Query = "ot";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
+  EXPECT_TRUE(Incomplete) << "Using first two heads as bigram";
+
+  Req.Query = "tw";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
+  EXPECT_TRUE(Incomplete) << "Using second head and tail as bigram";
+
+  Req.Query = "tf";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
+  EXPECT_TRUE(Incomplete) << "Using second and third heads as bigram";
+
+  Req.Query = "fo";
   EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre());
   EXPECT_TRUE(Incomplete) << "Short queries have different semantics";
 
-  Req.Query = "tt";
-  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre());
-  EXPECT_TRUE(Incomplete) << "Short queries have different semantics";
-
-  Req.Query = "ttf";
-  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("OneTwoThreeFour"));
+  Req.Query = "tfs";
+  EXPECT_THAT(match(*I, Req, &Incomplete), ElementsAre("_OneTwoFourSix"));
   EXPECT_FALSE(Incomplete) << "3-char string is not a short query";
 }
 
@@ -687,14 +726,18 @@ TEST(DexTests, Refs) {
   Req.Filter = RefKind::Declaration | RefKind::Definition;
 
   std::vector<std::string> Files;
-  Dex(std::vector<Symbol>{Foo, Bar}, Refs, RelationSlab())
-      .refs(Req, [&](const Ref &R) { Files.push_back(R.Location.FileURI); });
+  EXPECT_FALSE(Dex(std::vector<Symbol>{Foo, Bar}, Refs, RelationSlab())
+                   .refs(Req, [&](const Ref &R) {
+                     Files.push_back(R.Location.FileURI);
+                   }));
   EXPECT_THAT(Files, UnorderedElementsAre("foo.h", "foo.cc"));
 
   Req.Limit = 1;
   Files.clear();
-  Dex(std::vector<Symbol>{Foo, Bar}, Refs, RelationSlab())
-      .refs(Req, [&](const Ref &R) { Files.push_back(R.Location.FileURI); });
+  EXPECT_TRUE(Dex(std::vector<Symbol>{Foo, Bar}, Refs, RelationSlab())
+                  .refs(Req, [&](const Ref &R) {
+                    Files.push_back(R.Location.FileURI);
+                  }));
   EXPECT_THAT(Files, ElementsAre(AnyOf("foo.h", "foo.cc")));
 }
 
@@ -705,20 +748,33 @@ TEST(DexTests, Relations) {
 
   std::vector<Symbol> Symbols{Parent, Child1, Child2};
 
-  std::vector<Relation> Relations{
-      {Parent.ID, index::SymbolRole::RelationBaseOf, Child1.ID},
-      {Parent.ID, index::SymbolRole::RelationBaseOf, Child2.ID}};
+  std::vector<Relation> Relations{{Parent.ID, RelationKind::BaseOf, Child1.ID},
+                                  {Parent.ID, RelationKind::BaseOf, Child2.ID}};
 
   Dex I{Symbols, RefSlab(), Relations};
 
   std::vector<SymbolID> Results;
   RelationsRequest Req;
   Req.Subjects.insert(Parent.ID);
-  Req.Predicate = index::SymbolRole::RelationBaseOf;
+  Req.Predicate = RelationKind::BaseOf;
   I.relations(Req, [&](const SymbolID &Subject, const Symbol &Object) {
     Results.push_back(Object.ID);
   });
   EXPECT_THAT(Results, UnorderedElementsAre(Child1.ID, Child2.ID));
+}
+
+TEST(DexIndex, IndexedFiles) {
+  SymbolSlab Symbols;
+  RefSlab Refs;
+  auto Size = Symbols.bytes() + Refs.bytes();
+  auto Data = std::make_pair(std::move(Symbols), std::move(Refs));
+  llvm::StringSet<> Files = {"unittest:///foo.cc", "unittest:///bar.cc"};
+  Dex I(std::move(Data.first), std::move(Data.second), RelationSlab(),
+        std::move(Files), IndexContents::All, std::move(Data), Size);
+  auto ContainsFile = I.indexedFiles();
+  EXPECT_EQ(ContainsFile("unittest:///foo.cc"), IndexContents::All);
+  EXPECT_EQ(ContainsFile("unittest:///bar.cc"), IndexContents::All);
+  EXPECT_EQ(ContainsFile("unittest:///foobar.cc"), IndexContents::None);
 }
 
 TEST(DexTest, PreferredTypesBoosting) {
@@ -736,10 +792,10 @@ TEST(DexTest, PreferredTypesBoosting) {
   // The best candidate can change depending on the preferred type.
   Req.Limit = 1;
 
-  Req.PreferredTypes = {Sym1.Type};
+  Req.PreferredTypes = {std::string(Sym1.Type)};
   EXPECT_THAT(match(I, Req), ElementsAre("t1"));
 
-  Req.PreferredTypes = {Sym2.Type};
+  Req.PreferredTypes = {std::string(Sym2.Type)};
   EXPECT_THAT(match(I, Req), ElementsAre("t2"));
 }
 

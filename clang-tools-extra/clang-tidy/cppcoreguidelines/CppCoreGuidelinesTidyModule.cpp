@@ -15,12 +15,14 @@
 #include "../modernize/UseOverrideCheck.h"
 #include "../readability/MagicNumbersCheck.h"
 #include "AvoidGotoCheck.h"
+#include "AvoidNonConstGlobalVariablesCheck.h"
 #include "InitVariablesCheck.h"
 #include "InterfacesGlobalInitCheck.h"
 #include "MacroUsageCheck.h"
 #include "NarrowingConversionsCheck.h"
 #include "NoMallocCheck.h"
 #include "OwningMemoryCheck.h"
+#include "PreferMemberInitializerCheck.h"
 #include "ProBoundsArrayToPointerDecayCheck.h"
 #include "ProBoundsConstantArrayIndexCheck.h"
 #include "ProBoundsPointerArithmeticCheck.h"
@@ -33,6 +35,7 @@
 #include "ProTypeVarargCheck.h"
 #include "SlicingCheck.h"
 #include "SpecialMemberFunctionsCheck.h"
+#include "VirtualClassDestructorCheck.h"
 
 namespace clang {
 namespace tidy {
@@ -48,6 +51,8 @@ public:
         "cppcoreguidelines-avoid-goto");
     CheckFactories.registerCheck<readability::MagicNumbersCheck>(
         "cppcoreguidelines-avoid-magic-numbers");
+    CheckFactories.registerCheck<AvoidNonConstGlobalVariablesCheck>(
+        "cppcoreguidelines-avoid-non-const-global-variables");
     CheckFactories.registerCheck<modernize::UseOverrideCheck>(
         "cppcoreguidelines-explicit-virtual-functions");
     CheckFactories.registerCheck<InitVariablesCheck>(
@@ -63,6 +68,8 @@ public:
         "cppcoreguidelines-non-private-member-variables-in-classes");
     CheckFactories.registerCheck<OwningMemoryCheck>(
         "cppcoreguidelines-owning-memory");
+    CheckFactories.registerCheck<PreferMemberInitializerCheck>(
+        "cppcoreguidelines-prefer-member-initializer");
     CheckFactories.registerCheck<ProBoundsArrayToPointerDecayCheck>(
         "cppcoreguidelines-pro-bounds-array-to-pointer-decay");
     CheckFactories.registerCheck<ProBoundsConstantArrayIndexCheck>(
@@ -88,6 +95,8 @@ public:
     CheckFactories.registerCheck<SlicingCheck>("cppcoreguidelines-slicing");
     CheckFactories.registerCheck<misc::UnconventionalAssignOperatorCheck>(
         "cppcoreguidelines-c-copy-assignment-signature");
+    CheckFactories.registerCheck<VirtualClassDestructorCheck>(
+        "cppcoreguidelines-virtual-class-destructor");
   }
 
   ClangTidyOptions getModuleOptions() override {
@@ -95,10 +104,7 @@ public:
     ClangTidyOptions::OptionMap &Opts = Options.CheckOptions;
 
     Opts["cppcoreguidelines-non-private-member-variables-in-classes."
-         "IgnoreClassesWithAllMemberVariablesBeingPublic"] = "1";
-
-    Opts["cppcoreguidelines-explicit-virtual-functions."
-         "IgnoreDestructors"] = "1";
+         "IgnoreClassesWithAllMemberVariablesBeingPublic"] = "true";
 
     return Options;
   }

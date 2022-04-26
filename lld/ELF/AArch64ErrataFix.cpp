@@ -26,17 +26,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64ErrataFix.h"
-#include "Config.h"
+#include "InputFiles.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
 #include "Relocations.h"
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
-#include "lld/Common/Memory.h"
+#include "lld/Common/CommonLinkerContext.h"
 #include "lld/Common/Strings.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 
 using namespace llvm;
@@ -44,9 +43,8 @@ using namespace llvm::ELF;
 using namespace llvm::object;
 using namespace llvm::support;
 using namespace llvm::support::endian;
-
-namespace lld {
-namespace elf {
+using namespace lld;
+using namespace lld::elf;
 
 // Helper functions to identify instructions and conditions needed to trigger
 // the Cortex-A53-843419 erratum.
@@ -61,7 +59,7 @@ static bool isADRP(uint32_t instr) {
 // Instructions appear in order of appearance starting from table in
 // C4.1.3 Loads and Stores.
 
-// All loads and stores have 1 (at bit postion 27), (0 at bit position 25).
+// All loads and stores have 1 (at bit position 27), (0 at bit position 25).
 // | op0 x op1 (2) | 1 op2 0 op3 (2) | x | op4 (5) | xxxx | op5 (2) | x (10) |
 static bool isLoadStoreClass(uint32_t instr) {
   return (instr & 0x0a000000) == 0x08000000;
@@ -352,7 +350,7 @@ static uint64_t scanCortexA53Errata843419(InputSection *isec, uint64_t &off,
   }
 
   uint64_t patchOff = 0;
-  const uint8_t *buf = isec->data().begin();
+  const uint8_t *buf = isec->rawData.begin();
   const ulittle32_t *instBuf = reinterpret_cast<const ulittle32_t *>(buf + off);
   uint32_t instr1 = *instBuf++;
   uint32_t instr2 = *instBuf++;
@@ -371,7 +369,7 @@ static uint64_t scanCortexA53Errata843419(InputSection *isec, uint64_t &off,
   return patchOff;
 }
 
-class Patch843419Section : public SyntheticSection {
+class elf::Patch843419Section : public SyntheticSection {
 public:
   Patch843419Section(InputSection *p, uint64_t off);
 
@@ -380,6 +378,10 @@ public:
   size_t getSize() const override { return 8; }
 
   uint64_t getLDSTAddr() const;
+
+  static bool classof(const SectionBase *d) {
+    return d->kind() == InputSectionBase::Synthetic && d->name == ".text.patch";
+  }
 
   // The Section we are patching.
   const InputSection *patchee;
@@ -395,9 +397,9 @@ Patch843419Section::Patch843419Section(InputSection *p, uint64_t off)
       patchee(p), patcheeOffset(off) {
   this->parent = p->getParent();
   patchSym = addSyntheticLocal(
-      saver.save("__CortexA53843419_" + utohexstr(getLDSTAddr())), STT_FUNC, 0,
-      getSize(), *this);
-  addSyntheticLocal(saver.save("$x"), STT_NOTYPE, 0, 0, *this);
+      saver().save("__CortexA53843419_" + utohexstr(getLDSTAddr())), STT_FUNC,
+      0, getSize(), *this);
+  addSyntheticLocal(saver().save("$x"), STT_NOTYPE, 0, 0, *this);
 }
 
 uint64_t Patch843419Section::getLDSTAddr() const {
@@ -407,17 +409,15 @@ uint64_t Patch843419Section::getLDSTAddr() const {
 void Patch843419Section::writeTo(uint8_t *buf) {
   // Copy the instruction that we will be replacing with a branch in the
   // patchee Section.
-  write32le(buf, read32le(patchee->data().begin() + patcheeOffset));
+  write32le(buf, read32le(patchee->rawData.begin() + patcheeOffset));
 
   // Apply any relocation transferred from the original patchee section.
-  // For a SyntheticSection Buf already has outSecOff added, but relocateAlloc
-  // also adds outSecOff so we need to subtract to avoid double counting.
-  this->relocateAlloc(buf - outSecOff, buf - outSecOff + getSize());
+  relocateAlloc(buf, buf + getSize());
 
   // Return address is the next instruction after the one we have just copied.
   uint64_t s = getLDSTAddr() + 4;
   uint64_t p = patchSym->getVA() + 4;
-  target->relocateOne(buf + 4, R_AARCH64_JUMP26, s - p);
+  target->relocateNoSym(buf + 4, R_AARCH64_JUMP26, s - p);
 }
 
 void AArch64Err843419Patcher::init() {
@@ -439,9 +439,8 @@ void AArch64Err843419Patcher::init() {
   };
 
   // Collect mapping symbols for every executable InputSection.
-  for (InputFile *file : objectFiles) {
-    auto *f = cast<ObjFile<ELF64LE>>(file);
-    for (Symbol *b : f->getLocalSymbols()) {
+  for (ELFFileBase *file : objectFiles) {
+    for (Symbol *b : file->getLocalSymbols()) {
       auto *def = dyn_cast<Defined>(b);
       if (!def)
         continue;
@@ -512,7 +511,7 @@ void AArch64Err843419Patcher::insertPatches(
   // determine the insertion point. This is ok as we only merge into an
   // InputSectionDescription once per pass, and at the end of the pass
   // assignAddresses() will recalculate all the outSecOff values.
-  std::vector<InputSection *> tmp;
+  SmallVector<InputSection *, 0> tmp;
   tmp.reserve(isd.sections.size() + patches.size());
   auto mergeCmp = [](const InputSection *a, const InputSection *b) {
     if (a->outSecOff != b->outSecOff)
@@ -593,7 +592,7 @@ AArch64Err843419Patcher::patchInputSectionDescription(
       auto dataSym = std::next(codeSym);
       uint64_t off = (*codeSym)->value;
       uint64_t limit =
-          (dataSym == mapSyms.end()) ? isec->data().size() : (*dataSym)->value;
+          (dataSym == mapSyms.end()) ? isec->rawData.size() : (*dataSym)->value;
 
       while (off < limit) {
         uint64_t startAddr = isec->getVA(off);
@@ -619,7 +618,7 @@ AArch64Err843419Patcher::patchInputSectionDescription(
 //
 // PostConditions:
 // Returns true if at least one patch was added. The addresses of the
-// Ouptut and Input Sections may have been changed.
+// Output and Input Sections may have been changed.
 // Returns false if no patches were required and no changes were made.
 bool AArch64Err843419Patcher::createFixes() {
   if (!initialized)
@@ -629,8 +628,8 @@ bool AArch64Err843419Patcher::createFixes() {
   for (OutputSection *os : outputSections) {
     if (!(os->flags & SHF_ALLOC) || !(os->flags & SHF_EXECINSTR))
       continue;
-    for (BaseCommand *bc : os->sectionCommands)
-      if (auto *isd = dyn_cast<InputSectionDescription>(bc)) {
+    for (SectionCommand *cmd : os->commands)
+      if (auto *isd = dyn_cast<InputSectionDescription>(cmd)) {
         std::vector<Patch843419Section *> patches =
             patchInputSectionDescription(*isd);
         if (!patches.empty()) {
@@ -641,5 +640,3 @@ bool AArch64Err843419Patcher::createFixes() {
   }
   return addressesChanged;
 }
-} // namespace elf
-} // namespace lld

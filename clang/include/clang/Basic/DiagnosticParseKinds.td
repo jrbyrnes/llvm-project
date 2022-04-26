@@ -12,30 +12,24 @@
 
 let Component = "Parse" in {
 
-def warn_asm_qualifier_ignored : Warning<
-  "ignored %0 qualifier on asm">, CatInlineAsm, InGroup<ASMIgnoredQualifier>;
-def warn_file_asm_volatile : Warning<
-  "meaningless 'volatile' on asm outside function">, CatInlineAsm,
-  InGroup<ASMIgnoredQualifier>;
+def err_asm_qualifier_ignored : Error<
+  "expected 'volatile', 'inline', 'goto', or '('">, CatInlineAsm;
+def err_global_asm_qualifier_ignored : Error<
+  "meaningless '%0' on asm outside function">, CatInlineAsm;
 
 let CategoryName = "Inline Assembly Issue" in {
 def err_asm_empty : Error<"__asm used with no assembly instructions">;
 def err_inline_ms_asm_parsing : Error<"%0">;
 def err_msasm_unsupported_arch : Error<
-  "Unsupported architecture '%0' for MS-style inline assembly">;
+  "unsupported architecture '%0' for MS-style inline assembly">;
 def err_msasm_unable_to_create_target : Error<
   "MS-style inline assembly is not available: %0">;
 def err_gnu_inline_asm_disabled : Error<
   "GNU-style inline assembly is disabled">;
-def err_asm_goto_cannot_have_output : Error<
-  "'asm goto' cannot have output constraints">;
+def err_asm_duplicate_qual : Error<"duplicate asm qualifier '%0'">;
 }
 
 let CategoryName = "Parse Issue" in {
-
-def warn_cxx2a_compat_explicit_bool : Warning<
-  "this expression will be parsed as explicit(bool) in C++2a">,
-  InGroup<CXX2aCompat>, DefaultIgnore;
 
 def ext_empty_translation_unit : Extension<
   "ISO C requires a translation unit to contain at least one declaration">,
@@ -60,6 +54,27 @@ def warn_null_statement : Warning<
   "empty expression statement has no effect; "
   "remove unnecessary ';' to silence this warning">,
   InGroup<ExtraSemiStmt>, DefaultIgnore;
+
+def warn_misleading_indentation : Warning<
+  "misleading indentation; statement is not part of "
+  "the previous '%select{if|else|for|while}0'">,
+  InGroup<MisleadingIndentation>, DefaultIgnore;
+def note_previous_statement : Note<
+  "previous statement is here">;
+
+def subst_compound_token_kind : TextSubstitution<
+  "%select{%1 and |}0%2 tokens "
+  "%select{introducing statement expression|terminating statement expression|"
+  "introducing attribute|terminating attribute|"
+  "forming pointer to member type}3">;
+def warn_compound_token_split_by_macro : Warning<
+  "%sub{subst_compound_token_kind}0,1,2,3 appear in different "
+  "macro expansion contexts">, InGroup<CompoundTokenSplitByMacro>;
+def note_compound_token_split_second_token_here : Note<
+  "%select{|second }0%1 token is here">;
+def warn_compound_token_split_by_whitespace : Warning<
+  "%sub{subst_compound_token_kind}0,1,2,3 are separated by whitespace">,
+  InGroup<CompoundTokenSplitBySpace>, DefaultIgnore;
 
 def ext_thread_before : Extension<"'__thread' before '%0'">;
 def ext_keyword_as_ident : ExtWarn<
@@ -104,6 +119,25 @@ def ext_clang_c_enum_fixed_underlying_type : Extension<
 def warn_cxx98_compat_enum_fixed_underlying_type : Warning<
   "enumeration types with a fixed underlying type are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+def ext_enum_base_in_type_specifier : ExtWarn<
+  "non-defining declaration of enumeration with a fixed underlying type is "
+  "only permitted as a standalone declaration"
+  "%select{|; missing list of enumerators?}0">,
+  InGroup<DiagGroup<"elaborated-enum-base">>, DefaultError;
+def ext_elaborated_enum_class : ExtWarn<
+  "reference to enumeration must use 'enum' not 'enum %select{struct|class}0'">,
+  InGroup<DiagGroup<"elaborated-enum-class">>, DefaultError;
+def err_scoped_enum_missing_identifier : Error<
+  "scoped enumeration requires a name">;
+def ext_scoped_enum : ExtWarn<
+  "scoped enumerations are a C++11 extension">, InGroup<CXX11>;
+def warn_cxx98_compat_scoped_enum : Warning<
+  "scoped enumerations are incompatible with C++98">,
+  InGroup<CXX98Compat>, DefaultIgnore;
+def err_anonymous_enum_bitfield : Error<
+  "ISO C++ only allows ':' in member enumeration declaration to introduce "
+  "a fixed underlying type, not an anonymous bit-field">;
+
 def warn_cxx98_compat_alignof : Warning<
   "alignof expressions are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
@@ -174,6 +208,12 @@ def err_function_declared_typedef : Error<
 def err_at_defs_cxx : Error<"@defs is not supported in Objective-C++">;
 def err_at_in_class : Error<"unexpected '@' in member specification">;
 def err_unexpected_semi : Error<"unexpected ';' before %0">;
+def err_postfix_after_unary_requires_parens : Error<
+  "expression cannot be followed by a postfix %0 operator; add parentheses">;
+def err_unparenthesized_non_primary_expr_in_requires_clause : Error<
+  "parentheses are required around this expression in a requires clause">;
+def note_unparenthesized_non_primary_expr_in_requires_clause : Note<
+  "parentheses are required around this expression in a requires clause">;
 
 def err_expected_fn_body : Error<
   "expected function body after function declarator">;
@@ -201,7 +241,6 @@ def err_invalid_token_after_declarator_suggest_equal : Error<
   "invalid %0 at end of declaration; did you mean '='?">;
 def err_expected_statement : Error<"expected statement">;
 def err_expected_lparen_after : Error<"expected '(' after '%0'">;
-def err_expected_lbrace_after : Error<"expected '{' after '%0'">;
 def err_expected_rparen_after : Error<"expected ')' after '%0'">;
 def err_expected_punc : Error<"expected ')' or ',' after '%0'">;
 def err_expected_less_after : Error<"expected '<' after '%0'">;
@@ -231,10 +270,10 @@ def warn_cxx14_compat_nested_namespace_definition : Warning<
   "nested namespace definition is incompatible with C++ standards before C++17">,
   InGroup<CXXPre17Compat>, DefaultIgnore;
 def ext_inline_nested_namespace_definition : ExtWarn<
-  "inline nested namespace definition is a C++2a extension">, InGroup<CXX2a>;
+  "inline nested namespace definition is a C++20 extension">, InGroup<CXX20>;
 def warn_cxx17_compat_inline_nested_namespace_definition : Warning<
   "inline nested namespace definition is incompatible with C++ standards before"
-  " C++2a">, InGroup<CXXPre2aCompat>, DefaultIgnore;
+  " C++20">, InGroup<CXXPre20Compat>, DefaultIgnore;
 def err_inline_nested_namespace_definition : Error<
   "nested namespace definition cannot be 'inline'">;
 def err_expected_semi_after_attribute_list : Error<
@@ -258,7 +297,7 @@ def err_label_end_of_compound_statement : Error<
 def err_address_of_label_outside_fn : Error<
   "use of address-of-label extension outside of a function body">;
 def err_asm_operand_wide_string_literal : Error<
-  "cannot use %select{unicode|wide}0 string literal in 'asm'">;
+  "cannot use %select{unicode|wide|an empty}0 string literal in 'asm'">;
 def err_expected_selector_for_method : Error<
   "expected selector for Objective-C method">;
 def err_expected_property_name : Error<"expected property name">;
@@ -302,6 +341,12 @@ def err_init_list_bin_op : Error<"initializer list cannot be used on the "
 def warn_cxx98_compat_trailing_return_type : Warning<
   "trailing return types are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+def err_requires_clause_must_appear_after_trailing_return : Error<
+  "trailing return type must appear before trailing requires clause">;
+def err_requires_clause_on_declarator_not_declaring_a_function : Error<
+  "trailing requires clause can only be used when declaring a function">;
+def err_requires_clause_inside_parens : Error<
+  "trailing requires clause should be placed outside parentheses">;
 def ext_auto_storage_class : ExtWarn<
   "'auto' storage class specifier is not permitted in C++11, and will not "
   "be supported in future releases">, InGroup<DiagGroup<"auto-storage-class">>;
@@ -325,6 +370,8 @@ def err_for_range_expected_decl : Error<
 def err_argument_required_after_attribute : Error<
   "argument required after attribute">;
 def err_missing_param : Error<"expected parameter declarator">;
+def err_function_scope_depth_exceeded : Error<
+  "function scope depth exceeded maximum of %0">, DefaultFatal;
 def err_missing_comma_before_ellipsis : Error<
   "C requires a comma prior to the ellipsis in a variadic function type">;
 def err_unexpected_typedef_ident : Error<
@@ -377,12 +424,21 @@ def err_bool_redeclaration : Error<
 def warn_cxx98_compat_static_assert : Warning<
   "static_assert declarations are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
-def ext_static_assert_no_message : ExtWarn<
-  "static_assert with no message is a C++17 extension">, InGroup<CXX17>;
+def ext_ms_static_assert : ExtWarn<
+  "use of 'static_assert' without inclusion of <assert.h> is a Microsoft "
+  "extension">, InGroup<MicrosoftStaticAssert>;
+def ext_cxx_static_assert_no_message : ExtWarn<
+  "'static_assert' with no message is a C++17 extension">, InGroup<CXX17>;
+def ext_c_static_assert_no_message : ExtWarn<
+  "'_Static_assert' with no message is a C2x extension">, InGroup<C2x>;
 def warn_cxx14_compat_static_assert_no_message : Warning<
-  "static_assert with no message is incompatible with C++ standards before "
+  "'static_assert' with no message is incompatible with C++ standards before "
   "C++17">,
   DefaultIgnore, InGroup<CXXPre17Compat>;
+def warn_c17_compat_static_assert_no_message : Warning<
+  "'_Static_assert' with no message is incompatible with C standards before "
+  "C2x">,
+  DefaultIgnore, InGroup<CPre2xCompat>;
 def err_function_definition_not_allowed : Error<
   "function definition is not allowed here">;
 def err_expected_end_of_enumerator : Error<
@@ -493,6 +549,12 @@ def err_expected_init_in_condition_lparen : Error<
   "variable declaration in condition cannot have a parenthesized initializer">;
 def err_extraneous_rparen_in_condition : Error<
   "extraneous ')' after condition, expected a statement">;
+def ext_alias_in_init_statement : ExtWarn<
+  "alias declaration in this context is a C++2b extension">,
+  InGroup<CXX2b>;
+def warn_cxx20_alias_in_init_statement  : Warning<
+  "alias declaration in this context is incompatible with C++ standards before C++2b">,
+  DefaultIgnore, InGroup<CXXPre2bCompat>;
 def warn_dangling_else : Warning<
   "add explicit braces to avoid dangling else">,
   InGroup<DanglingElse>;
@@ -524,6 +586,12 @@ def warn_cxx98_compat_noexcept_decl : Warning<
 def err_expected_catch : Error<"expected catch">;
 def err_using_namespace_in_class : Error<
   "'using namespace' is not allowed in classes">;
+def warn_cxx17_compat_using_enum_declaration : Warning<
+  "using enum declaration is incompatible with C++ standards before C++20">,
+  InGroup<CXXPre20Compat>, DefaultIgnore;
+def ext_using_enum_declaration : ExtWarn<
+  "using enum declaration is a C++20 extension">,
+  InGroup<CXX20>;
 def err_constructor_bad_name : Error<
   "missing return type for function %0; did you mean the constructor name %1?">;
 def err_destructor_tilde_identifier : Error<
@@ -564,6 +632,13 @@ def ext_constexpr_if : ExtWarn<
 def warn_cxx14_compat_constexpr_if : Warning<
   "constexpr if is incompatible with C++ standards before C++17">,
   DefaultIgnore, InGroup<CXXPre17Compat>;
+def ext_consteval_if : ExtWarn<
+  "consteval if is a C++2b extension">,
+   InGroup<CXX2b>;
+def warn_cxx20_compat_consteval_if : Warning<
+  "consteval if is incompatible with C++ standards before C++2b">,
+  InGroup<CXXPre2bCompat>, DefaultIgnore;
+
 def ext_init_statement : ExtWarn<
   "'%select{if|switch}0' initialization statements are a C++17 extension">,
   InGroup<CXX17>;
@@ -571,14 +646,16 @@ def warn_cxx14_compat_init_statement : Warning<
   "%select{if|switch}0 initialization statements are incompatible with "
   "C++ standards before C++17">, DefaultIgnore, InGroup<CXXPre17Compat>;
 def ext_for_range_init_stmt : ExtWarn<
-  "range-based for loop initialization statements are a C++2a extension">,
-  InGroup<CXX2a>;
+  "range-based for loop initialization statements are a C++20 extension">,
+  InGroup<CXX20>;
 def warn_cxx17_compat_for_range_init_stmt : Warning<
   "range-based for loop initialization statements are incompatible with "
-  "C++ standards before C++2a">, DefaultIgnore, InGroup<CXXPre2aCompat>;
+  "C++ standards before C++20">, DefaultIgnore, InGroup<CXXPre20Compat>;
 def warn_empty_init_statement : Warning<
   "empty initialization statement of '%select{if|switch|range-based for}0' "
   "has no effect">, InGroup<EmptyInitStatement>, DefaultIgnore;
+def err_keyword_as_parameter : Error <
+  "invalid parameter name: '%0' is a keyword">;
 
 // C++ derived classes
 def err_dup_virtual : Error<"duplicate 'virtual' in base specifier">;
@@ -626,8 +703,6 @@ def err_attribute_requires_arguments : Error<
   "parentheses must be omitted if %0 attribute's argument list is empty">;
 def err_cxx11_attribute_forbids_ellipsis : Error<
   "attribute %0 cannot be used as an attribute pack">;
-def err_cxx11_attribute_repeated : Error<
-  "attribute %0 cannot appear multiple times in an attribute specifier">;
 def warn_cxx14_compat_using_attribute_ns : Warning<
   "default scope specifier for attributes is incompatible with C++ standards "
   "before C++17">, InGroup<CXXPre17Compat>, DefaultIgnore;
@@ -637,10 +712,15 @@ def ext_using_attribute_ns : ExtWarn<
 def err_using_attribute_ns_conflict : Error<
   "attribute with scope specifier cannot follow default scope specifier">;
 def err_attributes_not_allowed : Error<"an attribute list cannot appear here">;
+def ext_cxx11_attr_placement : ExtWarn<
+  "ISO C++ does not allow an attribute list to appear here">,
+  InGroup<DiagGroup<"cxx-attribute-extension">>;
 def err_attributes_misplaced : Error<"misplaced attributes; expected attributes here">;
 def err_l_square_l_square_not_attribute : Error<
   "C++11 only allows consecutive left square brackets when "
   "introducing an attribute">;
+def err_attribute_argument_parm_pack_not_supported : Error<
+  "attribute %0 does not support argument pack expansion">;
 def err_ms_declspec_type : Error<
   "__declspec attributes must be an identifier or string literal">;
 def err_ms_property_no_getter_or_putter : Error<
@@ -660,7 +740,16 @@ def err_ms_property_expected_accessor_name : Error<
 def err_ms_property_expected_comma_or_rparen : Error<
   "expected ',' or ')' at end of property accessor list">;
 def err_ms_property_initializer : Error<
-  "property declaration cannot have an in-class initializer">;
+  "property declaration cannot have a default member initializer">;
+
+def warn_cxx20_compat_explicit_bool : Warning<
+  "this expression will be parsed as explicit(bool) in C++20">,
+  InGroup<CXX20Compat>, DefaultIgnore;
+def warn_cxx17_compat_explicit_bool : Warning<
+  "explicit(bool) is incompatible with C++ standards before C++20">,
+  InGroup<CXXPre20Compat>, DefaultIgnore;
+def ext_explicit_bool : ExtWarn<"explicit(bool) is a C++20 extension">,
+  InGroup<CXX20>;
 
 /// C++ Templates
 def err_expected_template : Error<"expected template">;
@@ -668,8 +757,9 @@ def err_unknown_template_name : Error<
   "unknown template name %0">;
 def err_expected_comma_greater : Error<
   "expected ',' or '>' in template-parameter-list">;
-def err_class_on_template_template_param : Error<
-  "template template parameter requires 'class' after the parameter list">;
+def err_class_on_template_template_param
+    : Error<"template template parameter requires 'class'%select{| or "
+            "'typename'}0 after the parameter list">;
 def ext_template_template_param_typename : ExtWarn<
   "template template parameter using 'typename' is a C++17 extension">,
   InGroup<CXX17>;
@@ -685,6 +775,8 @@ def err_id_after_template_in_nested_name_spec : Error<
   "expected template name after 'template' keyword in nested name specifier">;
 def err_unexpected_template_in_unqualified_id : Error<
   "'template' keyword not permitted here">;
+def err_unexpected_template_in_destructor_name : Error<
+  "'template' keyword not permitted in destructor name">;
 def err_unexpected_template_after_using : Error<
   "'template' keyword not permitted after 'using' keyword">;
 def err_two_right_angle_brackets_need_space : Error<
@@ -717,6 +809,23 @@ def err_friend_explicit_instantiation : Error<
 def err_explicit_instantiation_enum : Error<
   "enumerations cannot be explicitly instantiated">;
 def err_expected_template_parameter : Error<"expected template parameter">;
+def err_empty_requires_expr : Error<
+  "a requires expression must contain at least one requirement">;
+def err_requires_expr_parameter_list_ellipsis : Error<
+  "varargs not allowed in requires expression">;
+def err_expected_semi_requirement : Error<
+  "expected ';' at end of requirement">;
+def err_requires_expr_missing_arrow : Error<
+  "expected '->' before expression type requirement">;
+def err_requires_expr_expected_type_constraint : Error<
+  "expected concept name with optional arguments">;
+def err_requires_expr_simple_requirement_noexcept : Error<
+  "'noexcept' can only be used in a compound requirement (with '{' '}' around "
+  "the expression)">;
+def err_requires_expr_in_simple_requirement : Error<
+  "requires expression in requirement body; did "
+  "you intend to place it in a nested requirement? (add another 'requires' "
+  "before the expression)">;
 
 def err_missing_dependent_template_keyword : Error<
   "use 'template' keyword to treat '%0' as a dependent template name">;
@@ -772,7 +881,7 @@ def err_friend_decl_defines_type : Error<
   "cannot define a type in a friend declaration">;
 def err_missing_whitespace_digraph : Error<
   "found '<::' after a "
-  "%select{template name|const_cast|dynamic_cast|reinterpret_cast|static_cast}0"
+  "%select{template name|addrspace_cast|const_cast|dynamic_cast|reinterpret_cast|static_cast}0"
   " which forms the digraph '<:' (aka '[') and a ':', did you mean '< ::'?">;
 
 def ext_defaulted_deleted_function : ExtWarn<
@@ -782,21 +891,23 @@ def warn_cxx98_compat_defaulted_deleted_function : Warning<
   "%select{defaulted|deleted}0 function definitions are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 
-// C++11 in-class member initialization
+// C++11 default member initialization
 def ext_nonstatic_member_init : ExtWarn<
-  "in-class initialization of non-static data member is a C++11 extension">,
-  InGroup<CXX11>;
+  "default member initializer for non-static data member is a C++11 "
+  "extension">, InGroup<CXX11>;
 def warn_cxx98_compat_nonstatic_member_init : Warning<
-  "in-class initialization of non-static data members is incompatible with C++98">,
-  InGroup<CXX98Compat>, DefaultIgnore;
+  "default member initializer for non-static data members is incompatible with "
+  "C++98">, InGroup<CXX98Compat>, DefaultIgnore;
 def ext_bitfield_member_init: ExtWarn<
-  "default member initializer for bit-field is a C++2a extension">,
-  InGroup<CXX2a>;
+  "default member initializer for bit-field is a C++20 extension">,
+  InGroup<CXX20>;
 def warn_cxx17_compat_bitfield_member_init: Warning<
   "default member initializer for bit-field is incompatible with "
-  "C++ standards before C++2a">, InGroup<CXXPre2aCompat>, DefaultIgnore;
+  "C++ standards before C++20">, InGroup<CXXPre20Compat>, DefaultIgnore;
+def err_anon_bitfield_member_init : Error<
+  "anonymous bit-field cannot have a default member initializer">;
 def err_incomplete_array_member_init: Error<
-  "array bound cannot be deduced from an in-class initializer">;
+  "array bound cannot be deduced from a default member initializer">;
 
 // C++11 alias-declaration
 def ext_alias_declaration : ExtWarn<
@@ -836,20 +947,21 @@ def err_override_control_interface : Error<
 def ext_ms_sealed_keyword : ExtWarn<
   "'sealed' keyword is a Microsoft extension">,
   InGroup<MicrosoftSealed>;
+def ext_ms_abstract_keyword : ExtWarn<
+  "'abstract' keyword is a Microsoft extension">,
+  InGroup<MicrosoftAbstract>;
 
 def err_access_specifier_interface : Error<
   "interface types cannot specify '%select{private|protected}0' access">;
 
+def err_duplicate_class_virt_specifier : Error<
+  "class already marked '%0'">;
+
 def err_duplicate_virt_specifier : Error<
   "class member already marked '%0'">;
 
-def err_scoped_enum_missing_identifier : Error<
-  "scoped enumeration requires a name">;
-def ext_scoped_enum : ExtWarn<
-  "scoped enumerations are a C++11 extension">, InGroup<CXX11>;
-def warn_cxx98_compat_scoped_enum : Warning<
-  "scoped enumerations are incompatible with C++98">,
-  InGroup<CXX98Compat>, DefaultIgnore;
+def err_virt_specifier_outside_class : Error<
+  "'%0' specifier is not allowed outside a class definition">;
 
 def err_expected_parameter_pack : Error<
   "expected the name of a parameter pack">;
@@ -869,9 +981,6 @@ def err_expected_lambda_body : Error<"expected body of lambda expression">;
 def warn_cxx98_compat_lambda : Warning<
   "lambda expressions are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
-def err_lambda_missing_parens : Error<
-  "lambda requires '()' before %select{'mutable'|return type|"
-  "attribute specifier|'constexpr'|'consteval'}0">;
 def err_lambda_decl_specifier_repeated : Error<
   "%select{'mutable'|'constexpr'|'consteval'}0 cannot appear multiple times in a lambda declarator">;
 def err_lambda_capture_misplaced_ellipsis : Error<
@@ -879,6 +988,18 @@ def err_lambda_capture_misplaced_ellipsis : Error<
   "the name of the capture">;
 def err_lambda_capture_multiple_ellipses : Error<
   "multiple ellipses in pack capture">;
+def err_capture_default_first : Error<
+  "capture default must be first">;
+def ext_decl_attrs_on_lambda : ExtWarn<
+  "an attribute specifier sequence in this position is a C++2b extension">,
+  InGroup<CXX2b>;
+def ext_lambda_missing_parens : ExtWarn<
+  "lambda without a parameter clause is a C++2b extension">,
+  InGroup<CXX2b>;
+def warn_cxx20_compat_decl_attrs_on_lambda : Warning<
+  "an attribute specifier sequence in this position is incompatible with C++ "
+  "standards before C++2b">, InGroup<CXXPre2bCompat>, DefaultIgnore;
+
 // C++17 lambda expressions
 def err_expected_star_this_capture : Error<
   "expected 'this' following '*' in lambda capture list">;
@@ -890,13 +1011,13 @@ def warn_cxx14_compat_constexpr_on_lambda : Warning<
 def ext_constexpr_on_lambda_cxx17 : ExtWarn<
   "'constexpr' on lambda expressions is a C++17 extension">, InGroup<CXX17>;
 
-// C++2a template lambdas
+// C++20 template lambdas
 def ext_lambda_template_parameter_list: ExtWarn<
-  "explicit template parameter list for lambdas is a C++2a extension">,
-  InGroup<CXX2a>;
+  "explicit template parameter list for lambdas is a C++20 extension">,
+  InGroup<CXX20>;
 def warn_cxx17_compat_lambda_template_parameter_list: Warning<
   "explicit template parameter list for lambdas is incompatible with "
-  "C++ standards before C++2a">, InGroup<CXXPre2aCompat>, DefaultIgnore;
+  "C++ standards before C++20">, InGroup<CXXPre20Compat>, DefaultIgnore;
 def err_lambda_template_parameter_list_empty : Error<
   "lambda template parameter list cannot be empty">;
 
@@ -976,9 +1097,9 @@ def err_pragma_misplaced_in_decl : Error<"this pragma cannot appear in %0 declar
 
 // '#pragma clang section' related errors
 def err_pragma_expected_clang_section_name : Error<
-  "expected one of [bss|data|rodata|text] section kind in '#pragma %0'">;
+  "expected one of [bss|data|rodata|text|relro] section kind in '#pragma %0'">;
 def err_pragma_clang_section_expected_equal : Error<
-  "expected '=' following '#pragma clang section %select{invalid|bss|data|rodata|text}0'">;
+  "expected '=' following '#pragma clang section %select{invalid|bss|data|rodata|text|relro}0'">;
 def warn_pragma_expected_section_name : Warning<
   "expected a string literal for the section name in '#pragma %0' - ignored">,
   InGroup<IgnoredPragmas>;
@@ -992,11 +1113,16 @@ def warn_pragma_expected_section_label_or_name : Warning<
 def warn_pragma_expected_init_seg : Warning<
   "expected 'compiler', 'lib', 'user', or a string literal for the section name in '#pragma %0' - ignored">,
   InGroup<IgnoredPragmas>;
+
+def err_pragma_expected_integer : Error<"expected an integer argument in '#pragma %0'">;
 def warn_pragma_expected_integer : Warning<
   "expected integer between %0 and %1 inclusive in '#pragma %2' - ignored">,
   InGroup<IgnoredPragmas>;
 def warn_pragma_ms_struct : Warning<
   "incorrect use of '#pragma ms_struct on|off' - ignored">,
+  InGroup<IgnoredPragmas>;
+def warn_pragma_ms_fenv_access : Warning<
+  "incorrect use of '#pragma fenv_access (on|off)' - ignored">,
   InGroup<IgnoredPragmas>;
 def warn_pragma_extra_tokens_at_eol : Warning<
   "extra tokens at end of '#pragma %0' - ignored">,
@@ -1053,16 +1179,25 @@ def warn_pragma_init_seg_unsupported_target : Warning<
   "'#pragma init_seg' is only supported when targeting a "
   "Microsoft environment">,
   InGroup<IgnoredPragmas>;
-// - #pragma fp_contract
-def err_pragma_fp_contract_scope : Error<
-  "'#pragma fp_contract' can only appear at file scope or at the start of a "
+// - #pragma restricted to file scope or start of compound statement
+def err_pragma_file_or_compound_scope : Error<
+  "'#pragma %0' can only appear at file scope or at the start of a "
   "compound statement">;
 // - #pragma stdc unknown
 def ext_stdc_pragma_ignored : ExtWarn<"unknown pragma in STDC namespace">,
    InGroup<UnknownPragmas>;
-def warn_stdc_fenv_access_not_supported :
-   Warning<"pragma STDC FENV_ACCESS ON is not supported, ignoring pragma">,
+// The C standard 7.6.1p2 says "The [FENV_ACCESS] pragma shall occur either
+// outside external declarations or preceding all explicit declarations and
+// statements inside a compound statement.
+def warn_stdc_fenv_round_not_supported :
+   Warning<"pragma STDC FENV_ROUND is not supported">,
    InGroup<UnknownPragmas>;
+def warn_stdc_unknown_rounding_mode : Warning<
+  "invalid or unsupported rounding mode in '#pragma STDC FENV_ROUND' - ignored">,
+  InGroup<IgnoredPragmas>;
+def warn_pragma_fp_ignored : Warning<
+  "'#pragma %0' is not supported on this target - ignored">,
+  InGroup<IgnoredPragmas>;
 // - #pragma comment
 def err_pragma_comment_malformed : Error<
   "pragma comment requires parenthesized identifier and optional string">;
@@ -1074,6 +1209,10 @@ def warn_pragma_comment_ignored : Warning<"'#pragma comment %0' ignored">,
 def err_pragma_detect_mismatch_malformed : Error<
   "pragma detect_mismatch is malformed; it requires two comma-separated "
   "string literals">;
+// - #pragma float_control
+def err_pragma_float_control_malformed : Error<
+  "pragma float_control is malformed; use 'float_control({push|pop})' or "
+  "'float_control({precise|except}, {on|off} [,push])'">;
 // - #pragma pointers_to_members
 def err_pragma_pointers_to_members_unknown_kind : Error<
   "unexpected %0, expected to see one of %select{|'best_case', 'full_generality', }1"
@@ -1098,8 +1237,6 @@ def err_pragma_attribute_extra_tokens_after_attribute : Error<
   "extra tokens after attribute in a '#pragma clang attribute push'">;
 def err_pragma_attribute_unsupported_attribute : Error<
   "attribute %0 is not supported by '#pragma clang attribute'">;
-def err_pragma_attribute_multiple_attributes : Error<
-  "more than one attribute specified in '#pragma clang attribute push'">;
 def err_pragma_attribute_expected_attribute_syntax : Error<
   "expected an attribute that is specified using the GNU, C++11 or '__declspec'"
   " syntax">;
@@ -1128,23 +1265,22 @@ def err_pragma_attribute_namespace_on_attribute : Error<
 def note_pragma_attribute_namespace_on_attribute : Note<
   "omit the namespace to add attributes to the most-recently"
   " pushed attribute group">;
-
-def err_opencl_unroll_hint_on_non_loop : Error<
-  "OpenCL only supports 'opencl_unroll_hint' attribute on for, while, and do statements">;
+def warn_no_support_for_eval_method_source_on_m32 : Warning<
+  "Setting the floating point evaluation method to `source` on a target"
+  " without SSE is not supported.">, InGroup<Pragmas>;
 
 // OpenCL EXTENSION pragma (OpenCL 1.1 [9.1])
 def warn_pragma_expected_colon : Warning<
   "missing ':' after %0 - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_expected_predicate : Warning<
   "expected %select{'enable', 'disable', 'begin' or 'end'|'disable'}0 - ignoring">, InGroup<IgnoredPragmas>;
-def warn_pragma_begin_end_mismatch : Warning<
-  "OpenCL extension end directive mismatches begin directive - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_unknown_extension : Warning<
   "unknown OpenCL extension %0 - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_unsupported_extension : Warning<
   "unsupported OpenCL extension %0 - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_extension_is_core : Warning<
-  "OpenCL extension %0 is core feature or supported optional core feature - ignoring">, InGroup<DiagGroup<"pedantic-core-features">>, DefaultIgnore;
+  "OpenCL extension %0 is core feature or supported optional core feature - ignoring">,
+  InGroup<OpenCLCoreFeaturesDiagGroup>, DefaultIgnore;
 
 // OpenCL errors.
 def err_opencl_taking_function_address_parser : Error<
@@ -1178,51 +1314,156 @@ def err_omp_expected_identifier_for_critical : Error<
   "expected identifier specifying the name of the 'omp critical' directive">;
 def err_omp_expected_reduction_identifier : Error<
   "expected identifier or one of the following operators: '+', '-', '*', '&', '|', '^', '&&', or '||'">;
+def err_omp_expected_equal_in_iterator : Error<
+  "expected '=' in iterator specifier">;
+def err_omp_expected_punc_after_iterator : Error<
+  "expected ',' or ')' after iterator specifier">;
 def err_omp_decl_in_declare_simd_variant : Error<
   "function declaration is expected after 'declare %select{simd|variant}0' directive">;
 def err_omp_unknown_map_type : Error<
   "incorrect map type, expected one of 'to', 'from', 'tofrom', 'alloc', 'release', or 'delete'">;
 def err_omp_unknown_map_type_modifier : Error<
-  "incorrect map type modifier, expected 'always', 'close', or 'mapper'">;
+  "incorrect map type modifier, expected one of: 'always', 'close', 'mapper'"
+  "%select{|, 'present'}0%select{|, 'ompx_hold'}1">;
 def err_omp_map_type_missing : Error<
   "missing map type">;
 def err_omp_map_type_modifier_missing : Error<
   "missing map type modifier">;
 def err_omp_declare_simd_inbranch_notinbranch : Error<
   "unexpected '%0' clause, '%1' is specified already">;
-def err_expected_end_declare_target : Error<
-  "expected '#pragma omp end declare target'">;
+def err_expected_end_declare_target_or_variant : Error<
+  "expected '#pragma omp end declare %select{target|variant}0'">;
+def err_expected_begin_declare_variant
+    : Error<"'#pragma omp end declare variant' with no matching '#pragma omp "
+            "begin declare variant'">;
+def err_expected_begin_assumes
+    : Error<"'#pragma omp end assumes' with no matching '#pragma omp begin assumes'">;
+def warn_omp_unknown_assumption_clause_missing_id
+    : Warning<"valid %0 clauses start with %1; %select{token|tokens}2 will be ignored">,
+      InGroup<OpenMPClauses>;
+def warn_omp_unknown_assumption_clause_without_args
+    : Warning<"%0 clause should not be followed by arguments; tokens will be ignored">,
+      InGroup<OpenMPClauses>;
+def note_omp_assumption_clause_continue_here
+    : Note<"the ignored tokens spans until here">;
 def err_omp_declare_target_unexpected_clause: Error<
-  "unexpected '%0' clause, only %select{'to' or 'link'|'to', 'link' or 'device_type'}1 clauses expected">;
+  "unexpected '%0' clause, only %select{'device_type'|'to' or 'link'|'to', 'link' or 'device_type'|'device_type', 'indirect'|'to', 'link', 'device_type' or 'indirect'}1 clauses expected">;
+def err_omp_begin_declare_target_unexpected_implicit_to_clause: Error<
+  "unexpected '(', only 'to', 'link' or 'device_type' clauses expected for 'begin declare target' directive">;
+def err_omp_declare_target_unexpected_clause_after_implicit_to: Error<
+  "unexpected clause after an implicit 'to' clause">;
+def err_omp_declare_target_missing_to_or_link_clause: Error<
+  "expected at least one %select{'to' or 'link'|'to', 'link' or 'indirect'}0 clause">;
+def err_omp_declare_target_multiple : Error<
+  "%0 appears multiple times in clauses on the same declare target directive">;
+def err_omp_declare_target_indirect_device_type: Error<
+  "only 'device_type(any)' clause is allowed with indirect clause">;
 def err_omp_expected_clause: Error<
   "expected at least one clause on '#pragma omp %0' directive">;
 def err_omp_mapper_illegal_identifier : Error<
   "illegal OpenMP user-defined mapper identifier">;
 def err_omp_mapper_expected_declarator : Error<
   "expected declarator on 'omp declare mapper' directive">;
+def err_omp_unexpected_append_op : Error<
+  "unexpected operation specified in 'append_args' clause, expected 'interop'">;
 def err_omp_declare_variant_wrong_clause : Error<
-  "expected '%0' clause on 'omp declare variant' directive">;
-def err_omp_declare_variant_no_ctx_selector : Error<
-  "expected context selector in '%0' clause on 'omp declare variant' directive">;
-def err_omp_declare_variant_equal_expected : Error<
-  "expected '=' after '%0' context selector set name on 'omp declare variant' directive">;
-def warn_omp_declare_variant_cs_name_expected : Warning<
-  "unknown context selector in '%0' context selector set of 'omp declare variant' directive, ignored">,
-  InGroup<OpenMPClauses>;
-def err_omp_declare_variant_item_expected : Error<
-  "expected %0 in '%1' context selector of '%2' selector set of 'omp declare variant' directive">;
-def err_omp_declare_variant_ctx_set_mutiple_use : Error<
-  "context selector set '%0' is used already in the same 'omp declare variant' directive">;
-def note_omp_declare_variant_ctx_set_used_here : Note<
-  "previously context selector set '%0' used here">;
-def err_omp_expected_comma_brace : Error<"expected '}' or ',' after '%0'">;
-def err_omp_declare_variant_ctx_mutiple_use : Error<
-  "context trait selector '%0' is used already in the same '%1' context selector set of 'omp declare variant' directive">;
-def note_omp_declare_variant_ctx_used_here : Note<
-  "previously context trait selector '%0' used here">;
-def warn_omp_more_one_device_type_clause : Warning<
-  "more than one 'device_type' clause is specified">,
-  InGroup<OpenMPClauses>;
+  "expected %select{'match'|'match', 'adjust_args', or 'append_args'}0 clause "
+  "on 'omp declare variant' directive">;
+def err_omp_declare_variant_duplicate_nested_trait : Error<
+  "nested OpenMP context selector contains duplicated trait '%0'"
+  " in selector '%1' and set '%2' with different score">;
+def err_omp_declare_variant_nested_user_condition : Error<
+  "nested user conditions in OpenMP context selector not supported (yet)">;
+def warn_omp_declare_variant_string_literal_or_identifier
+    : Warning<"expected identifier or string literal describing a context "
+              "%select{set|selector|property}0; "
+              "%select{set|selector|property}0 skipped">,
+      InGroup<OpenMPClauses>;
+def warn_unknown_declare_variant_isa_trait
+    : Warning<"isa trait '%0' is not known to the current target; verify the "
+              "spelling or consider restricting the context selector with the "
+              "'arch' selector further">,
+      InGroup<SourceUsesOpenMP>;
+def note_omp_declare_variant_ctx_options
+    : Note<"context %select{set|selector|property}0 options are: %1">;
+def warn_omp_declare_variant_expected
+    : Warning<"expected '%0' after the %1; '%0' assumed">,
+      InGroup<OpenMPClauses>;
+def warn_omp_declare_variant_ctx_not_a_property
+    : Warning<"'%0' is not a valid context property for the context selector "
+              "'%1' and the context set '%2'; property ignored">,
+      InGroup<OpenMPClauses>;
+def note_omp_declare_variant_ctx_is_a
+    : Note<"'%0' is a context %select{set|selector|property}1 not a context "
+           "%select{set|selector|property}2">;
+def note_omp_declare_variant_ctx_try : Note<"try 'match(%0={%1%2})'">;
+def warn_omp_declare_variant_ctx_not_a_selector
+    : Warning<"'%0' is not a valid context selector for the context set '%1'; "
+              "selector ignored">,
+      InGroup<OpenMPClauses>;
+def warn_omp_declare_variant_ctx_not_a_set
+    : Warning<"'%0' is not a valid context set in a `declare variant`; set "
+              "ignored">,
+      InGroup<OpenMPClauses>;
+def warn_omp_declare_variant_ctx_mutiple_use
+    : Warning<"the context %select{set|selector|property}0 '%1' was used "
+              "already in the same 'omp declare variant' directive; "
+              "%select{set|selector|property}0 ignored">,
+      InGroup<OpenMPClauses>;
+def note_omp_declare_variant_ctx_used_here
+    : Note<"the previous context %select{set|selector|property}0 '%1' used "
+           "here">;
+def note_omp_declare_variant_ctx_continue_here
+    : Note<"the ignored %select{set|selector|property}0 spans until here">;
+def warn_omp_ctx_incompatible_selector_for_set
+    : Warning<"the context selector '%0' is not valid for the context set "
+              "'%1'; selector ignored">,
+      InGroup<OpenMPClauses>;
+def note_omp_ctx_compatible_set_for_selector
+    : Note<"the context selector '%0' can be nested in the context set '%1'; "
+           "try 'match(%1={%0%select{|(property)}2})'">;
+def warn_omp_ctx_selector_without_properties
+    : Warning<"the context selector '%0' in context set '%1' requires a "
+              "context property defined in parentheses; selector ignored">,
+      InGroup<OpenMPClauses>;
+def warn_omp_ctx_incompatible_property_for_selector
+    : Warning<"the context property '%0' is not valid for the context selector "
+              "'%1' and the context set '%2'; property ignored">,
+      InGroup<OpenMPClauses>;
+def note_omp_ctx_compatible_set_and_selector_for_property
+    : Note<"the context property '%0' can be nested in the context selector "
+           "'%1' which is nested in the context set '%2'; try "
+           "'match(%2={%1(%0)})'">;
+def warn_omp_ctx_incompatible_score_for_property
+    : Warning<"the context selector '%0' in the context set '%1' cannot have a "
+              "score ('%2'); score ignored">,
+      InGroup<OpenMPClauses>;
+def warn_omp_more_one_device_type_clause
+    : Warning<"more than one 'device_type' clause is specified">,
+      InGroup<OpenMPClauses>;
+def err_omp_variant_ctx_second_match_extension : Error<
+  "only a single match extension allowed per OpenMP context selector">;
+def err_omp_invalid_dsa: Error<
+  "data-sharing attribute '%0' in '%1' clause requires OpenMP version %2 or above">;
+def err_omp_expected_punc_after_interop_mod : Error<
+  "expected ',' after interop modifier">;
+def err_omp_expected_interop_type : Error<
+  "expected interop type: 'target' and/or 'targetsync'">;
+def warn_omp_more_one_interop_type
+  : Warning<"interop type '%0' cannot be specified more than once">,
+    InGroup<OpenMPClauses>;
+def err_expected_sequence_or_directive : Error<
+  "expected an OpenMP 'directive' or 'sequence' attribute argument">;
+def ext_omp_attributes : ExtWarn<
+  "specifying OpenMP directives with [[]] is an OpenMP 5.1 extension">,
+  InGroup<OpenMP51Ext>;
+def warn_omp51_compat_attributes : Warning<
+  "specifying OpenMP directives with [[]] is incompatible with OpenMP "
+  "standards before OpenMP 5.1">,
+  InGroup<OpenMPPre51Compat>, DefaultIgnore;
+def err_omp_expected_colon : Error<"missing ':' in %0">;
+def err_omp_expected_context_selector
+    : Error<"expected valid context selector in %0">;
 
 // Pragma loop support.
 def err_pragma_loop_missing_argument : Error<
@@ -1232,15 +1473,22 @@ def err_pragma_loop_invalid_option : Error<
   "%select{invalid|missing}0 option%select{ %1|}0; expected vectorize, "
   "vectorize_width, interleave, interleave_count, unroll, unroll_count, "
   "pipeline, pipeline_initiation_interval, vectorize_predicate, or distribute">;
+def err_pragma_loop_invalid_vectorize_option : Error<
+  "vectorize_width loop hint malformed; use vectorize_width(X, fixed) or "
+  "vectorize_width(X, scalable) where X is an integer, or vectorize_width('fixed' or 'scalable')">;
+def note_pragma_loop_invalid_vectorize_option : Note<
+  "vectorize_width loop hint malformed; use vectorize_width(X, fixed) or "
+  "vectorize_width(X, scalable) where X is an integer, or vectorize_width('fixed' or 'scalable')">;
 
 def err_pragma_fp_invalid_option : Error<
-  "%select{invalid|missing}0 option%select{ %1|}0; expected contract">;
+  "%select{invalid|missing}0 option%select{ %1|}0; expected 'contract', 'reassociate' or 'exceptions'">;
 def err_pragma_fp_invalid_argument : Error<
-  "unexpected argument '%0' to '#pragma clang fp %1'; "
-  "expected 'on', 'fast' or 'off'">;
-def err_pragma_fp_scope : Error<
-  "'#pragma clang fp' can only appear at file scope or at the start of a "
-  "compound statement">;
+  "unexpected argument '%0' to '#pragma clang fp %1'; expected "
+  "%select{"
+  "'fast' or 'on' or 'off'|"
+  "'on' or 'off'|"
+  "'ignore', 'maytrap' or 'strict'|"
+  "'source', 'double' or 'extended'}2">;
 
 def err_pragma_invalid_keyword : Error<
   "invalid argument; expected 'enable'%select{|, 'full'}0%select{|, 'assume_safety'}1 or 'disable'">;
@@ -1253,7 +1501,7 @@ def warn_pragma_unroll_cuda_value_in_parens : Warning<
   InGroup<CudaCompat>;
 
 def warn_cuda_attr_lambda_position : Warning<
-  "nvcc does not allow '__%0__' to appear after '()' in lambdas">,
+  "nvcc does not allow '__%0__' to appear after the parameter list in lambdas">,
   InGroup<CudaCompat>;
 def warn_pragma_force_cuda_host_device_bad_arg : Warning<
   "incorrect use of #pragma clang force_cuda_host_device begin|end">,
@@ -1261,6 +1509,15 @@ def warn_pragma_force_cuda_host_device_bad_arg : Warning<
 def err_pragma_cannot_end_force_cuda_host_device : Error<
   "force_cuda_host_device end pragma without matching "
   "force_cuda_host_device begin">;
+
+def warn_ext_int_deprecated : Warning<
+  "'_ExtInt' is deprecated; use '_BitInt' instead">, InGroup<DeprecatedType>;
+def ext_bit_int : Extension<
+  "'_BitInt' in %select{C17 and earlier|C++}0 is a Clang extension">,
+  InGroup<DiagGroup<"bit-int-extension">>;
+def warn_c17_compat_bit_int : Warning<
+  "'_BitInt' is incompatible with C standards before C2x">,
+  InGroup<CPre2xCompat>, DefaultIgnore;
 } // end of Parse Issue category.
 
 let CategoryName = "Modules Issue" in {
@@ -1283,7 +1540,13 @@ def err_private_module_fragment_expected_semi : Error<
   "expected ';' after private module fragment declaration">;
 def err_missing_before_module_end : Error<"expected %0 at end of module">;
 def err_unsupported_module_partition : Error<
-  "sorry, module partitions are not yet supported">;
+  "module partitions are only supported for C++20 onwards">;
+def err_import_not_allowed_here : Error<
+  "imports must immediately follow the module declaration">;
+def err_partition_import_outside_module : Error<
+  "module partition imports must be within a module purview">;
+def err_import_in_wrong_fragment : Error<
+  "module%select{| partition}0 imports cannot be in the %select{global|private}1 module fragment">;
 
 def err_export_empty : Error<"export declaration cannot be empty">;
 }
@@ -1306,14 +1569,35 @@ def note_meant_to_use_typename : Note<
 let CategoryName = "Coroutines Issue" in {
 def err_for_co_await_not_range_for : Error<
   "'co_await' modifier can only be applied to range-based for loop">;
+def warn_deprecated_for_co_await : Warning<
+  "'for co_await' belongs to CoroutineTS instead of C++20, which is deprecated">,
+  InGroup<DeprecatedCoroutine>;
 }
 
 let CategoryName = "Concepts Issue" in {
 def err_concept_definition_not_identifier : Error<
   "name defined in concept definition must be an identifier">;
 def ext_concept_legacy_bool_keyword : ExtWarn<
-  "ISO C++2a does not permit the 'bool' keyword after 'concept'">,
+  "ISO C++20 does not permit the 'bool' keyword after 'concept'">,
   InGroup<DiagGroup<"concepts-ts-compat">>;
+def err_placeholder_expected_auto_or_decltype_auto : Error<
+  "expected 'auto' or 'decltype(auto)' after concept name">;
 }
+
+def warn_max_tokens : Warning<
+  "the number of preprocessor source tokens (%0) exceeds this token limit (%1)">,
+  InGroup<MaxTokens>, DefaultIgnore;
+
+def warn_max_tokens_total : Warning<
+  "the total number of preprocessor source tokens (%0) exceeds the token limit (%1)">,
+  InGroup<MaxTokens>, DefaultIgnore;
+
+def note_max_tokens_total_override : Note<"total token limit set here">;
+
+// HLSL Parser Diagnostics
+
+def err_expected_semantic_identifier : Error<
+  "expected HLSL Semantic identifier">;
+def err_unknown_hlsl_semantic : Error<"unknown HLSL semantic %0">;
 
 } // end of Parser diagnostics

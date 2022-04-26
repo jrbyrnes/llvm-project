@@ -1,6 +1,5 @@
-add_lldb_library(lldbPluginProcessUtility PLUGIN
+add_lldb_library(lldbPluginProcessUtility
   AuxVector.cpp
-  DynamicRegisterInfo.cpp
   FreeBSDSignals.cpp
   GDBRemoteSignals.cpp
   HistoryThread.cpp
@@ -8,9 +7,14 @@ add_lldb_library(lldbPluginProcessUtility PLUGIN
   InferiorCallPOSIX.cpp
   LinuxProcMaps.cpp
   LinuxSignals.cpp
+  MemoryTagManagerAArch64MTE.cpp
   MipsLinuxSignals.cpp
+  NativeProcessSoftwareSingleStep.cpp
+  NativeRegisterContextDBReg_arm64.cpp
+  NativeRegisterContextDBReg_x86.cpp
   NativeRegisterContextRegisterInfo.cpp
   NetBSDSignals.cpp
+  RegisterContext_x86.cpp
   RegisterContextDarwin_arm.cpp
   RegisterContextDarwin_arm64.cpp
   RegisterContextDarwin_i386.cpp
@@ -23,15 +27,12 @@ add_lldb_library(lldbPluginProcessUtility PLUGIN
   RegisterContextHistory.cpp
   RegisterContextLinux_i386.cpp
   RegisterContextLinux_x86_64.cpp
-  RegisterContextLinux_mips64.cpp
-  RegisterContextLinux_mips.cpp
   RegisterContextLinux_s390x.cpp
-  RegisterContextLLDB.cpp
-  RegisterContextMacOSXFrameBackchain.cpp
   RegisterContextMach_arm.cpp
   RegisterContextMach_i386.cpp
   RegisterContextMach_x86_64.cpp
   RegisterContextMemory.cpp
+  RegisterContextNetBSD_i386.cpp
   RegisterContextNetBSD_x86_64.cpp
   RegisterContextOpenBSD_i386.cpp
   RegisterContextOpenBSD_x86_64.cpp
@@ -50,8 +51,6 @@ add_lldb_library(lldbPluginProcessUtility PLUGIN
   RegisterInfoPOSIX_ppc64le.cpp
   StopInfoMachException.cpp
   ThreadMemory.cpp
-  UnwindLLDB.cpp
-  UnwindMacOSXFrameBackchain.cpp
 
   LINK_LIBS
     lldbBreakpoint

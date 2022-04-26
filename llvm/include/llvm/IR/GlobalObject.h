@@ -18,13 +18,10 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
-#include <string>
-#include <utility>
 
 namespace llvm {
 
 class Comdat;
-class MDNode;
 class Metadata;
 
 class GlobalObject : public GlobalValue {
@@ -46,15 +43,14 @@ protected:
   GlobalObject(Type *Ty, ValueTy VTy, Use *Ops, unsigned NumOps,
                LinkageTypes Linkage, const Twine &Name,
                unsigned AddressSpace = 0)
-      : GlobalValue(Ty, VTy, Ops, NumOps, Linkage, Name, AddressSpace),
-        ObjComdat(nullptr) {
+      : GlobalValue(Ty, VTy, Ops, NumOps, Linkage, Name, AddressSpace) {
     setGlobalValueSubClassData(0);
   }
+  ~GlobalObject();
 
-  Comdat *ObjComdat;
+  Comdat *ObjComdat = nullptr;
   enum {
-    LastAlignmentBit = 4,
-    HasMetadataHashEntryBit,
+    LastAlignmentBit = 5,
     HasSectionHashEntryBit,
 
     GlobalObjectBits,
@@ -70,15 +66,22 @@ private:
 public:
   GlobalObject(const GlobalObject &) = delete;
 
-  unsigned getAlignment() const {
-    unsigned Data = getGlobalValueSubClassData();
-    unsigned AlignmentData = Data & AlignmentMask;
-    MaybeAlign Align = decodeMaybeAlign(AlignmentData);
+  /// FIXME: Remove this function once transition to Align is over.
+  uint64_t getAlignment() const {
+    MaybeAlign Align = getAlign();
     return Align ? Align->value() : 0;
   }
 
-  /// FIXME: Remove this setter once the migration to MaybeAlign is over.
-  void setAlignment(unsigned Align);
+  /// Returns the alignment of the given variable or function.
+  ///
+  /// Note that for functions this is the alignment of the code, not the
+  /// alignment of a function pointer.
+  MaybeAlign getAlign() const {
+    unsigned Data = getGlobalValueSubClassData();
+    unsigned AlignmentData = Data & AlignmentMask;
+    return decodeMaybeAlign(AlignmentData);
+  }
+
   void setAlignment(MaybeAlign Align);
 
   unsigned getGlobalObjectSubClassData() const {
@@ -118,67 +121,29 @@ public:
   bool hasComdat() const { return getComdat() != nullptr; }
   const Comdat *getComdat() const { return ObjComdat; }
   Comdat *getComdat() { return ObjComdat; }
-  void setComdat(Comdat *C) { ObjComdat = C; }
+  void setComdat(Comdat *C);
 
-  /// Check if this has any metadata.
-  bool hasMetadata() const { return hasMetadataHashEntry(); }
-
-  /// Check if this has any metadata of the given kind.
-  bool hasMetadata(unsigned KindID) const {
-    return getMetadata(KindID) != nullptr;
-  }
-  bool hasMetadata(StringRef Kind) const {
-    return getMetadata(Kind) != nullptr;
-  }
-
-  /// Get the current metadata attachments for the given kind, if any.
-  ///
-  /// These functions require that the function have at most a single attachment
-  /// of the given kind, and return \c nullptr if such an attachment is missing.
-  /// @{
-  MDNode *getMetadata(unsigned KindID) const;
-  MDNode *getMetadata(StringRef Kind) const;
-  /// @}
-
-  /// Appends all attachments with the given ID to \c MDs in insertion order.
-  /// If the global has no attachments with the given ID, or if ID is invalid,
-  /// leaves MDs unchanged.
-  /// @{
-  void getMetadata(unsigned KindID, SmallVectorImpl<MDNode *> &MDs) const;
-  void getMetadata(StringRef Kind, SmallVectorImpl<MDNode *> &MDs) const;
-  /// @}
-
-  /// Set a particular kind of metadata attachment.
-  ///
-  /// Sets the given attachment to \c MD, erasing it if \c MD is \c nullptr or
-  /// replacing it if it already exists.
-  /// @{
-  void setMetadata(unsigned KindID, MDNode *MD);
-  void setMetadata(StringRef Kind, MDNode *MD);
-  /// @}
-
-  /// Add a metadata attachment.
-  /// @{
-  void addMetadata(unsigned KindID, MDNode &MD);
-  void addMetadata(StringRef Kind, MDNode &MD);
-  /// @}
-
-  /// Appends all attachments for the global to \c MDs, sorting by attachment
-  /// ID. Attachments with the same ID appear in insertion order.
-  void
-  getAllMetadata(SmallVectorImpl<std::pair<unsigned, MDNode *>> &MDs) const;
-
-  /// Erase all metadata attachments with the given kind.
-  ///
-  /// \returns true if any metadata was removed.
-  bool eraseMetadata(unsigned KindID);
+  using Value::addMetadata;
+  using Value::clearMetadata;
+  using Value::eraseMetadata;
+  using Value::getAllMetadata;
+  using Value::getMetadata;
+  using Value::hasMetadata;
+  using Value::setMetadata;
 
   /// Copy metadata from Src, adjusting offsets by Offset.
   void copyMetadata(const GlobalObject *Src, unsigned Offset);
 
   void addTypeMetadata(unsigned Offset, Metadata *TypeID);
-  void addVCallVisibilityMetadata(VCallVisibility Visibility);
+  void setVCallVisibilityMetadata(VCallVisibility Visibility);
   VCallVisibility getVCallVisibility() const;
+
+  /// Returns true if the alignment of the value can be unilaterally
+  /// increased.
+  ///
+  /// Note that for functions this is the alignment of the code, not the
+  /// alignment of a function pointer.
+  bool canIncreaseAlignment() const;
 
 protected:
   void copyAttributesFrom(const GlobalObject *Src);
@@ -187,23 +152,15 @@ public:
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Value *V) {
     return V->getValueID() == Value::FunctionVal ||
-           V->getValueID() == Value::GlobalVariableVal;
+           V->getValueID() == Value::GlobalVariableVal ||
+           V->getValueID() == Value::GlobalIFuncVal;
   }
-
-  void clearMetadata();
 
 private:
   void setGlobalObjectFlag(unsigned Bit, bool Val) {
     unsigned Mask = 1 << Bit;
     setGlobalValueSubClassData((~Mask & getGlobalValueSubClassData()) |
                                (Val ? Mask : 0u));
-  }
-
-  bool hasMetadataHashEntry() const {
-    return getGlobalValueSubClassData() & (1 << HasMetadataHashEntryBit);
-  }
-  void setHasMetadataHashEntry(bool HasEntry) {
-    setGlobalObjectFlag(HasMetadataHashEntryBit, HasEntry);
   }
 
   StringRef getSectionImpl() const;

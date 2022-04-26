@@ -11,16 +11,15 @@
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
-#include "Thunks.h"
 #include "lld/Common/ErrorHandler.h"
-#include "llvm/Object/ELF.h"
+#include "llvm/BinaryFormat/ELF.h"
 
 using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::ELF;
+using namespace lld;
+using namespace lld::elf;
 
-namespace lld {
-namespace elf {
 namespace {
 template <class ELFT> class MIPS final : public TargetInfo {
 public:
@@ -32,11 +31,13 @@ public:
   RelType getDynRel(RelType type) const override;
   void writeGotPlt(uint8_t *buf, const Symbol &s) const override;
   void writePltHeader(uint8_t *buf) const override;
-  void writePlt(uint8_t *buf, uint64_t gotPltEntryAddr, uint64_t pltEntryAddr,
-                int32_t index, unsigned relOff) const override;
+  void writePlt(uint8_t *buf, const Symbol &sym,
+                uint64_t pltEntryAddr) const override;
   bool needsThunk(RelExpr expr, RelType type, const InputFile *file,
-                  uint64_t branchAddr, const Symbol &s) const override;
-  void relocateOne(uint8_t *loc, RelType type, uint64_t val) const override;
+                  uint64_t branchAddr, const Symbol &s,
+                  int64_t a) const override;
+  void relocate(uint8_t *loc, const Relocation &rel,
+                uint64_t val) const override;
   bool usesOnlyLowPageBits(RelType type) const override;
 };
 } // namespace
@@ -44,11 +45,9 @@ public:
 template <class ELFT> MIPS<ELFT>::MIPS() {
   gotPltHeaderEntriesNum = 2;
   defaultMaxPageSize = 65536;
-  gotBaseSymInGotPlt = false;
   pltEntrySize = 16;
   pltHeaderSize = 32;
   copyRel = R_MIPS_COPY;
-  noneRel = R_MIPS_NONE;
   pltRel = R_MIPS_JUMP_SLOT;
   needsThunks = true;
 
@@ -83,6 +82,17 @@ RelExpr MIPS<ELFT>::getRelExpr(RelType type, const Symbol &s,
 
   switch (type) {
   case R_MIPS_JALR:
+    // Older versions of clang would erroneously emit this relocation not only
+    // against functions (loaded from the GOT) but also against data symbols
+    // (e.g. a table of function pointers). When we encounter this, ignore the
+    // relocation and emit a warning instead.
+    if (!s.isFunc() && s.type != STT_NOTYPE) {
+      warn(getErrorLocation(loc) +
+           "found R_MIPS_JALR relocation against non-function symbol " +
+           toString(s) + ". This is invalid and most likely a compiler bug.");
+      return R_NONE;
+    }
+
     // If the target symbol is not preemptible and is not microMIPS,
     // it might be possible to replace jalr/jr instruction by bal/b.
     // It depends on the target symbol's offset.
@@ -120,20 +130,21 @@ RelExpr MIPS<ELFT>::getRelExpr(RelType type, const Symbol &s,
   case R_MIPS_64:
   case R_MIPS_GOT_OFST:
   case R_MIPS_SUB:
+    return R_ABS;
   case R_MIPS_TLS_DTPREL_HI16:
   case R_MIPS_TLS_DTPREL_LO16:
   case R_MIPS_TLS_DTPREL32:
   case R_MIPS_TLS_DTPREL64:
   case R_MICROMIPS_TLS_DTPREL_HI16:
   case R_MICROMIPS_TLS_DTPREL_LO16:
-    return R_ABS;
+    return R_DTPREL;
   case R_MIPS_TLS_TPREL_HI16:
   case R_MIPS_TLS_TPREL_LO16:
   case R_MIPS_TLS_TPREL32:
   case R_MIPS_TLS_TPREL64:
   case R_MICROMIPS_TLS_TPREL_HI16:
   case R_MICROMIPS_TLS_TPREL_LO16:
-    return R_TLS;
+    return R_TPREL;
   case R_MIPS_PC32:
   case R_MIPS_PC16:
   case R_MIPS_PC19_S2:
@@ -262,12 +273,12 @@ template <class ELFT> void MIPS<ELFT>::writePltHeader(uint8_t *buf) const {
       write16(buf + 18, 0x0f83); // move    $28, $3
       write16(buf + 20, 0x472b); // jalrc   $25
       write16(buf + 22, 0x0c00); // nop
-      relocateOne(buf, R_MICROMIPS_PC19_S2, gotPlt - plt);
+      relocateNoSym(buf, R_MICROMIPS_PC19_S2, gotPlt - plt);
     } else {
       write16(buf + 18, 0x45f9); // jalrc   $25
       write16(buf + 20, 0x0f83); // move    $28, $3
       write16(buf + 22, 0x0c00); // nop
-      relocateOne(buf, R_MICROMIPS_PC23_S2, gotPlt - plt);
+      relocateNoSym(buf, R_MICROMIPS_PC23_S2, gotPlt - plt);
     }
     return;
   }
@@ -306,9 +317,9 @@ template <class ELFT> void MIPS<ELFT>::writePltHeader(uint8_t *buf) const {
 }
 
 template <class ELFT>
-void MIPS<ELFT>::writePlt(uint8_t *buf, uint64_t gotPltEntryAddr,
-                          uint64_t pltEntryAddr, int32_t index,
-                          unsigned relOff) const {
+void MIPS<ELFT>::writePlt(uint8_t *buf, const Symbol &sym,
+                          uint64_t pltEntryAddr) const {
+  uint64_t gotPltEntryAddr = sym.getGotPltVA();
   if (isMicroMips()) {
     // Overwrite trap instructions written by Writer::writeTrapInstr.
     memset(buf, 0, pltEntrySize);
@@ -318,13 +329,13 @@ void MIPS<ELFT>::writePlt(uint8_t *buf, uint64_t gotPltEntryAddr,
       write16(buf + 4, 0xff22);  // lw $25, 0($2)
       write16(buf + 8, 0x0f02);  // move $24, $2
       write16(buf + 10, 0x4723); // jrc $25 / jr16 $25
-      relocateOne(buf, R_MICROMIPS_PC19_S2, gotPltEntryAddr - pltEntryAddr);
+      relocateNoSym(buf, R_MICROMIPS_PC19_S2, gotPltEntryAddr - pltEntryAddr);
     } else {
       write16(buf, 0x7900);      // addiupc $2, (GOTPLT) - .
       write16(buf + 4, 0xff22);  // lw $25, 0($2)
       write16(buf + 8, 0x4599);  // jrc $25 / jr16 $25
       write16(buf + 10, 0x0f02); // move $24, $2
-      relocateOne(buf, R_MICROMIPS_PC23_S2, gotPltEntryAddr - pltEntryAddr);
+      relocateNoSym(buf, R_MICROMIPS_PC23_S2, gotPltEntryAddr - pltEntryAddr);
     }
     return;
   }
@@ -345,7 +356,8 @@ void MIPS<ELFT>::writePlt(uint8_t *buf, uint64_t gotPltEntryAddr,
 
 template <class ELFT>
 bool MIPS<ELFT>::needsThunk(RelExpr expr, RelType type, const InputFile *file,
-                            uint64_t branchAddr, const Symbol &s) const {
+                            uint64_t branchAddr, const Symbol &s,
+                            int64_t /*a*/) const {
   // Any MIPS PIC code function is invoked with its address in register $t9.
   // So if we have a branch instruction from non-PIC code to the PIC one
   // we cannot make the jump directly and need to create a small stubs
@@ -358,7 +370,7 @@ bool MIPS<ELFT>::needsThunk(RelExpr expr, RelType type, const InputFile *file,
   if (!f)
     return false;
   // If current file has PIC code, LA25 stub is not required.
-  if (f->getObj().getHeader()->e_flags & EF_MIPS_PIC)
+  if (f->getObj().getHeader().e_flags & EF_MIPS_PIC)
     return false;
   auto *d = dyn_cast<Defined>(&s);
   // LA25 is required if target file has PIC code
@@ -371,8 +383,10 @@ int64_t MIPS<ELFT>::getImplicitAddend(const uint8_t *buf, RelType type) const {
   const endianness e = ELFT::TargetEndianness;
   switch (type) {
   case R_MIPS_32:
+  case R_MIPS_REL32:
   case R_MIPS_GPREL32:
   case R_MIPS_TLS_DTPREL32:
+  case R_MIPS_TLS_DTPMOD32:
   case R_MIPS_TLS_TPREL32:
     return SignExtend64<32>(read32(buf));
   case R_MIPS_26:
@@ -380,25 +394,37 @@ int64_t MIPS<ELFT>::getImplicitAddend(const uint8_t *buf, RelType type) const {
     // we should use another expression for calculation:
     // ((A << 2) | (P & 0xf0000000)) >> 2
     return SignExtend64<28>(read32(buf) << 2);
+  case R_MIPS_CALL_HI16:
   case R_MIPS_GOT16:
+  case R_MIPS_GOT_HI16:
   case R_MIPS_HI16:
   case R_MIPS_PCHI16:
     return SignExtend64<16>(read32(buf)) << 16;
+  case R_MIPS_CALL16:
+  case R_MIPS_CALL_LO16:
+  case R_MIPS_GOT_LO16:
   case R_MIPS_GPREL16:
   case R_MIPS_LO16:
   case R_MIPS_PCLO16:
   case R_MIPS_TLS_DTPREL_HI16:
   case R_MIPS_TLS_DTPREL_LO16:
+  case R_MIPS_TLS_GD:
+  case R_MIPS_TLS_GOTTPREL:
+  case R_MIPS_TLS_LDM:
   case R_MIPS_TLS_TPREL_HI16:
   case R_MIPS_TLS_TPREL_LO16:
     return SignExtend64<16>(read32(buf));
   case R_MICROMIPS_GOT16:
   case R_MICROMIPS_HI16:
     return SignExtend64<16>(readShuffle<e>(buf)) << 16;
+  case R_MICROMIPS_CALL16:
   case R_MICROMIPS_GPREL16:
   case R_MICROMIPS_LO16:
   case R_MICROMIPS_TLS_DTPREL_HI16:
   case R_MICROMIPS_TLS_DTPREL_LO16:
+  case R_MICROMIPS_TLS_GD:
+  case R_MICROMIPS_TLS_GOTTPREL:
+  case R_MICROMIPS_TLS_LDM:
   case R_MICROMIPS_TLS_TPREL_HI16:
   case R_MICROMIPS_TLS_TPREL_LO16:
     return SignExtend64<16>(readShuffle<e>(buf));
@@ -432,7 +458,22 @@ int64_t MIPS<ELFT>::getImplicitAddend(const uint8_t *buf, RelType type) const {
     return SignExtend64<25>(readShuffle<e>(buf) << 2);
   case R_MICROMIPS_PC26_S1:
     return SignExtend64<27>(readShuffle<e>(buf) << 1);
+  case R_MIPS_64:
+  case R_MIPS_TLS_DTPMOD64:
+  case R_MIPS_TLS_DTPREL64:
+  case R_MIPS_TLS_TPREL64:
+  case (R_MIPS_64 << 8) | R_MIPS_REL32:
+    return read64(buf);
+  case R_MIPS_COPY:
+    return config->is64 ? read64(buf) : read32(buf);
+  case R_MIPS_NONE:
+  case R_MIPS_JUMP_SLOT:
+  case R_MIPS_JALR:
+    // These relocations are defined as not having an implicit addend.
+    return 0;
   default:
+    internalLinkerError(getErrorLocation(buf),
+                        "cannot read addend for relocation " + toString(type));
     return 0;
   }
 }
@@ -524,8 +565,10 @@ static uint64_t fixupCrossModeJump(uint8_t *loc, RelType type, uint64_t val) {
 }
 
 template <class ELFT>
-void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
+void MIPS<ELFT>::relocate(uint8_t *loc, const Relocation &rel,
+                          uint64_t val) const {
   const endianness e = ELFT::TargetEndianness;
+  RelType type = rel.type;
 
   if (ELFT::Is64Bits || config->mipsN32Abi)
     std::tie(type, val) = calculateMipsRelChain(loc, type, val);
@@ -564,7 +607,7 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
     if (config->relocatable) {
       writeValue(loc, val + 0x8000, 16, 16);
     } else {
-      checkInt(loc, val, 16, type);
+      checkInt(loc, val, 16, rel);
       writeValue(loc, val, 16, 0);
     }
     break;
@@ -572,7 +615,7 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
     if (config->relocatable) {
       writeShuffleValue<e>(loc, val + 0x8000, 16, 16);
     } else {
-      checkInt(loc, val, 16, type);
+      checkInt(loc, val, 16, rel);
       writeShuffleValue<e>(loc, val, 16, 0);
     }
     break;
@@ -583,7 +626,7 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
   case R_MIPS_TLS_GD:
   case R_MIPS_TLS_GOTTPREL:
   case R_MIPS_TLS_LDM:
-    checkInt(loc, val, 16, type);
+    checkInt(loc, val, 16, rel);
     LLVM_FALLTHROUGH;
   case R_MIPS_CALL_LO16:
   case R_MIPS_GOT_LO16:
@@ -597,7 +640,7 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
   case R_MICROMIPS_GPREL16:
   case R_MICROMIPS_TLS_GD:
   case R_MICROMIPS_TLS_LDM:
-    checkInt(loc, val, 16, type);
+    checkInt(loc, val, 16, rel);
     writeShuffleValue<e>(loc, val, 16, 0);
     break;
   case R_MICROMIPS_CALL16:
@@ -609,7 +652,7 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
     writeShuffleValue<e>(loc, val, 16, 0);
     break;
   case R_MICROMIPS_GPREL7_S2:
-    checkInt(loc, val, 7, type);
+    checkInt(loc, val, 7, rel);
     writeShuffleValue<e>(loc, val, 7, 2);
     break;
   case R_MIPS_CALL_HI16:
@@ -652,23 +695,23 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
     // Ignore this optimization relocation for now
     break;
   case R_MIPS_PC16:
-    checkAlignment(loc, val, 4, type);
-    checkInt(loc, val, 18, type);
+    checkAlignment(loc, val, 4, rel);
+    checkInt(loc, val, 18, rel);
     writeValue(loc, val, 16, 2);
     break;
   case R_MIPS_PC19_S2:
-    checkAlignment(loc, val, 4, type);
-    checkInt(loc, val, 21, type);
+    checkAlignment(loc, val, 4, rel);
+    checkInt(loc, val, 21, rel);
     writeValue(loc, val, 19, 2);
     break;
   case R_MIPS_PC21_S2:
-    checkAlignment(loc, val, 4, type);
-    checkInt(loc, val, 23, type);
+    checkAlignment(loc, val, 4, rel);
+    checkInt(loc, val, 23, rel);
     writeValue(loc, val, 21, 2);
     break;
   case R_MIPS_PC26_S2:
-    checkAlignment(loc, val, 4, type);
-    checkInt(loc, val, 28, type);
+    checkAlignment(loc, val, 4, rel);
+    checkInt(loc, val, 28, rel);
     writeValue(loc, val, 26, 2);
     break;
   case R_MIPS_PC32:
@@ -676,35 +719,35 @@ void MIPS<ELFT>::relocateOne(uint8_t *loc, RelType type, uint64_t val) const {
     break;
   case R_MICROMIPS_26_S1:
   case R_MICROMIPS_PC26_S1:
-    checkInt(loc, val, 27, type);
+    checkInt(loc, val, 27, rel);
     writeShuffleValue<e>(loc, val, 26, 1);
     break;
   case R_MICROMIPS_PC7_S1:
-    checkInt(loc, val, 8, type);
+    checkInt(loc, val, 8, rel);
     writeMicroRelocation16<e>(loc, val, 7, 1);
     break;
   case R_MICROMIPS_PC10_S1:
-    checkInt(loc, val, 11, type);
+    checkInt(loc, val, 11, rel);
     writeMicroRelocation16<e>(loc, val, 10, 1);
     break;
   case R_MICROMIPS_PC16_S1:
-    checkInt(loc, val, 17, type);
+    checkInt(loc, val, 17, rel);
     writeShuffleValue<e>(loc, val, 16, 1);
     break;
   case R_MICROMIPS_PC18_S3:
-    checkInt(loc, val, 21, type);
+    checkInt(loc, val, 21, rel);
     writeShuffleValue<e>(loc, val, 18, 3);
     break;
   case R_MICROMIPS_PC19_S2:
-    checkInt(loc, val, 21, type);
+    checkInt(loc, val, 21, rel);
     writeShuffleValue<e>(loc, val, 19, 2);
     break;
   case R_MICROMIPS_PC21_S1:
-    checkInt(loc, val, 22, type);
+    checkInt(loc, val, 22, rel);
     writeShuffleValue<e>(loc, val, 21, 1);
     break;
   case R_MICROMIPS_PC23_S2:
-    checkInt(loc, val, 25, type);
+    checkInt(loc, val, 25, rel);
     writeShuffleValue<e>(loc, val, 23, 2);
     break;
   default:
@@ -718,7 +761,7 @@ template <class ELFT> bool MIPS<ELFT>::usesOnlyLowPageBits(RelType type) const {
 }
 
 // Return true if the symbol is a PIC function.
-template <class ELFT> bool isMipsPIC(const Defined *sym) {
+template <class ELFT> bool elf::isMipsPIC(const Defined *sym) {
   if (!sym->isFunc())
     return false;
 
@@ -733,23 +776,20 @@ template <class ELFT> bool isMipsPIC(const Defined *sym) {
   if (!file)
     return false;
 
-  return file->getObj().getHeader()->e_flags & EF_MIPS_PIC;
+  return file->getObj().getHeader().e_flags & EF_MIPS_PIC;
 }
 
-template <class ELFT> TargetInfo *getMipsTargetInfo() {
+template <class ELFT> TargetInfo *elf::getMipsTargetInfo() {
   static MIPS<ELFT> target;
   return &target;
 }
 
-template TargetInfo *getMipsTargetInfo<ELF32LE>();
-template TargetInfo *getMipsTargetInfo<ELF32BE>();
-template TargetInfo *getMipsTargetInfo<ELF64LE>();
-template TargetInfo *getMipsTargetInfo<ELF64BE>();
+template TargetInfo *elf::getMipsTargetInfo<ELF32LE>();
+template TargetInfo *elf::getMipsTargetInfo<ELF32BE>();
+template TargetInfo *elf::getMipsTargetInfo<ELF64LE>();
+template TargetInfo *elf::getMipsTargetInfo<ELF64BE>();
 
-template bool isMipsPIC<ELF32LE>(const Defined *);
-template bool isMipsPIC<ELF32BE>(const Defined *);
-template bool isMipsPIC<ELF64LE>(const Defined *);
-template bool isMipsPIC<ELF64BE>(const Defined *);
-
-} // namespace elf
-} // namespace lld
+template bool elf::isMipsPIC<ELF32LE>(const Defined *);
+template bool elf::isMipsPIC<ELF32BE>(const Defined *);
+template bool elf::isMipsPIC<ELF64LE>(const Defined *);
+template bool elf::isMipsPIC<ELF64BE>(const Defined *);

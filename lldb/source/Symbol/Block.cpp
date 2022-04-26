@@ -1,4 +1,4 @@
-//===-- Block.cpp -----------------------------------------------*- C++ -*-===//
+//===-- Block.cpp ---------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -13,6 +13,7 @@
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/SymbolFile.h"
 #include "lldb/Symbol/VariableList.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 
 #include <memory>
@@ -25,7 +26,7 @@ Block::Block(lldb::user_id_t uid)
       m_inlineInfoSP(), m_variable_list_sp(), m_parsed_block_info(false),
       m_parsed_block_variables(false), m_parsed_child_blocks(false) {}
 
-Block::~Block() {}
+Block::~Block() = default;
 
 void Block::GetDescription(Stream *s, Function *function,
                            lldb::DescriptionLevel level, Target *target) const {
@@ -44,8 +45,8 @@ void Block::GetDescription(Stream *s, Function *function,
     s->Printf(", range%s = ", num_ranges > 1 ? "s" : "");
     for (size_t i = 0; i < num_ranges; ++i) {
       const Range &range = m_ranges.GetEntryRef(i);
-      s->AddressRange(base_addr + range.GetRangeBase(),
-                      base_addr + range.GetRangeEnd(), 4);
+      DumpAddressRange(s->AsRawOstream(), base_addr + range.GetRangeBase(),
+                       base_addr + range.GetRangeEnd(), 4);
     }
   }
 
@@ -87,8 +88,8 @@ void Block::Dump(Stream *s, addr_t base_addr, int32_t depth,
         *s << '!';
       else
         *s << ' ';
-      s->AddressRange(base_addr + range.GetRangeBase(),
-                      base_addr + range.GetRangeEnd(), 4);
+      DumpAddressRange(s->AsRawOstream(), base_addr + range.GetRangeBase(),
+                       base_addr + range.GetRangeEnd(), 4);
     }
   }
   s->EOL();
@@ -120,6 +121,16 @@ Block *Block::FindBlockByID(user_id_t block_id) {
       break;
   }
   return matching_block;
+}
+
+Block *Block::FindInnermostBlockByOffset(const lldb::addr_t offset) {
+  if (!Contains(offset))
+    return nullptr;
+  for (const BlockSP &block_sp : m_children) {
+    if (Block *block = block_sp->FindInnermostBlockByOffset(offset))
+      return block;
+  }
+  return this;
 }
 
 void Block::CalculateSymbolContext(SymbolContext *sc) {
@@ -160,8 +171,8 @@ void Block::DumpAddressRanges(Stream *s, lldb::addr_t base_addr) {
     size_t num_ranges = m_ranges.GetSize();
     for (size_t i = 0; i < num_ranges; ++i) {
       const Range &range = m_ranges.GetEntryRef(i);
-      s->AddressRange(base_addr + range.GetRangeBase(),
-                      base_addr + range.GetRangeEnd(), 4);
+      DumpAddressRange(s->AsRawOstream(), base_addr + range.GetRangeBase(),
+                       base_addr + range.GetRangeEnd(), 4);
     }
   }
 }
@@ -324,7 +335,7 @@ void Block::FinalizeRanges() {
 void Block::AddRange(const Range &range) {
   Block *parent_block = GetParent();
   if (parent_block && !parent_block->Contains(range)) {
-    Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_SYMBOLS));
+    Log *log = GetLog(LLDBLog::Symbols);
     if (log) {
       ModuleSP module_sp(m_parent_scope->CalculateSymbolContextModule());
       Function *function = m_parent_scope->CalculateSymbolContextFunction();
@@ -406,11 +417,10 @@ Block::AppendBlockVariables(bool can_create, bool get_child_block_variables,
   uint32_t num_variables_added = 0;
   VariableList *block_var_list = GetBlockVariableList(can_create).get();
   if (block_var_list) {
-    for (size_t i = 0; i < block_var_list->GetSize(); ++i) {
-      VariableSP variable = block_var_list->GetVariableAtIndex(i);
-      if (filter(variable.get())) {
+    for (const VariableSP &var_sp : *block_var_list) {
+      if (filter(var_sp.get())) {
         num_variables_added++;
-        variable_list->AddVariable(variable);
+        variable_list->AddVariable(var_sp);
       }
     }
   }

@@ -14,18 +14,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARMErrataFix.h"
-
-#include "Config.h"
+#include "InputFiles.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
 #include "Relocations.h"
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
-#include "lld/Common/Memory.h"
+#include "lld/Common/CommonLinkerContext.h"
 #include "lld/Common/Strings.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 
 using namespace llvm;
@@ -33,9 +31,8 @@ using namespace llvm::ELF;
 using namespace llvm::object;
 using namespace llvm::support;
 using namespace llvm::support::endian;
-
-namespace lld {
-namespace elf {
+using namespace lld;
+using namespace lld::elf;
 
 // The documented title for Erratum 657417 is:
 // "A 32bit branch instruction that spans two 4K regions can result in an
@@ -71,7 +68,7 @@ namespace elf {
 // 00001002       2 - bytes padding
 // 00001004 __CortexA8657417_00000FFE: B.w func
 
-class Patch657417Section : public SyntheticSection {
+class elf::Patch657417Section : public SyntheticSection {
 public:
   Patch657417Section(InputSection *p, uint64_t off, uint32_t instr, bool isARM);
 
@@ -81,6 +78,10 @@ public:
 
   // Get the virtual address of the branch instruction at patcheeOffset.
   uint64_t getBranchAddr() const;
+
+  static bool classof(const SectionBase *d) {
+    return d->kind() == InputSectionBase::Synthetic && d->name ==".text.patch";
+  }
 
   // The Section we are patching.
   const InputSection *patchee;
@@ -97,7 +98,7 @@ public:
 
 // Return true if the half-word, when taken as the first of a pair of halfwords
 // is the first half of a 32-bit instruction.
-// Reference from ARM Architecure Reference Manual ARMv7-A and ARMv7-R edition
+// Reference from ARM Architecture Reference Manual ARMv7-A and ARMv7-R edition
 // section A6.3: 32-bit Thumb instruction encoding
 // |             HW1                   |               HW2                |
 // | 1 1 1 | op1 (2) | op2 (7) | x (4) |op|           x (15)              |
@@ -108,7 +109,7 @@ static bool is32bitInstruction(uint16_t hw) {
   return (hw & 0xe000) == 0xe000 && (hw & 0x1800) != 0x0000;
 }
 
-// Reference from ARM Architecure Reference Manual ARMv7-A and ARMv7-R edition
+// Reference from ARM Architecture Reference Manual ARMv7-A and ARMv7-R edition
 // section A6.3.4 Branches and miscellaneous control.
 // |             HW1              |               HW2                |
 // | 1 1 1 | 1 0 | op (7) | x (4) | 1 | op1 (3) | op2 (4) | imm8 (8) |
@@ -139,9 +140,9 @@ Patch657417Section::Patch657417Section(InputSection *p, uint64_t off,
       patchee(p), patcheeOffset(off), instr(instr), isARM(isARM) {
   parent = p->getParent();
   patchSym = addSyntheticLocal(
-      saver.save("__CortexA8657417_" + utohexstr(getBranchAddr())), STT_FUNC,
+      saver().save("__CortexA8657417_" + utohexstr(getBranchAddr())), STT_FUNC,
       isARM ? 0 : 1, getSize(), *this);
-  addSyntheticLocal(saver.save(isARM ? "$a" : "$t"), STT_NOTYPE, 0, 0, *this);
+  addSyntheticLocal(saver().save(isARM ? "$a" : "$t"), STT_NOTYPE, 0, 0, *this);
 }
 
 uint64_t Patch657417Section::getBranchAddr() const {
@@ -161,6 +162,15 @@ static uint64_t getThumbDestAddr(uint64_t sourceAddr, uint32_t instr) {
     offset = target->getImplicitAddend(buf, R_ARM_THM_JUMP24);
   else
     offset = target->getImplicitAddend(buf, R_ARM_THM_CALL);
+  // A BLX instruction from Thumb to Arm may have an address that is
+  // not 4-byte aligned. As Arm instructions are always 4-byte aligned
+  // the instruction is calculated (from Arm ARM):
+  // targetAddress = Align(PC, 4) + imm32
+  // where
+  //   Align(x, y) = y * (x Div y)
+  // which corresponds to alignDown.
+  if (isBLX(instr))
+    sourceAddr = alignDown(sourceAddr, 4);
   return sourceAddr + offset + 4;
 }
 
@@ -170,11 +180,9 @@ void Patch657417Section::writeTo(uint8_t *buf) {
     write32le(buf, 0xea000000);
   else
     write32le(buf, 0x9000f000);
-  // If we have a relocation then apply it. For a SyntheticSection buf already
-  // has outSecOff added, but relocateAlloc also adds outSecOff so we need to
-  // subtract to avoid double counting.
+  // If we have a relocation then apply it.
   if (!relocations.empty()) {
-    relocateAlloc(buf - outSecOff, buf - outSecOff + getSize());
+    relocateAlloc(buf, buf + getSize());
     return;
   }
 
@@ -184,8 +192,12 @@ void Patch657417Section::writeTo(uint8_t *buf) {
   // We cannot use the instruction in the patchee section as this will have
   // been altered to point to us!
   uint64_t s = getThumbDestAddr(getBranchAddr(), instr);
-  uint64_t p = getVA(4);
-  target->relocateOne(buf, isARM ? R_ARM_JUMP24 : R_ARM_THM_JUMP24, s - p);
+  // A BLX changes the state of the branch in the patch to Arm state, which
+  // has a PC Bias of 8, whereas in all other cases the branch is in Thumb
+  // state with a PC Bias of 4.
+  uint64_t pcBias = isBLX(instr) ? 8 : 4;
+  uint64_t p = getVA(pcBias);
+  target->relocateNoSym(buf, isARM ? R_ARM_JUMP24 : R_ARM_THM_JUMP24, s - p);
 }
 
 // Given a branch instruction spanning two 4KiB regions, at offset off from the
@@ -195,7 +207,7 @@ static bool branchDestInFirstRegion(const InputSection *isec, uint64_t off,
                                     uint32_t instr, const Relocation *r) {
   uint64_t sourceAddr = isec->getVA(0) + off;
   assert((sourceAddr & 0xfff) == 0xffe);
-  uint64_t destAddr = sourceAddr;
+  uint64_t destAddr;
   // If there is a branch relocation at the same offset we must use this to
   // find the destination address as the branch could be indirected via a thunk
   // or the PLT.
@@ -254,7 +266,7 @@ static ScanResult scanCortexA8Errata657417(InputSection *isec, uint64_t &off,
   }
 
   ScanResult scanRes = {0, 0, nullptr};
-  const uint8_t *buf = isec->data().begin();
+  const uint8_t *buf = isec->rawData.begin();
   // ARMv7-A Thumb 32-bit instructions are encoded 2 consecutive
   // little-endian halfwords.
   const ulittle16_t *instBuf = reinterpret_cast<const ulittle16_t *>(buf + off);
@@ -315,9 +327,8 @@ void ARMErr657417Patcher::init() {
   };
 
   // Collect mapping symbols for every executable InputSection.
-  for (InputFile *file : objectFiles) {
-    auto *f = cast<ObjFile<ELF32LE>>(file);
-    for (Symbol *s : f->getLocalSymbols()) {
+  for (ELFFileBase *file : objectFiles) {
+    for (Symbol *s : file->getLocalSymbols()) {
       auto *def = dyn_cast<Defined>(s);
       if (!def)
         continue;
@@ -382,7 +393,7 @@ void ARMErr657417Patcher::insertPatches(
   // determine the insertion point. This is ok as we only merge into an
   // InputSectionDescription once per pass, and at the end of the pass
   // assignAddresses() will recalculate all the outSecOff values.
-  std::vector<InputSection *> tmp;
+  SmallVector<InputSection *, 0> tmp;
   tmp.reserve(isd.sections.size() + patches.size());
   auto mergeCmp = [](const InputSection *a, const InputSection *b) {
     if (a->outSecOff != b->outSecOff)
@@ -487,7 +498,7 @@ ARMErr657417Patcher::patchInputSectionDescription(
     while (thumbSym != mapSyms.end()) {
       auto nonThumbSym = std::next(thumbSym);
       uint64_t off = (*thumbSym)->value;
-      uint64_t limit = (nonThumbSym == mapSyms.end()) ? isec->data().size()
+      uint64_t limit = (nonThumbSym == mapSyms.end()) ? isec->rawData.size()
                                                       : (*nonThumbSym)->value;
 
       while (off < limit) {
@@ -511,8 +522,8 @@ bool ARMErr657417Patcher::createFixes() {
   for (OutputSection *os : outputSections) {
     if (!(os->flags & SHF_ALLOC) || !(os->flags & SHF_EXECINSTR))
       continue;
-    for (BaseCommand *bc : os->sectionCommands)
-      if (auto *isd = dyn_cast<InputSectionDescription>(bc)) {
+    for (SectionCommand *cmd : os->commands)
+      if (auto *isd = dyn_cast<InputSectionDescription>(cmd)) {
         std::vector<Patch657417Section *> patches =
             patchInputSectionDescription(*isd);
         if (!patches.empty()) {
@@ -523,6 +534,3 @@ bool ARMErr657417Patcher::createFixes() {
   }
   return addressesChanged;
 }
-
-} // namespace elf
-} // namespace lld

@@ -11,7 +11,7 @@
 #include "InputFiles.h"
 #include "Symbols.h"
 #include "lld/Common/Args.h"
-#include "lld/Common/ErrorHandler.h"
+#include "lld/Common/CommonLinkerContext.h"
 #include "lld/Common/Strings.h"
 #include "lld/Common/TargetOptionsCommandFlags.h"
 #include "llvm/ADT/STLExtras.h"
@@ -20,10 +20,10 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/DiagnosticPrinter.h"
-#include "llvm/LTO/Caching.h"
 #include "llvm/LTO/Config.h"
 #include "llvm/LTO/LTO.h"
 #include "llvm/Object/SymbolicFile.h"
+#include "llvm/Support/Caching.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -38,9 +38,8 @@
 
 using namespace llvm;
 using namespace llvm::object;
-
-namespace lld {
-namespace coff {
+using namespace lld;
+using namespace lld::coff;
 
 // Creates an empty file to and returns a raw_fd_ostream to write to it.
 static std::unique_ptr<raw_fd_ostream> openFile(StringRef file) {
@@ -55,14 +54,15 @@ static std::unique_ptr<raw_fd_ostream> openFile(StringRef file) {
 }
 
 static std::string getThinLTOOutputFile(StringRef path) {
-  return lto::getThinLTOOutputFile(path,
-                                   config->thinLTOPrefixReplace.first,
-                                   config->thinLTOPrefixReplace.second);
+  return lto::getThinLTOOutputFile(
+      std::string(path), std::string(config->thinLTOPrefixReplace.first),
+      std::string(config->thinLTOPrefixReplace.second));
 }
 
 static lto::Config createConfig() {
   lto::Config c;
   c.Options = initTargetOptionsFromCodeGenFlags();
+  c.Options.EmitAddrsig = true;
 
   // Always emit a section per function/datum with LTO. LLVM LTO should get most
   // of the benefit of linker GC, but there are still opportunities for ICF.
@@ -82,6 +82,11 @@ static lto::Config createConfig() {
   c.CPU = getCPUStr();
   c.MAttrs = getMAttrs();
   c.CGOptLevel = args::getCGOptLevel(config->ltoo);
+  c.AlwaysEmitRegularLTOObj = !config->ltoObjPath.empty();
+  c.DebugPassManager = config->ltoDebugPassManager;
+  c.CSIRProfile = std::string(config->ltoCSProfileFile);
+  c.RunCSIRInstr = config->ltoCSProfileGenerate;
+  c.PGOWarnMismatch = config->ltoPGOWarnMismatch;
 
   if (config->saveTemps)
     checkError(c.addSaveTemps(std::string(config->outputFile) + ".",
@@ -99,10 +104,12 @@ BitcodeCompiler::BitcodeCompiler() {
   if (config->thinLTOIndexOnly) {
     auto OnIndexWrite = [&](StringRef S) { thinIndices.erase(S); };
     backend = lto::createWriteIndexesThinBackend(
-        config->thinLTOPrefixReplace.first, config->thinLTOPrefixReplace.second,
+        std::string(config->thinLTOPrefixReplace.first),
+        std::string(config->thinLTOPrefixReplace.second),
         config->thinLTOEmitImportsFiles, indexFile.get(), OnIndexWrite);
-  } else if (config->thinLTOJobs != 0) {
-    backend = lto::createInProcessThinBackend(config->thinLTOJobs);
+  } else {
+    backend = lto::createInProcessThinBackend(
+        llvm::heavyweight_hardware_concurrency(config->thinLTOJobs));
   }
 
   ltoObj = std::make_unique<lto::LTO>(createConfig(), backend,
@@ -137,13 +144,18 @@ void BitcodeCompiler::add(BitcodeFile &f) {
     r.VisibleToRegularObj = sym->isUsedInRegularObj;
     if (r.Prevailing)
       undefine(sym);
+
+    // We tell LTO to not apply interprocedural optimization for wrapped
+    // (with -wrap) symbols because otherwise LTO would inline them while
+    // their values are still not final.
+    r.LinkerRedefined = !sym->canInline;
   }
   checkError(ltoObj->add(std::move(f.obj), resols));
 }
 
 // Merge all the bitcode files we have seen, codegen the result
 // and return the resulting objects.
-std::vector<StringRef> BitcodeCompiler::compile() {
+std::vector<InputFile *> BitcodeCompiler::compile(COFFLinkerContext &ctx) {
   unsigned maxTasks = ltoObj->getMaxTasks();
   buf.resize(maxTasks);
   files.resize(maxTasks);
@@ -151,16 +163,17 @@ std::vector<StringRef> BitcodeCompiler::compile() {
   // The /lldltocache option specifies the path to a directory in which to cache
   // native object files for ThinLTO incremental builds. If a path was
   // specified, configure LTO to use it as the cache directory.
-  lto::NativeObjectCache cache;
+  FileCache cache;
   if (!config->ltoCache.empty())
-    cache = check(lto::localCache(
-        config->ltoCache, [&](size_t task, std::unique_ptr<MemoryBuffer> mb) {
-          files[task] = std::move(mb);
-        }));
+    cache =
+        check(localCache("ThinLTO", "Thin", config->ltoCache,
+                         [&](size_t task, std::unique_ptr<MemoryBuffer> mb) {
+                           files[task] = std::move(mb);
+                         }));
 
   checkError(ltoObj->run(
       [&](size_t task) {
-        return std::make_unique<lto::NativeObjectStream>(
+        return std::make_unique<CachedFileStream>(
             std::make_unique<raw_svector_ostream>(buf[task]));
       },
       cache));
@@ -187,25 +200,32 @@ std::vector<StringRef> BitcodeCompiler::compile() {
   if (!config->ltoCache.empty())
     pruneCache(config->ltoCache, config->ltoCachePolicy);
 
-  std::vector<StringRef> ret;
+  std::vector<InputFile *> ret;
   for (unsigned i = 0; i != maxTasks; ++i) {
-    if (buf[i].empty())
-      continue;
-    if (config->saveTemps) {
-      if (i == 0)
-        saveBuffer(buf[i], config->outputFile + ".lto.obj");
-      else
-        saveBuffer(buf[i], config->outputFile + Twine(i) + ".lto.obj");
-    }
-    ret.emplace_back(buf[i].data(), buf[i].size());
-  }
+    // Assign unique names to LTO objects. This ensures they have unique names
+    // in the PDB if one is produced. The names should look like:
+    // - foo.exe.lto.obj
+    // - foo.exe.lto.1.obj
+    // - ...
+    StringRef ltoObjName =
+        saver().save(Twine(config->outputFile) + ".lto" +
+                     (i == 0 ? Twine("") : Twine('.') + Twine(i)) + ".obj");
 
-  for (std::unique_ptr<MemoryBuffer> &file : files)
-    if (file)
-      ret.push_back(file->getBuffer());
+    // Get the native object contents either from the cache or from memory.  Do
+    // not use the cached MemoryBuffer directly, or the PDB will not be
+    // deterministic.
+    StringRef objBuf;
+    if (files[i])
+      objBuf = files[i]->getBuffer();
+    else
+      objBuf = buf[i];
+    if (objBuf.empty())
+      continue;
+
+    if (config->saveTemps)
+      saveBuffer(buf[i], ltoObjName);
+    ret.push_back(make<ObjFile>(ctx, MemoryBufferRef(objBuf, ltoObjName)));
+  }
 
   return ret;
 }
-
-} // namespace coff
-} // namespace lld

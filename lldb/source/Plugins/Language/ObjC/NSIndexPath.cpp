@@ -1,4 +1,4 @@
-//===-- NSIndexPath.cpp -----------------------------------------*- C++ -*-===//
+//===-- NSIndexPath.cpp ---------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,11 +8,11 @@
 
 #include "Cocoa.h"
 
+#include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 #include "lldb/Core/ValueObject.h"
 #include "lldb/Core/ValueObjectConstResult.h"
 #include "lldb/DataFormatters/FormattersHelpers.h"
 #include "lldb/DataFormatters/TypeSynthetic.h"
-#include "lldb/Symbol/ClangASTContext.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 
@@ -33,7 +33,7 @@ class NSIndexPathSyntheticFrontEnd : public SyntheticChildrenFrontEnd {
 public:
   NSIndexPathSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
       : SyntheticChildrenFrontEnd(*valobj_sp.get()), m_descriptor_sp(nullptr),
-        m_impl(), m_ptr_size(0), m_uint_star_type() {
+        m_impl(), m_uint_star_type() {
     m_ptr_size =
         m_backend.GetTargetSP()->GetArchitecture().GetAddressByteSize();
   }
@@ -53,9 +53,8 @@ public:
     if (!type_system)
       return false;
 
-    ClangASTContext *ast = m_backend.GetExecutionContextRef()
-                               .GetTargetSP()
-                               ->GetScratchClangASTContext();
+    TypeSystemClang *ast = ScratchTypeSystemClang::GetForTarget(
+        *m_backend.GetExecutionContextRef().GetTargetSP());
     if (!ast)
       return false;
 
@@ -210,14 +209,13 @@ protected:
         m_process = nullptr;
       }
 
-      InlinedIndexes()
-          : m_indexes(0), m_count(0), m_ptr_size(0), m_process(nullptr) {}
+      InlinedIndexes() {}
 
     private:
-      uint64_t m_indexes;
-      size_t m_count;
-      uint32_t m_ptr_size;
-      Process *m_process;
+      uint64_t m_indexes = 0;
+      size_t m_count = 0;
+      uint32_t m_ptr_size = 0;
+      Process *m_process = nullptr;
 
       // cfr. Foundation for the details of this code
       size_t _lengthForInlinePayload(uint32_t ptr_size) {
@@ -272,10 +270,10 @@ protected:
         m_count = 0;
       }
 
-      OutsourcedIndexes() : m_indexes(nullptr), m_count(0) {}
+      OutsourcedIndexes() {}
 
-      ValueObject *m_indexes;
-      size_t m_count;
+      ValueObject *m_indexes = nullptr;
+      size_t m_count = 0;
     };
 
     union {
@@ -284,17 +282,25 @@ protected:
     };
 
     void Clear() {
+      switch (m_mode) {
+      case Mode::Inlined:
+        m_inlined.Clear();
+        break;
+      case Mode::Outsourced:
+        m_outsourced.Clear();
+        break;
+      case Mode::Invalid:
+        break;
+      }
       m_mode = Mode::Invalid;
-      m_inlined.Clear();
-      m_outsourced.Clear();
     }
 
-    Impl() : m_mode(Mode::Invalid) {}
+    Impl() {}
 
-    Mode m_mode;
+    Mode m_mode = Mode::Invalid;
   } m_impl;
 
-  uint32_t m_ptr_size;
+  uint32_t m_ptr_size = 0;
   CompilerType m_uint_star_type;
 };
 

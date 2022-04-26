@@ -20,8 +20,8 @@ define i128 @add_i128(i128 %x, i128 %y) nounwind {
 ; X86-NEXT:    adcl $0, %edi
 ; X86-NEXT:    adcl $0, %edx
 ; X86-NEXT:    adcl $0, %ecx
-; X86-NEXT:    movl %esi, (%eax)
 ; X86-NEXT:    movl %edi, 4(%eax)
+; X86-NEXT:    movl %esi, (%eax)
 ; X86-NEXT:    movl %edx, 8(%eax)
 ; X86-NEXT:    movl %ecx, 12(%eax)
 ; X86-NEXT:    popl %esi
@@ -61,8 +61,8 @@ define <1 x i128> @add_v1i128(<1 x i128> %x, <1 x i128> %y) nounwind {
 ; X86-NEXT:    adcl $0, %edi
 ; X86-NEXT:    adcl $0, %edx
 ; X86-NEXT:    adcl $0, %ecx
-; X86-NEXT:    movl %esi, (%eax)
 ; X86-NEXT:    movl %edi, 4(%eax)
+; X86-NEXT:    movl %esi, (%eax)
 ; X86-NEXT:    movl %edx, 8(%eax)
 ; X86-NEXT:    movl %ecx, 12(%eax)
 ; X86-NEXT:    popl %esi
@@ -77,7 +77,7 @@ define <1 x i128> @add_v1i128(<1 x i128> %x, <1 x i128> %y) nounwind {
 ; X64-NEXT:    movq %rax, %xmm0
 ; X64-NEXT:    movq %rsi, %xmm1
 ; X64-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
-; X64-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[2,3,0,1]
+; X64-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[2,3,2,3]
 ; X64-NEXT:    movq %xmm0, %rdx
 ; X64-NEXT:    addq $1, %rax
 ; X64-NEXT:    adcq $0, %rdx

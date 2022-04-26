@@ -8,9 +8,9 @@
 
 # RELOC:      Relocations [
 # RELOC-NEXT:   Section ({{.*}}) .rela.dyn {
-# RELOC-NEXT:     R_X86_64_GLOB_DAT dsofoo 0x0
 # RELOC-NEXT:     R_X86_64_GLOB_DAT foo 0x0
 # RELOC-NEXT:     R_X86_64_GLOB_DAT und 0x0
+# RELOC-NEXT:     R_X86_64_GLOB_DAT dsofoo 0x0
 # RELOC-NEXT:   }
 # RELOC-NEXT: ]
 
@@ -18,27 +18,27 @@
 # 0x1025 + 7 - 43 = 0x1001
 # DISASM:      Disassembly of section .text:
 # DISASM-EMPTY:
-# DISASM-NEXT: foo:
+# DISASM-NEXT: <foo>:
 # DISASM-NEXT:     nop
-# DISASM:      hid:
+# DISASM:      <hid>:
 # DISASM-NEXT:     nop
-# DISASM:      _start:
-# DISASM-NEXT:    movq    4367(%rip), %rax
-# DISASM-NEXT:    movq    4360(%rip), %rax
-# DISASM-NEXT:    movq    4361(%rip), %rax
-# DISASM-NEXT:    movq    4354(%rip), %rax
+# DISASM:      <_start>:
+# DISASM-NEXT:    movq    4375(%rip), %rax
+# DISASM-NEXT:    movq    4368(%rip), %rax
+# DISASM-NEXT:    movq    4369(%rip), %rax
+# DISASM-NEXT:    movq    4362(%rip), %rax
 # DISASM-NEXT:    leaq    -36(%rip), %rax
 # DISASM-NEXT:    leaq    -43(%rip), %rax
-# DISASM-NEXT:    movq    4341(%rip), %rax
-# DISASM-NEXT:    movq    4334(%rip), %rax
-# DISASM-NEXT:    movq    4311(%rip), %rax
-# DISASM-NEXT:    movq    4304(%rip), %rax
-# DISASM-NEXT:    movq    4305(%rip), %rax
-# DISASM-NEXT:    movq    4298(%rip), %rax
+# DISASM-NEXT:    movq    4325(%rip), %rax
+# DISASM-NEXT:    movq    4318(%rip), %rax
+# DISASM-NEXT:    movq    4319(%rip), %rax
+# DISASM-NEXT:    movq    4312(%rip), %rax
+# DISASM-NEXT:    movq    4313(%rip), %rax
+# DISASM-NEXT:    movq    4306(%rip), %rax
 # DISASM-NEXT:    leaq    -92(%rip), %rax
 # DISASM-NEXT:    leaq    -99(%rip), %rax
-# DISASM-NEXT:    movq    4285(%rip), %rax
-# DISASM-NEXT:    movq    4278(%rip), %rax
+# DISASM-NEXT:    movq    4269(%rip), %rax
+# DISASM-NEXT:    movq    4262(%rip), %rax
 
 .text
 .globl foo

@@ -9,16 +9,18 @@
 #ifndef LLDB_UTILITY_DATAEXTRACTOR_H
 #define LLDB_UTILITY_DATAEXTRACTOR_H
 
+#include "lldb/Utility/Endian.h"
 #include "lldb/lldb-defines.h"
 #include "lldb/lldb-enumerations.h"
 #include "lldb/lldb-forward.h"
 #include "lldb/lldb-types.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/DataExtractor.h"
+#include "llvm/Support/SwapByteOrder.h"
 
 #include <cassert>
-#include <stdint.h>
-#include <string.h>
+#include <cstdint>
+#include <cstring>
 
 namespace lldb_private {
 class Log;
@@ -132,7 +134,12 @@ public:
   DataExtractor(const DataExtractor &data, lldb::offset_t offset,
                 lldb::offset_t length, uint32_t target_byte_size = 1);
 
-  DataExtractor(const DataExtractor &rhs);
+  /// Copy constructor.
+  ///
+  /// The copy constructor is explicit as otherwise it is easy to make
+  /// unintended modification of a local copy instead of a caller's instance.
+  /// Also a needless copy of the \a m_data_sp shared pointer is/ expensive.
+  explicit DataExtractor(const DataExtractor &rhs);
 
   /// Assignment operator.
   ///
@@ -146,6 +153,12 @@ public:
   /// \return
   ///     A const reference to this object.
   const DataExtractor &operator=(const DataExtractor &rhs);
+
+  /// Move constructor and move assignment operators to complete the rule of 5.
+  ///
+  /// They would get deleted as we already defined those of rule of 3.
+  DataExtractor(DataExtractor &&rhs) = default;
+  DataExtractor &operator=(DataExtractor &&rhs) = default;
 
   /// Destructor
   ///
@@ -188,16 +201,11 @@ public:
   ///     The type of objects to use when dumping data from this
   ///     object. See DataExtractor::Type.
   ///
-  /// \param[in] type_format
-  ///     The optional format to use for the \a type objects. If this
-  ///     is nullptr, the default format for the \a type will be used.
-  ///
   /// \return
   ///     The offset at which dumping ended.
   lldb::offset_t PutToLog(Log *log, lldb::offset_t offset,
                           lldb::offset_t length, uint64_t base_addr,
-                          uint32_t num_per_line, Type type,
-                          const char *type_format = nullptr) const;
+                          uint32_t num_per_line, Type type) const;
 
   /// Extract an arbitrary number of bytes in the specified byte order.
   ///
@@ -540,13 +548,13 @@ public:
                              uint32_t bitfield_bit_size,
                              uint32_t bitfield_bit_offset) const;
 
-  /// Extract an signed integer of size \a byte_size from \a *offset_ptr, then
-  /// extract and signe extend the bitfield from this value if \a
+  /// Extract an signed integer of size \a size from \a *offset_ptr, then
+  /// extract and sign-extend the bitfield from this value if \a
   /// bitfield_bit_size is non-zero.
   ///
-  /// Extract a single signed integer value (sign extending if required) and
+  /// Extract a single signed integer value (sign-extending if required) and
   /// update the offset pointed to by \a offset_ptr. The size of the extracted
-  /// integer is specified by the \a byte_size argument. \a byte_size must
+  /// integer is specified by the \a size argument. \a size must
   /// have a value greater than or equal to one and less than or equal to
   /// eight since the return value is 64 bits wide.
   ///
@@ -577,24 +585,6 @@ public:
   int64_t GetMaxS64Bitfield(lldb::offset_t *offset_ptr, size_t size,
                             uint32_t bitfield_bit_size,
                             uint32_t bitfield_bit_offset) const;
-
-  /// Extract an pointer from \a *offset_ptr.
-  ///
-  /// Extract a single pointer from the data and update the offset pointed to
-  /// by \a offset_ptr. The size of the extracted pointer comes from the \a
-  /// m_addr_size member variable and should be set correctly prior to
-  /// extracting any pointer values.
-  ///
-  /// \param[in,out] offset_ptr
-  ///     A pointer to an offset within the data that will be advanced
-  ///     by the appropriate number of bytes if the value is extracted
-  ///     correctly. If the offset is out of bounds or there are not
-  ///     enough bytes to extract this value, the offset will be left
-  ///     unmodified.
-  ///
-  /// \return
-  ///     The extracted pointer value as a 64 integer.
-  uint64_t GetPointer(lldb::offset_t *offset_ptr) const;
 
   /// Get the current byte order value.
   ///
@@ -1002,19 +992,34 @@ public:
   }
 
 protected:
+  template <typename T> T Get(lldb::offset_t *offset_ptr, T fail_value) const {
+    constexpr size_t src_size = sizeof(T);
+    T val = fail_value;
+
+    const T *src = static_cast<const T *>(GetData(offset_ptr, src_size));
+    if (!src)
+      return val;
+
+    memcpy(&val, src, src_size);
+    if (m_byte_order != endian::InlHostByteOrder())
+      llvm::sys::swapByteOrder(val);
+
+    return val;
+  }
+
   // Member variables
-  const uint8_t *m_start; ///< A pointer to the first byte of data.
-  const uint8_t
-      *m_end; ///< A pointer to the byte that is past the end of the data.
+  const uint8_t *m_start = nullptr; ///< A pointer to the first byte of data.
+  const uint8_t *m_end =
+      nullptr; ///< A pointer to the byte that is past the end of the data.
   lldb::ByteOrder
       m_byte_order;     ///< The byte order of the data we are extracting from.
-  uint32_t m_addr_size; ///< The address size to use when extracting pointers or
-                        /// addresses
-  mutable lldb::DataBufferSP m_data_sp; ///< The shared pointer to data that can
-                                        /// be shared among multiple instances
-  const uint32_t m_target_byte_size;
+  uint32_t m_addr_size; ///< The address size to use when extracting addresses.
+  /// The shared pointer to data that can be shared among multiple instances
+  lldb::DataBufferSP m_data_sp;
+  /// Making it const would require implementation of move assignment operator.
+  uint32_t m_target_byte_size = 1;
 };
 
 } // namespace lldb_private
 
-#endif // liblldb_DataExtractor_h_
+#endif // LLDB_UTILITY_DATAEXTRACTOR_H

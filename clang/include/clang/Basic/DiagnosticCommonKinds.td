@@ -87,7 +87,8 @@ def warn_cxx98_compat_variadic_templates :
   Warning<"variadic templates are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_default_special_members : Error<
-  "only special member functions may be defaulted">;
+  "only special member functions %select{|and comparison operators }0"
+  "may be defaulted">;
 def err_deleted_non_function : Error<
   "only functions can have deleted definitions">;
 def err_module_not_found : Error<"module '%0' not found">, DefaultFatal;
@@ -110,6 +111,8 @@ def err_module_cycle : Error<"cyclic dependency in module '%0': %1">,
   DefaultFatal;
 def err_module_prebuilt : Error<
   "error in loading module '%0' from prebuilt module path">, DefaultFatal;
+def err_module_rebuild_finalized : Error<
+  "cannot rebuild module '%0' as it is already finalized">, DefaultFatal;
 def note_pragma_entered_here : Note<"#pragma entered here">;
 def note_decl_hiding_tag_type : Note<
   "%1 %0 is hidden by a non-type declaration of %0 here">;
@@ -119,7 +122,7 @@ def err_enum_template : Error<"enumeration cannot be a template">;
 
 def warn_cxx20_compat_consteval : Warning<
   "'consteval' specifier is incompatible with C++ standards before C++20">,
-  InGroup<CXX2aCompat>, DefaultIgnore;
+  InGroup<CXX20Compat>, DefaultIgnore;
 
 }
 
@@ -142,12 +145,19 @@ def warn_conflicting_nullability_attr_overriding_param_types : Warning<
 def err_nullability_conflicting : Error<
   "nullability specifier %0 conflicts with existing specifier %1">;
 
+def warn_incompatible_branch_protection_option: Warning <
+  "'-mbranch-protection=' option is incompatible with the '%0' architecture">,
+  InGroup<BranchProtection>;
+
+def warn_target_unsupported_branch_protection_attribute: Warning <
+  "ignoring the 'branch-protection' attribute because the '%0' architecture does not support it">,
+  InGroup<BranchProtection>;
 }
 
 // OpenCL Section 6.8.g
 def err_opencl_unknown_type_specifier : Error<
-  "%select{OpenCL C|C++ for OpenCL}0 version %1 does not support the "
-  "'%2' %select{type qualifier|storage class specifier}3">;
+  "%0 does not support the '%1' "
+  "%select{type qualifier|storage class specifier}2">;
 
 def warn_unknown_attribute_ignored : Warning<
   "unknown attribute %0 ignored">, InGroup<UnknownAttributes>;
@@ -186,6 +196,23 @@ def ext_cxx11_longlong : Extension<
 def warn_cxx98_compat_longlong : Warning<
   "'long long' is incompatible with C++98">,
   InGroup<CXX98CompatPedantic>, DefaultIgnore;
+def ext_cxx2b_size_t_suffix : ExtWarn<
+  "'size_t' suffix for literals is a C++2b extension">,
+  InGroup<CXX2b>;
+def warn_cxx20_compat_size_t_suffix : Warning<
+  "'size_t' suffix for literals is incompatible with C++ standards before "
+  "C++2b">, InGroup<CXXPre2bCompat>, DefaultIgnore;
+def err_cxx2b_size_t_suffix: Error<
+  "'size_t' suffix for literals is a C++2b feature">;
+def err_size_t_literal_too_large: Error<
+  "%select{signed |}0'size_t' literal is out of range of possible "
+  "%select{signed |}0'size_t' values">;
+def ext_c2x_bitint_suffix : ExtWarn<
+  "'_BitInt' suffix for literals is a C2x extension">,
+  InGroup<C2x>;
+def warn_c2x_compat_bitint_suffix : Warning<
+  "'_BitInt' suffix for literals is incompatible with C standards before C2x">,
+  InGroup<CPre2xCompat>, DefaultIgnore;
 def err_integer_literal_too_large : Error<
   "integer literal is too large to be represented in any %select{signed |}0"
   "integer type">;
@@ -233,11 +260,29 @@ def err_seh___finally_block : Error<
 // Sema && AST
 def note_invalid_subexpr_in_const_expr : Note<
   "subexpression not valid in a constant expression">;
+def note_constexpr_invalid_template_arg : Note<
+  "%select{pointer|reference}0 to %select{|subobject of }1"
+  "%select{type_info object|string literal|temporary object|"
+  "predefined '%3' variable}2 is not allowed in a template argument">;
+def err_constexpr_invalid_template_arg : Error<
+  note_constexpr_invalid_template_arg.Text>;
 
 // Sema && Frontend
 let CategoryName = "Inline Assembly Issue" in {
   def err_asm_invalid_type_in_input : Error<
     "invalid type %0 in asm input for constraint '%1'">;
+
+  def err_asm_invalid_type : Error<
+    "invalid type %0 in asm %select{input|output}1">;
+
+  def warn_stack_clash_protection_inline_asm : Warning<
+    "Unable to protect inline asm that clobbers stack pointer against stack clash">,
+    InGroup<DiagGroup<"stack-protector">>;
+
+  def warn_slh_does_not_support_asm_goto
+      : Warning<"Speculative load hardening does not protect functions with "
+                "asm goto">,
+        InGroup<DiagGroup<"slh-asm-goto">>;
 }
 
 // Sema && Serialization
@@ -266,12 +311,18 @@ def err_target_unsupported_unaligned : Error<
   "the %0 sub-architecture does not support unaligned accesses">;
 def err_target_unsupported_execute_only : Error<
   "execute only is not supported for the %0 sub-architecture">;
+def err_target_unsupported_tp_hard : Error<
+  "hardware TLS register is not supported for the %0 sub-architecture">;
 def err_target_unsupported_mcmse : Error<
   "-mcmse is not supported for %0">;
 def err_opt_not_valid_with_opt : Error<
   "option '%0' cannot be specified with '%1'">;
+def err_opt_not_valid_without_opt : Error<
+  "option '%0' cannot be specified without '%1'">;
 def err_opt_not_valid_on_target : Error<
   "option '%0' cannot be specified on this target">;
+def err_invalid_feature_combination : Error<
+  "invalid feature combination: %0">;
 
 // Source manager
 def err_cannot_open_file : Error<"cannot open file '%0': %1">, DefaultFatal;
@@ -279,6 +330,9 @@ def err_file_modified : Error<
   "file '%0' modified since it was first processed">, DefaultFatal;
 def err_file_too_large : Error<
   "sorry, unsupported: file '%0' is too large for Clang to process">;
+def err_include_too_large : Error<
+  "sorry, this include generates a translation unit too large for"
+  " Clang to process.">, DefaultFatal;
 def err_unsupported_bom : Error<"%0 byte order mark detected in '%1', but "
   "encoding is not supported">, DefaultFatal;
 def err_unable_to_rename_temp : Error<
@@ -304,9 +358,16 @@ def err_arcmt_nsinvocation_ownership : Error<"NSInvocation's %0 is not safe to b
 def err_openclcxx_not_supported : Error<
   "'%0' is not supported in C++ for OpenCL">;
 
+// HIP
+def warn_ignored_hip_only_option : Warning<
+  "'%0' is ignored since it is only supported for HIP">,
+  InGroup<HIPOnly>;
+
 // OpenMP
 def err_omp_more_one_clause : Error<
   "directive '#pragma omp %0' cannot contain more than one '%1' clause%select{| with '%3' name modifier| with 'source' dependence}2">;
+def err_omp_required_clause : Error<
+  "directive '#pragma omp %0' requires the '%1' clause">;
 
 // Static Analyzer Core
 def err_unknown_analyzer_checker_or_package : Error<
@@ -318,4 +379,13 @@ def note_suggest_disabling_all_checkers : Note<
 def warn_poison_system_directories : Warning <
   "include location '%0' is unsafe for cross-compilation">,
   InGroup<DiagGroup<"poison-system-directories">>, DefaultIgnore;
+
+def warn_opencl_unsupported_core_feature : Warning<
+  "%0 is a core feature in %select{OpenCL C|C++ for OpenCL}1 version %2 but not supported on this target">,
+  InGroup<OpenCLCoreFeaturesDiagGroup>, DefaultIgnore;
+
+def err_opencl_extension_and_feature_differs : Error<
+  "options %0 and %1 are set to different values">;
+def err_opencl_feature_requires : Error<
+  "feature %0 requires support of %1 feature">;
 }

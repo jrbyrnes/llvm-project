@@ -1,12 +1,7 @@
+; Test misexpect handles switch statements when debug information is stripped
 
 ; RUN: llvm-profdata merge %S/Inputs/misexpect-switch.proftext -o %t.profdata
 
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pgo-warn-misexpect 2>&1 | FileCheck %s --check-prefix=WARNING
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pass-remarks=misexpect 2>&1 | FileCheck %s --check-prefix=REMARK
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S -pgo-warn-misexpect -pass-remarks=misexpect 2>&1 | FileCheck %s --check-prefix=BOTH
-; RUN: opt < %s -lower-expect -pgo-instr-use -pgo-test-profile-file=%t.profdata -S 2>&1 | FileCheck %s --check-prefix=DISABLED
-
-; New PM
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -S 2>&1 | FileCheck %s --check-prefix=WARNING
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pass-remarks=misexpect -S 2>&1 | FileCheck %s --check-prefix=REMARK
 ; RUN: opt < %s -passes="function(lower-expect),pgo-instr-use" -pgo-test-profile-file=%t.profdata -pgo-warn-misexpect -pass-remarks=misexpect -S 2>&1 | FileCheck %s --check-prefix=BOTH
@@ -29,8 +24,6 @@
 
 ; CORRECT-NOT: warning: {{.*}}
 ; CORRECT-NOT: remark: {{.*}}
-; CHECK-DAG: !{!"misexpect", i64 0, i64 2000, i64 1}
-
 
 
 ; ModuleID = 'misexpect-switch.c'

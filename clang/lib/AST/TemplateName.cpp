@@ -11,8 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/TemplateName.h"
+#include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/DependenceFlags.h"
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/TemplateBase.h"
@@ -74,12 +77,18 @@ TemplateName::TemplateName(SubstTemplateTemplateParmPackStorage *Storage)
     : Storage(Storage) {}
 TemplateName::TemplateName(QualifiedTemplateName *Qual) : Storage(Qual) {}
 TemplateName::TemplateName(DependentTemplateName *Dep) : Storage(Dep) {}
+TemplateName::TemplateName(UsingShadowDecl *Using) : Storage(Using) {}
 
 bool TemplateName::isNull() const { return Storage.isNull(); }
 
 TemplateName::NameKind TemplateName::getKind() const {
-  if (Storage.is<TemplateDecl *>())
+  if (auto *ND = Storage.dyn_cast<Decl *>()) {
+    if (isa<UsingShadowDecl>(ND))
+      return UsingTemplate;
+    assert(isa<TemplateDecl>(ND));
     return Template;
+  }
+
   if (Storage.is<DependentTemplateName *>())
     return DependentTemplate;
   if (Storage.is<QualifiedTemplateName *>())
@@ -97,14 +106,22 @@ TemplateName::NameKind TemplateName::getKind() const {
 }
 
 TemplateDecl *TemplateName::getAsTemplateDecl() const {
-  if (TemplateDecl *Template = Storage.dyn_cast<TemplateDecl *>())
-    return Template;
+  if (Decl *TemplateOrUsing = Storage.dyn_cast<Decl *>()) {
+    if (UsingShadowDecl *USD = dyn_cast<UsingShadowDecl>(TemplateOrUsing))
+      return cast<TemplateDecl>(USD->getTargetDecl());
+
+    assert(isa<TemplateDecl>(TemplateOrUsing));
+    return cast<TemplateDecl>(TemplateOrUsing);
+  }
 
   if (QualifiedTemplateName *QTN = getAsQualifiedTemplateName())
-    return QTN->getTemplateDecl();
+    return QTN->getUnderlyingTemplate().getAsTemplateDecl();
 
   if (SubstTemplateTemplateParmStorage *sub = getAsSubstTemplateTemplateParm())
     return sub->getReplacement().getAsTemplateDecl();
+
+  if (UsingShadowDecl *USD = getAsUsingShadowDecl())
+    return cast<TemplateDecl>(USD->getTargetDecl());
 
   return nullptr;
 }
@@ -151,6 +168,13 @@ DependentTemplateName *TemplateName::getAsDependentTemplateName() const {
   return Storage.dyn_cast<DependentTemplateName *>();
 }
 
+UsingShadowDecl *TemplateName::getAsUsingShadowDecl() const {
+  if (Decl *D = Storage.dyn_cast<Decl *>())
+    if (UsingShadowDecl *USD = dyn_cast<UsingShadowDecl>(D))
+      return USD;
+  return nullptr;
+}
+
 TemplateName TemplateName::getNameToSubstitute() const {
   TemplateDecl *Decl = getAsTemplateDecl();
 
@@ -168,67 +192,98 @@ TemplateName TemplateName::getNameToSubstitute() const {
   return TemplateName(Decl);
 }
 
-bool TemplateName::isDependent() const {
+TemplateNameDependence TemplateName::getDependence() const {
+  auto D = TemplateNameDependence::None;
+  switch (getKind()) {
+  case TemplateName::NameKind::QualifiedTemplate:
+    D |= toTemplateNameDependence(
+        getAsQualifiedTemplateName()->getQualifier()->getDependence());
+    break;
+  case TemplateName::NameKind::DependentTemplate:
+    D |= toTemplateNameDependence(
+        getAsDependentTemplateName()->getQualifier()->getDependence());
+    break;
+  case TemplateName::NameKind::SubstTemplateTemplateParmPack:
+    D |= TemplateNameDependence::UnexpandedPack;
+    break;
+  case TemplateName::NameKind::OverloadedTemplate:
+    llvm_unreachable("overloaded templates shouldn't survive to here.");
+  default:
+    break;
+  }
   if (TemplateDecl *Template = getAsTemplateDecl()) {
-    if (isa<TemplateTemplateParmDecl>(Template))
-      return true;
+    if (auto *TTP = dyn_cast<TemplateTemplateParmDecl>(Template)) {
+      D |= TemplateNameDependence::DependentInstantiation;
+      if (TTP->isParameterPack())
+        D |= TemplateNameDependence::UnexpandedPack;
+    }
     // FIXME: Hack, getDeclContext() can be null if Template is still
     // initializing due to PCH reading, so we check it before using it.
     // Should probably modify TemplateSpecializationType to allow constructing
     // it without the isDependent() checking.
-    return Template->getDeclContext() &&
-           Template->getDeclContext()->isDependentContext();
+    if (Template->getDeclContext() &&
+        Template->getDeclContext()->isDependentContext())
+      D |= TemplateNameDependence::DependentInstantiation;
+  } else {
+    D |= TemplateNameDependence::DependentInstantiation;
   }
+  return D;
+}
 
-  assert(!getAsOverloadedTemplate() &&
-         "overloaded templates shouldn't survive to here");
-
-  return true;
+bool TemplateName::isDependent() const {
+  return getDependence() & TemplateNameDependence::Dependent;
 }
 
 bool TemplateName::isInstantiationDependent() const {
-  if (QualifiedTemplateName *QTN = getAsQualifiedTemplateName()) {
-    if (QTN->getQualifier()->isInstantiationDependent())
-      return true;
-  }
-
-  return isDependent();
+  return getDependence() & TemplateNameDependence::Instantiation;
 }
 
 bool TemplateName::containsUnexpandedParameterPack() const {
-  if (QualifiedTemplateName *QTN = getAsQualifiedTemplateName()) {
-    if (QTN->getQualifier()->containsUnexpandedParameterPack())
-      return true;
-  }
-
-  if (TemplateDecl *Template = getAsTemplateDecl()) {
-    if (TemplateTemplateParmDecl *TTP
-                                  = dyn_cast<TemplateTemplateParmDecl>(Template))
-      return TTP->isParameterPack();
-
-    return false;
-  }
-
-  if (DependentTemplateName *DTN = getAsDependentTemplateName())
-    return DTN->getQualifier() &&
-      DTN->getQualifier()->containsUnexpandedParameterPack();
-
-  return getAsSubstTemplateTemplateParmPack() != nullptr;
+  return getDependence() & TemplateNameDependence::UnexpandedPack;
 }
 
-void
-TemplateName::print(raw_ostream &OS, const PrintingPolicy &Policy,
-                    bool SuppressNNS) const {
-  if (TemplateDecl *Template = Storage.dyn_cast<TemplateDecl *>())
-    OS << *Template;
+void TemplateName::print(raw_ostream &OS, const PrintingPolicy &Policy,
+                         Qualified Qual) const {
+  auto Kind = getKind();
+  TemplateDecl *Template = nullptr;
+  if (Kind == TemplateName::Template || Kind == TemplateName::UsingTemplate) {
+    // After `namespace ns { using std::vector }`, what is the fully-qualified
+    // name of the UsingTemplateName `vector` within ns?
+    //
+    // - ns::vector (the qualified name of the using-shadow decl)
+    // - std::vector (the qualified name of the underlying template decl)
+    //
+    // Similar to the UsingType behavior, using declarations are used to import
+    // names more often than to export them, thus using the original name is
+    // most useful in this case.
+    Template = getAsTemplateDecl();
+  }
+
+  if (Template)
+    if (Policy.CleanUglifiedParameters &&
+        isa<TemplateTemplateParmDecl>(Template) && Template->getIdentifier())
+      OS << Template->getIdentifier()->deuglifiedName();
+    else if (Qual == Qualified::Fully &&
+             getDependence() !=
+                 TemplateNameDependenceScope::DependentInstantiation)
+      Template->printQualifiedName(OS, Policy);
+    else
+      OS << *Template;
   else if (QualifiedTemplateName *QTN = getAsQualifiedTemplateName()) {
-    if (!SuppressNNS)
+    if (Qual == Qualified::Fully &&
+        getDependence() !=
+            TemplateNameDependenceScope::DependentInstantiation) {
+      QTN->getUnderlyingTemplate().getAsTemplateDecl()->printQualifiedName(
+          OS, Policy);
+      return;
+    }
+    if (Qual == Qualified::AsWritten)
       QTN->getQualifier()->print(OS, Policy);
     if (QTN->hasTemplateKeyword())
       OS << "template ";
-    OS << *QTN->getDecl();
+    OS << *QTN->getUnderlyingTemplate().getAsTemplateDecl();
   } else if (DependentTemplateName *DTN = getAsDependentTemplateName()) {
-    if (!SuppressNNS && DTN->getQualifier())
+    if (Qual == Qualified::AsWritten && DTN->getQualifier())
       DTN->getQualifier()->print(OS, Policy);
     OS << "template ";
 
@@ -238,20 +293,21 @@ TemplateName::print(raw_ostream &OS, const PrintingPolicy &Policy,
       OS << "operator " << getOperatorSpelling(DTN->getOperator());
   } else if (SubstTemplateTemplateParmStorage *subst
                = getAsSubstTemplateTemplateParm()) {
-    subst->getReplacement().print(OS, Policy, SuppressNNS);
+    subst->getReplacement().print(OS, Policy, Qual);
   } else if (SubstTemplateTemplateParmPackStorage *SubstPack
                                         = getAsSubstTemplateTemplateParmPack())
     OS << *SubstPack->getParameterPack();
   else if (AssumedTemplateStorage *Assumed = getAsAssumedTemplateName()) {
     Assumed->getDeclName().print(OS, Policy);
   } else {
+    assert(getKind() == TemplateName::OverloadedTemplate);
     OverloadedTemplateStorage *OTS = getAsOverloadedTemplate();
     (*OTS->begin())->printName(OS);
   }
 }
 
-const DiagnosticBuilder &clang::operator<<(const DiagnosticBuilder &DB,
-                                           TemplateName N) {
+const StreamingDiagnostic &clang::operator<<(const StreamingDiagnostic &DB,
+                                             TemplateName N) {
   std::string NameStr;
   llvm::raw_string_ostream OS(NameStr);
   LangOptions LO;
@@ -262,20 +318,6 @@ const DiagnosticBuilder &clang::operator<<(const DiagnosticBuilder &DB,
   OS << '\'';
   OS.flush();
   return DB << NameStr;
-}
-
-const PartialDiagnostic&clang::operator<<(const PartialDiagnostic &PD,
-                                           TemplateName N) {
-  std::string NameStr;
-  llvm::raw_string_ostream OS(NameStr);
-  LangOptions LO;
-  LO.CPlusPlus = true;
-  LO.Bool = true;
-  OS << '\'';
-  N.print(OS, PrintingPolicy(LO));
-  OS << '\'';
-  OS.flush();
-  return PD << NameStr;
 }
 
 void TemplateName::dump(raw_ostream &OS) const {

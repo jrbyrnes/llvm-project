@@ -14,6 +14,7 @@
 #include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallDescription.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "llvm/ADT/Optional.h"
@@ -58,7 +59,7 @@ private:
 } // namespace
 
 static std::string getName(const CallEvent &Call) {
-  std::string Name = "";
+  std::string Name;
   if (const auto *MD = dyn_cast<CXXMethodDecl>(Call.getDecl()))
     if (const CXXRecordDecl *RD = MD->getParent())
       Name += RD->getNameAsString() + "::";
@@ -99,13 +100,13 @@ void ReturnValueChecker::checkPostCall(const CallEvent &Call,
 
   std::string Name = getName(Call);
   const NoteTag *CallTag = C.getNoteTag(
-      [Name, ExpectedValue](BugReport &) -> std::string {
+      [Name, ExpectedValue](PathSensitiveBugReport &) -> std::string {
         SmallString<128> Msg;
         llvm::raw_svector_ostream Out(Msg);
 
         Out << '\'' << Name << "' returns "
             << (ExpectedValue ? "true" : "false");
-        return Out.str();
+        return std::string(Out.str());
       },
       /*IsPrunable=*/true);
 
@@ -154,7 +155,7 @@ void ReturnValueChecker::checkEndFunction(const ReturnStmt *RS,
         Out << '\'' << Name << "' returns "
             << (ExpectedValue ? "false" : "true");
 
-        return Out.str();
+        return std::string(Out.str());
       },
       /*IsPrunable=*/false);
 
@@ -165,6 +166,6 @@ void ento::registerReturnValueChecker(CheckerManager &Mgr) {
   Mgr.registerChecker<ReturnValueChecker>();
 }
 
-bool ento::shouldRegisterReturnValueChecker(const LangOptions &LO) {
+bool ento::shouldRegisterReturnValueChecker(const CheckerManager &mgr) {
   return true;
 }

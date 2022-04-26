@@ -4,7 +4,7 @@ typedef signed char BOOL;
 
 BOOL b;
 
-int main() {
+int main(void) {
   BOOL b = 2;
   // CHECK: BOOL b = 2 ? YES : NO;
 
@@ -32,7 +32,7 @@ int main() {
   // CHECK: b = i ? YES : NO;
 
   b = i * 2;
-  // CHECK b = (i * 2) ? YES : NO;
+  // CHECK: b = (i * 2) ? YES : NO;
 
   b = 1 ? 2 : 3;
   // CHECK: b = 1 ? 2 ? YES : NO : 3 ? YES : NO;

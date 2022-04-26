@@ -1,5 +1,4 @@
-//===-- RegisterContextDarwin_arm64.cpp ---------------------------*- C++
-//-*-===//
+//===-- RegisterContextDarwin_arm64.cpp -----------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -28,12 +27,6 @@
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
 #include <sys/types.h>
 #include <sys/sysctl.h>
-#endif
-
-// Support building against older versions of LLVM, this macro was added
-// recently.
-#ifndef LLVM_EXTENSION
-#define LLVM_EXTENSION
 #endif
 
 #include "Utility/ARM64_DWARF_Registers.h"
@@ -66,7 +59,7 @@ using namespace lldb_private;
                               {LLDB_INVALID_REGNUM, LLDB_INVALID_REGNUM,       \
                                LLDB_INVALID_REGNUM, LLDB_INVALID_REGNUM,       \
                                LLDB_INVALID_REGNUM },                          \
-                               NULL, NULL, NULL, 0
+                               NULL, NULL
 #define REG_CONTEXT_SIZE                                                       \
   (sizeof(RegisterContextDarwin_arm64::GPR) +                                  \
    sizeof(RegisterContextDarwin_arm64::FPU) +                                  \
@@ -111,7 +104,7 @@ RegisterContextDarwin_arm64::RegisterContextDarwin_arm64(
   }
 }
 
-RegisterContextDarwin_arm64::~RegisterContextDarwin_arm64() {}
+RegisterContextDarwin_arm64::~RegisterContextDarwin_arm64() = default;
 
 void RegisterContextDarwin_arm64::InvalidateAllRegisters() {
   InvalidateAllRegisterStates();
@@ -650,7 +643,7 @@ bool RegisterContextDarwin_arm64::WriteRegister(const RegisterInfo *reg_info,
 }
 
 bool RegisterContextDarwin_arm64::ReadAllRegisterValues(
-    lldb::DataBufferSP &data_sp) {
+    lldb::WritableDataBufferSP &data_sp) {
   data_sp = std::make_shared<DataBufferHeap>(REG_CONTEXT_SIZE, 0);
   if (ReadGPR(false) == KERN_SUCCESS && ReadFPU(false) == KERN_SUCCESS &&
       ReadEXC(false) == KERN_SUCCESS) {

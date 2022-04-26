@@ -3,12 +3,7 @@
 # This test checks that an error occurs when a corrupted
 # .gnu_debugdata section is trying to be xz uncompressed.
 
-# RUN: yaml2obj %s > %t.obj
-
-# TODO(kwk): once yaml2obj doesn't auto-generate a .symtab section
-# when there's none in YAML, remove the following line:
-
-# RUN: llvm-objcopy --remove-section=.symtab %t.obj
+# RUN: yaml2obj %s -o %t.obj
 
 # RUN: %lldb -b -o 'image dump symtab' %t.obj 2>&1 | FileCheck %s
 

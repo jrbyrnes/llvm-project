@@ -21,7 +21,6 @@ using clang::analyze_format_string::FormatStringHandler;
 using clang::analyze_format_string::FormatSpecifier;
 using clang::analyze_format_string::LengthModifier;
 using clang::analyze_format_string::OptionalAmount;
-using clang::analyze_format_string::PositionContext;
 using clang::analyze_format_string::ConversionSpecifier;
 using namespace clang;
 
@@ -419,7 +418,6 @@ ArgType::matchesType(ASTContext &C, QualType argTy) const {
       QualType pointeeTy = PT->getPointeeType();
       if (const BuiltinType *BT = pointeeTy->getAs<BuiltinType>())
         switch (BT->getKind()) {
-          case BuiltinType::Void:
           case BuiltinType::Char_U:
           case BuiltinType::UChar:
           case BuiltinType::Char_S:
@@ -539,7 +537,7 @@ QualType ArgType::getRepresentativeType(ASTContext &C) const {
 }
 
 std::string ArgType::getRepresentativeTypeName(ASTContext &C) const {
-  std::string S = getRepresentativeType(C).getAsString();
+  std::string S = getRepresentativeType(C).getAsString(C.getPrintingPolicy());
 
   std::string Alias;
   if (Name) {

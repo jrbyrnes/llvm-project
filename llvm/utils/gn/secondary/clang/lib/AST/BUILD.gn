@@ -6,10 +6,17 @@ clang_tablegen("Opcodes") {
   td_file = "Interp/Opcodes.td"
 }
 
+clang_tablegen("AttrDocTable") {
+  visibility = [ ":AST" ]
+  args = [ "-gen-clang-attr-doc-table" ]
+  td_file = "//clang/include/clang/Basic/Attr.td"
+}
+
 static_library("AST") {
   output_name = "clangAST"
   configs += [ "//llvm/utils/gn/build:clang_code" ]
   deps = [
+    ":AttrDocTable",
     ":Opcodes",
     "//clang/include/clang/AST:AttrImpl",
     "//clang/include/clang/AST:AttrNodeTraverse",
@@ -22,12 +29,17 @@ static_library("AST") {
     "//clang/lib/Basic",
     "//clang/lib/Lex",
     "//llvm/lib/BinaryFormat",
+    "//llvm/lib/Frontend/OpenMP",
     "//llvm/lib/Support",
   ]
 
   # Generated files used in public headers should be in public_deps, the rest
   # in regular deps.
   public_deps = [
+    "//clang/include/clang/AST:AbstractBasicReader",
+    "//clang/include/clang/AST:AbstractBasicWriter",
+    "//clang/include/clang/AST:AbstractTypeReader",
+    "//clang/include/clang/AST:AbstractTypeWriter",
     "//clang/include/clang/AST:AttrVisitor",
     "//clang/include/clang/AST:Attrs",
     "//clang/include/clang/AST:CommentCommandList",
@@ -37,6 +49,7 @@ static_library("AST") {
   ]
   sources = [
     "APValue.cpp",
+    "ASTConcept.cpp",
     "ASTConsumer.cpp",
     "ASTContext.cpp",
     "ASTDiagnostic.cpp",
@@ -45,6 +58,7 @@ static_library("AST") {
     "ASTImporterLookupTable.cpp",
     "ASTStructuralEquivalence.cpp",
     "ASTTypeTraits.cpp",
+    "AttrDocTable.cpp",
     "AttrImpl.cpp",
     "CXXInheritance.cpp",
     "Comment.cpp",
@@ -54,6 +68,7 @@ static_library("AST") {
     "CommentParser.cpp",
     "CommentSema.cpp",
     "ComparisonCategories.cpp",
+    "ComputeDependence.cpp",
     "DataCollection.cpp",
     "Decl.cpp",
     "DeclBase.cpp",
@@ -68,13 +83,13 @@ static_library("AST") {
     "Expr.cpp",
     "ExprCXX.cpp",
     "ExprClassification.cpp",
+    "ExprConcepts.cpp",
     "ExprConstant.cpp",
     "ExprObjC.cpp",
     "ExternalASTMerger.cpp",
     "ExternalASTSource.cpp",
     "FormatString.cpp",
     "InheritViz.cpp",
-    "Interp/Block.cpp",
     "Interp/ByteCodeEmitter.cpp",
     "Interp/ByteCodeExprGen.cpp",
     "Interp/ByteCodeGenError.cpp",
@@ -86,6 +101,7 @@ static_library("AST") {
     "Interp/Frame.cpp",
     "Interp/Function.cpp",
     "Interp/Interp.cpp",
+    "Interp/InterpBlock.cpp",
     "Interp/InterpFrame.cpp",
     "Interp/InterpStack.cpp",
     "Interp/InterpState.cpp",
@@ -107,8 +123,10 @@ static_library("AST") {
     "OSLog.cpp",
     "OpenMPClause.cpp",
     "ParentMap.cpp",
+    "ParentMapContext.cpp",
     "PrintfFormatString.cpp",
     "QualTypeNames.cpp",
+    "Randstruct.cpp",
     "RawCommentList.cpp",
     "RecordLayout.cpp",
     "RecordLayoutBuilder.cpp",

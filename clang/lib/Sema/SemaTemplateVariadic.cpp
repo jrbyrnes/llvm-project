@@ -308,8 +308,7 @@ Sema::DiagnoseUnexpandedParameterPacks(SourceLocation Loc,
         }
         return declaresSameEntity(Pack.first.get<NamedDecl *>(), LocalPack);
       };
-      if (std::find_if(LSI->LocalPacks.begin(), LSI->LocalPacks.end(),
-                       DeclaresThisPack) != LSI->LocalPacks.end())
+      if (llvm::any_of(LSI->LocalPacks, DeclaresThisPack))
         LambdaParamPackReferences.push_back(Pack);
     }
 
@@ -328,8 +327,8 @@ Sema::DiagnoseUnexpandedParameterPacks(SourceLocation Loc,
       bool EnclosingStmtExpr = false;
       for (unsigned N = FunctionScopes.size(); N; --N) {
         sema::FunctionScopeInfo *Func = FunctionScopes[N-1];
-        if (std::any_of(
-                Func->CompoundScopes.begin(), Func->CompoundScopes.end(),
+        if (llvm::any_of(
+                Func->CompoundScopes,
                 [](sema::CompoundScopeInfo &CSI) { return CSI.IsStmtExpr; })) {
           EnclosingStmtExpr = true;
           break;
@@ -368,8 +367,8 @@ Sema::DiagnoseUnexpandedParameterPacks(SourceLocation Loc,
       Locations.push_back(Unexpanded[I].second);
   }
 
-  DiagnosticBuilder DB = Diag(Loc, diag::err_unexpanded_parameter_pack)
-                         << (int)UPPC << (int)Names.size();
+  auto DB = Diag(Loc, diag::err_unexpanded_parameter_pack)
+            << (int)UPPC << (int)Names.size();
   for (size_t I = 0, E = std::min(Names.size(), (size_t)2); I != E; ++I)
     DB << Names[I];
 
@@ -406,6 +405,29 @@ bool Sema::DiagnoseUnexpandedParameterPack(Expr *E,
   CollectUnexpandedParameterPacksVisitor(Unexpanded).TraverseStmt(E);
   assert(!Unexpanded.empty() && "Unable to find unexpanded parameter packs");
   return DiagnoseUnexpandedParameterPacks(E->getBeginLoc(), UPPC, Unexpanded);
+}
+
+bool Sema::DiagnoseUnexpandedParameterPackInRequiresExpr(RequiresExpr *RE) {
+  if (!RE->containsUnexpandedParameterPack())
+    return false;
+
+  SmallVector<UnexpandedParameterPack, 2> Unexpanded;
+  CollectUnexpandedParameterPacksVisitor(Unexpanded).TraverseStmt(RE);
+  assert(!Unexpanded.empty() && "Unable to find unexpanded parameter packs");
+
+  // We only care about unexpanded references to the RequiresExpr's own
+  // parameter packs.
+  auto Parms = RE->getLocalParameters();
+  llvm::SmallPtrSet<NamedDecl*, 8> ParmSet(Parms.begin(), Parms.end());
+  SmallVector<UnexpandedParameterPack, 2> UnexpandedParms;
+  for (auto Parm : Unexpanded)
+    if (ParmSet.contains(Parm.first.dyn_cast<NamedDecl*>()))
+      UnexpandedParms.push_back(Parm);
+  if (UnexpandedParms.empty())
+    return false;
+
+  return DiagnoseUnexpandedParameterPacks(RE->getBeginLoc(), UPPC_Requirement,
+                                          UnexpandedParms);
 }
 
 bool Sema::DiagnoseUnexpandedParameterPack(const CXXScopeSpec &SS,
@@ -614,7 +636,8 @@ QualType Sema::CheckPackExpansion(QualType Pattern, SourceRange PatternRange,
     return QualType();
   }
 
-  return Context.getPackExpansionType(Pattern, NumExpansions);
+  return Context.getPackExpansionType(Pattern, NumExpansions,
+                                      /*ExpectPackInType=*/false);
 }
 
 ExprResult Sema::ActOnPackExpansion(Expr *Pattern, SourceLocation EllipsisLoc) {
@@ -654,21 +677,19 @@ bool Sema::CheckParameterPacksForExpansion(
   Optional<unsigned> NumPartialExpansions;
   SourceLocation PartiallySubstitutedPackLoc;
 
-  for (ArrayRef<UnexpandedParameterPack>::iterator i = Unexpanded.begin(),
-                                                 end = Unexpanded.end();
-                                                  i != end; ++i) {
+  for (UnexpandedParameterPack ParmPack : Unexpanded) {
     // Compute the depth and index for this parameter pack.
     unsigned Depth = 0, Index = 0;
     IdentifierInfo *Name;
     bool IsVarDeclPack = false;
 
-    if (const TemplateTypeParmType *TTP
-        = i->first.dyn_cast<const TemplateTypeParmType *>()) {
+    if (const TemplateTypeParmType *TTP =
+            ParmPack.first.dyn_cast<const TemplateTypeParmType *>()) {
       Depth = TTP->getDepth();
       Index = TTP->getIndex();
       Name = TTP->getIdentifier();
     } else {
-      NamedDecl *ND = i->first.get<NamedDecl *>();
+      NamedDecl *ND = ParmPack.first.get<NamedDecl *>();
       if (isa<VarDecl>(ND))
         IsVarDeclPack = true;
       else
@@ -683,9 +704,9 @@ bool Sema::CheckParameterPacksForExpansion(
       // Figure out whether we're instantiating to an argument pack or not.
       typedef LocalInstantiationScope::DeclArgumentPack DeclArgumentPack;
 
-      llvm::PointerUnion<Decl *, DeclArgumentPack *> *Instantiation
-        = CurrentInstantiationScope->findInstantiationOf(
-                                        i->first.get<NamedDecl *>());
+      llvm::PointerUnion<Decl *, DeclArgumentPack *> *Instantiation =
+          CurrentInstantiationScope->findInstantiationOf(
+              ParmPack.first.get<NamedDecl *>());
       if (Instantiation->is<DeclArgumentPack *>()) {
         // We could expand this function parameter pack.
         NewPackSize = Instantiation->get<DeclArgumentPack *>()->size();
@@ -722,7 +743,7 @@ bool Sema::CheckParameterPacksForExpansion(
           RetainExpansion = true;
           // We don't actually know the new pack size yet.
           NumPartialExpansions = NewPackSize;
-          PartiallySubstitutedPackLoc = i->second;
+          PartiallySubstitutedPackLoc = ParmPack.second;
           continue;
         }
       }
@@ -733,7 +754,7 @@ bool Sema::CheckParameterPacksForExpansion(
       // Record it.
       NumExpansions = NewPackSize;
       FirstPack.first = Name;
-      FirstPack.second = i->second;
+      FirstPack.second = ParmPack.second;
       HaveFirstPack = true;
       continue;
     }
@@ -744,12 +765,12 @@ bool Sema::CheckParameterPacksForExpansion(
       //   the same number of arguments specified.
       if (HaveFirstPack)
         Diag(EllipsisLoc, diag::err_pack_expansion_length_conflict)
-          << FirstPack.first << Name << *NumExpansions << NewPackSize
-          << SourceRange(FirstPack.second) << SourceRange(i->second);
+            << FirstPack.first << Name << *NumExpansions << NewPackSize
+            << SourceRange(FirstPack.second) << SourceRange(ParmPack.second);
       else
         Diag(EllipsisLoc, diag::err_pack_expansion_length_conflict_multilevel)
-          << Name << *NumExpansions << NewPackSize
-          << SourceRange(i->second);
+            << Name << *NumExpansions << NewPackSize
+            << SourceRange(ParmPack.second);
       return true;
     }
   }
@@ -847,6 +868,7 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
 
   case TST_typeofExpr:
   case TST_decltype:
+  case TST_bitint:
     if (DS.getRepAsExpr() &&
         DS.getRepAsExpr()->containsUnexpandedParameterPack())
       return true;
@@ -868,6 +890,7 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
   case TST_Fract:
   case TST_Float16:
   case TST_float128:
+  case TST_ibm128:
   case TST_bool:
   case TST_decimal32:
   case TST_decimal64:
@@ -880,6 +903,7 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
   case TST_auto:
   case TST_auto_type:
   case TST_decltype_auto:
+  case TST_BFloat16:
 #define GENERIC_IMAGE_TYPE(ImgType, Id) case TST_##ImgType##_t:
 #include "clang/Basic/OpenCLImageTypes.def"
   case TST_unknown_anytype:
@@ -936,6 +960,10 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
       break;
     }
   }
+
+  if (Expr *TRC = D.getTrailingRequiresClause())
+    if (TRC->containsUnexpandedParameterPack())
+      return true;
 
   return false;
 }
@@ -1065,7 +1093,7 @@ Sema::getTemplateArgumentPackExpansionPattern(
   case TemplateArgument::TemplateExpansion:
     Ellipsis = OrigLoc.getTemplateEllipsisLoc();
     NumExpansions = Argument.getNumTemplateExpansions();
-    return TemplateArgumentLoc(Argument.getPackExpansionPattern(),
+    return TemplateArgumentLoc(Context, Argument.getPackExpansionPattern(),
                                OrigLoc.getTemplateQualifierLoc(),
                                OrigLoc.getTemplateNameLoc());
 
@@ -1153,7 +1181,7 @@ static void CheckFoldOperand(Sema &S, Expr *E) {
   }
 }
 
-ExprResult Sema::ActOnCXXFoldExpr(SourceLocation LParenLoc, Expr *LHS,
+ExprResult Sema::ActOnCXXFoldExpr(Scope *S, SourceLocation LParenLoc, Expr *LHS,
                                   tok::TokenKind Operator,
                                   SourceLocation EllipsisLoc, Expr *RHS,
                                   SourceLocation RParenLoc) {
@@ -1195,18 +1223,37 @@ ExprResult Sema::ActOnCXXFoldExpr(SourceLocation LParenLoc, Expr *LHS,
   }
 
   BinaryOperatorKind Opc = ConvertTokenKindToBinaryOpcode(Operator);
-  return BuildCXXFoldExpr(LParenLoc, LHS, Opc, EllipsisLoc, RHS, RParenLoc,
+
+  // Perform first-phase name lookup now.
+  UnresolvedLookupExpr *ULE = nullptr;
+  {
+    UnresolvedSet<16> Functions;
+    LookupBinOp(S, EllipsisLoc, Opc, Functions);
+    if (!Functions.empty()) {
+      DeclarationName OpName = Context.DeclarationNames.getCXXOperatorName(
+          BinaryOperator::getOverloadedOperator(Opc));
+      ExprResult Callee = CreateUnresolvedLookupExpr(
+          /*NamingClass*/ nullptr, NestedNameSpecifierLoc(),
+          DeclarationNameInfo(OpName, EllipsisLoc), Functions);
+      if (Callee.isInvalid())
+        return ExprError();
+      ULE = cast<UnresolvedLookupExpr>(Callee.get());
+    }
+  }
+
+  return BuildCXXFoldExpr(ULE, LParenLoc, LHS, Opc, EllipsisLoc, RHS, RParenLoc,
                           None);
 }
 
-ExprResult Sema::BuildCXXFoldExpr(SourceLocation LParenLoc, Expr *LHS,
+ExprResult Sema::BuildCXXFoldExpr(UnresolvedLookupExpr *Callee,
+                                  SourceLocation LParenLoc, Expr *LHS,
                                   BinaryOperatorKind Operator,
                                   SourceLocation EllipsisLoc, Expr *RHS,
                                   SourceLocation RParenLoc,
                                   Optional<unsigned> NumExpansions) {
-  return new (Context) CXXFoldExpr(Context.DependentTy, LParenLoc, LHS,
-                                   Operator, EllipsisLoc, RHS, RParenLoc,
-                                   NumExpansions);
+  return new (Context)
+      CXXFoldExpr(Context.DependentTy, Callee, LParenLoc, LHS, Operator,
+                  EllipsisLoc, RHS, RParenLoc, NumExpansions);
 }
 
 ExprResult Sema::BuildEmptyCXXFoldExpr(SourceLocation EllipsisLoc,

@@ -1,15 +1,17 @@
 //===-------- JITLink_EHFrameSupport.cpp - JITLink eh-frame utils ---------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
 #include "EHFrameSupportImpl.h"
 
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/Config/config.h"
+#include "llvm/ExecutionEngine/JITLink/DWARFRecordSectionSplitter.h"
+#include "llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h"
 #include "llvm/Support/DynamicLibrary.h"
 
 #define DEBUG_TYPE "jitlink"
@@ -17,88 +19,392 @@
 namespace llvm {
 namespace jitlink {
 
-EHFrameBinaryParser::EHFrameBinaryParser(JITTargetAddress EHFrameAddress,
-                                         StringRef EHFrameContent,
-                                         unsigned PointerSize,
-                                         support::endianness Endianness)
-    : EHFrameAddress(EHFrameAddress), EHFrameContent(EHFrameContent),
-      PointerSize(PointerSize), EHFrameReader(EHFrameContent, Endianness) {}
+EHFrameEdgeFixer::EHFrameEdgeFixer(StringRef EHFrameSectionName,
+                                   unsigned PointerSize, Edge::Kind Pointer32,
+                                   Edge::Kind Pointer64, Edge::Kind Delta32,
+                                   Edge::Kind Delta64, Edge::Kind NegDelta32)
+    : EHFrameSectionName(EHFrameSectionName), PointerSize(PointerSize),
+      Pointer32(Pointer32), Pointer64(Pointer64), Delta32(Delta32),
+      Delta64(Delta64), NegDelta32(NegDelta32) {}
 
-Error EHFrameBinaryParser::addToGraph() {
-  while (!EHFrameReader.empty()) {
-    size_t RecordOffset = EHFrameReader.getOffset();
+Error EHFrameEdgeFixer::operator()(LinkGraph &G) {
+  auto *EHFrame = G.findSectionByName(EHFrameSectionName);
+
+  if (!EHFrame) {
+    LLVM_DEBUG({
+      dbgs() << "EHFrameEdgeFixer: No " << EHFrameSectionName
+             << " section. Nothing to do\n";
+    });
+    return Error::success();
+  }
+
+  // Check that we support the graph's pointer size.
+  if (G.getPointerSize() != 4 && G.getPointerSize() != 8)
+    return make_error<JITLinkError>(
+        "EHFrameEdgeFixer only supports 32 and 64 bit targets");
+
+  LLVM_DEBUG({
+    dbgs() << "EHFrameEdgeFixer: Processing " << EHFrameSectionName << "...\n";
+  });
+
+  ParseContext PC(G);
+
+  // Build a map of all blocks and symbols in the text sections. We will use
+  // these for finding / building edge targets when processing FDEs.
+  for (auto &Sec : G.sections()) {
+    // Just record the most-canonical symbol (for eh-frame purposes) at each
+    // address.
+    for (auto *Sym : Sec.symbols()) {
+      auto &CurSym = PC.AddrToSym[Sym->getAddress()];
+      if (!CurSym || (std::make_tuple(Sym->getLinkage(), Sym->getScope(),
+                                      !Sym->hasName(), Sym->getName()) <
+                      std::make_tuple(CurSym->getLinkage(), CurSym->getScope(),
+                                      !CurSym->hasName(), CurSym->getName())))
+        CurSym = Sym;
+    }
+    if (auto Err = PC.AddrToBlock.addBlocks(Sec.blocks(),
+                                            BlockAddressMap::includeNonNull))
+      return Err;
+  }
+
+  // Sort eh-frame blocks into address order to ensure we visit CIEs before
+  // their child FDEs.
+  std::vector<Block *> EHFrameBlocks;
+  for (auto *B : EHFrame->blocks())
+    EHFrameBlocks.push_back(B);
+  llvm::sort(EHFrameBlocks, [](const Block *LHS, const Block *RHS) {
+    return LHS->getAddress() < RHS->getAddress();
+  });
+
+  // Loop over the blocks in address order.
+  for (auto *B : EHFrameBlocks)
+    if (auto Err = processBlock(PC, *B))
+      return Err;
+
+  return Error::success();
+}
+
+Error EHFrameEdgeFixer::processBlock(ParseContext &PC, Block &B) {
+
+  LLVM_DEBUG(dbgs() << "  Processing block at " << B.getAddress() << "\n");
+
+  // eh-frame should not contain zero-fill blocks.
+  if (B.isZeroFill())
+    return make_error<JITLinkError>("Unexpected zero-fill block in " +
+                                    EHFrameSectionName + " section");
+
+  if (B.getSize() == 0) {
+    LLVM_DEBUG(dbgs() << "    Block is empty. Skipping.\n");
+    return Error::success();
+  }
+
+  // Find the offsets of any existing edges from this block.
+  BlockEdgeMap BlockEdges;
+  for (auto &E : B.edges())
+    if (E.isRelocation()) {
+      if (BlockEdges.count(E.getOffset()))
+        return make_error<JITLinkError>(
+            "Multiple relocations at offset " +
+            formatv("{0:x16}", E.getOffset()) + " in " + EHFrameSectionName +
+            " block at address " + formatv("{0:x16}", B.getAddress()));
+
+      BlockEdges[E.getOffset()] = EdgeTarget(E);
+    }
+
+  CIEInfosMap CIEInfos;
+  BinaryStreamReader BlockReader(
+      StringRef(B.getContent().data(), B.getContent().size()),
+      PC.G.getEndianness());
+  while (!BlockReader.empty()) {
+    size_t RecordStartOffset = BlockReader.getOffset();
 
     LLVM_DEBUG({
-      dbgs() << "Processing eh-frame record at "
-             << format("0x%016" PRIx64, EHFrameAddress + RecordOffset)
-             << " (offset " << RecordOffset << ")\n";
+      dbgs() << "    Processing CFI record at "
+             << (B.getAddress() + RecordStartOffset) << "\n";
     });
 
-    size_t RecordLength = 0;
-    uint32_t RecordLengthField;
-    if (auto Err = EHFrameReader.readInteger(RecordLengthField))
-      return Err;
-
-    // Process CIE/FDE length/extended-length fields to build the blocks.
-    //
-    // The value of these fields describe the length of the *rest* of the CIE
-    // (not including data up to the end of the field itself) so we have to
-    // bump RecordLength to include the data up to the end of the field: 4 bytes
-    // for Length, or 12 bytes (4 bytes + 8 bytes) for ExtendedLength.
-    if (RecordLengthField == 0) // Length 0 means end of __eh_frame section.
-      break;
-
-    // If the regular length field's value is 0xffffffff, use extended length.
-    if (RecordLengthField == 0xffffffff) {
-      uint64_t ExtendedLengthField;
-      if (auto Err = EHFrameReader.readInteger(ExtendedLengthField))
+    // Get the record length.
+    size_t RecordRemaining;
+    {
+      uint32_t Length;
+      if (auto Err = BlockReader.readInteger(Length))
         return Err;
-      if (ExtendedLengthField > EHFrameReader.bytesRemaining())
-        return make_error<JITLinkError>("CIE record extends past the end of "
-                                        "the __eh_frame section");
-      if (ExtendedLengthField + 12 > std::numeric_limits<size_t>::max())
-        return make_error<JITLinkError>("CIE record too large to process");
-      RecordLength = ExtendedLengthField + 12;
-    } else {
-      if (RecordLengthField > EHFrameReader.bytesRemaining())
-        return make_error<JITLinkError>("CIE record extends past the end of "
-                                        "the __eh_frame section");
-      RecordLength = RecordLengthField + 4;
+      // If Length < 0xffffffff then use the regular length field, otherwise
+      // read the extended length field.
+      if (Length != 0xffffffff)
+        RecordRemaining = Length;
+      else {
+        uint64_t ExtendedLength;
+        if (auto Err = BlockReader.readInteger(ExtendedLength))
+          return Err;
+        RecordRemaining = ExtendedLength;
+      }
     }
 
-    LLVM_DEBUG(dbgs() << "  length: " << RecordLength << "\n");
+    if (BlockReader.bytesRemaining() < RecordRemaining)
+      return make_error<JITLinkError>(
+          "Incomplete CFI record at " +
+          formatv("{0:x16}", B.getAddress() + RecordStartOffset));
 
-    // Read the CIE Pointer.
-    size_t CIEPointerAddress = EHFrameAddress + EHFrameReader.getOffset();
-    uint32_t CIEPointer;
-    if (auto Err = EHFrameReader.readInteger(CIEPointer))
+    // Read the CIE delta for this record.
+    uint64_t CIEDeltaFieldOffset = BlockReader.getOffset() - RecordStartOffset;
+    uint32_t CIEDelta;
+    if (auto Err = BlockReader.readInteger(CIEDelta))
       return Err;
 
-    // Based on the CIE pointer value, parse this as a CIE or FDE record.
-    if (CIEPointer == 0) {
-      if (auto Err = processCIE(RecordOffset, RecordLength))
+    if (CIEDelta == 0) {
+      if (auto Err = processCIE(PC, B, RecordStartOffset,
+                                CIEDeltaFieldOffset + RecordRemaining,
+                                CIEDeltaFieldOffset, BlockEdges))
         return Err;
     } else {
-      if (auto Err = processFDE(RecordOffset, RecordLength, CIEPointerAddress,
-                                CIEPointer))
+      if (auto Err = processFDE(PC, B, RecordStartOffset,
+                                CIEDeltaFieldOffset + RecordRemaining,
+                                CIEDeltaFieldOffset, CIEDelta, BlockEdges))
         return Err;
     }
 
-    EHFrameReader.setOffset(RecordOffset + RecordLength);
+    // Move to the next record.
+    BlockReader.setOffset(RecordStartOffset + CIEDeltaFieldOffset +
+                          RecordRemaining);
   }
 
   return Error::success();
 }
 
-void EHFrameBinaryParser::anchor() {}
+Error EHFrameEdgeFixer::processCIE(ParseContext &PC, Block &B,
+                                   size_t RecordOffset, size_t RecordLength,
+                                   size_t CIEDeltaFieldOffset,
+                                   const BlockEdgeMap &BlockEdges) {
 
-Expected<EHFrameBinaryParser::AugmentationInfo>
-EHFrameBinaryParser::parseAugmentationString() {
+  LLVM_DEBUG(dbgs() << "      Record is CIE\n");
+
+  auto RecordContent = B.getContent().slice(RecordOffset, RecordLength);
+  BinaryStreamReader RecordReader(
+      StringRef(RecordContent.data(), RecordContent.size()),
+      PC.G.getEndianness());
+
+  // Skip past the CIE delta field: we've already processed this far.
+  RecordReader.setOffset(CIEDeltaFieldOffset + 4);
+
+  auto &CIESymbol =
+      PC.G.addAnonymousSymbol(B, RecordOffset, RecordLength, false, false);
+  CIEInformation CIEInfo(CIESymbol);
+
+  uint8_t Version = 0;
+  if (auto Err = RecordReader.readInteger(Version))
+    return Err;
+
+  if (Version != 0x01)
+    return make_error<JITLinkError>("Bad CIE version " + Twine(Version) +
+                                    " (should be 0x01) in eh-frame");
+
+  auto AugInfo = parseAugmentationString(RecordReader);
+  if (!AugInfo)
+    return AugInfo.takeError();
+
+  // Skip the EH Data field if present.
+  if (AugInfo->EHDataFieldPresent)
+    if (auto Err = RecordReader.skip(PC.G.getPointerSize()))
+      return Err;
+
+  // Read and validate the code alignment factor.
+  {
+    uint64_t CodeAlignmentFactor = 0;
+    if (auto Err = RecordReader.readULEB128(CodeAlignmentFactor))
+      return Err;
+    if (CodeAlignmentFactor != 1)
+      return make_error<JITLinkError>("Unsupported CIE code alignment factor " +
+                                      Twine(CodeAlignmentFactor) +
+                                      " (expected 1)");
+  }
+
+  // Read and validate the data alignment factor.
+  {
+    int64_t DataAlignmentFactor = 0;
+    if (auto Err = RecordReader.readSLEB128(DataAlignmentFactor))
+      return Err;
+    if (DataAlignmentFactor != -8)
+      return make_error<JITLinkError>("Unsupported CIE data alignment factor " +
+                                      Twine(DataAlignmentFactor) +
+                                      " (expected -8)");
+  }
+
+  // Skip the return address register field.
+  if (auto Err = RecordReader.skip(1))
+    return Err;
+
+  if (AugInfo->AugmentationDataPresent) {
+
+    CIEInfo.AugmentationDataPresent = true;
+
+    uint64_t AugmentationDataLength = 0;
+    if (auto Err = RecordReader.readULEB128(AugmentationDataLength))
+      return Err;
+
+    uint32_t AugmentationDataStartOffset = RecordReader.getOffset();
+
+    uint8_t *NextField = &AugInfo->Fields[0];
+    while (uint8_t Field = *NextField++) {
+      switch (Field) {
+      case 'L':
+        CIEInfo.LSDAPresent = true;
+        if (auto PE = readPointerEncoding(RecordReader, B, "LSDA"))
+          CIEInfo.LSDAEncoding = *PE;
+        else
+          return PE.takeError();
+        break;
+      case 'P': {
+        auto PersonalityPointerEncoding =
+            readPointerEncoding(RecordReader, B, "personality");
+        if (!PersonalityPointerEncoding)
+          return PersonalityPointerEncoding.takeError();
+        if (auto Err =
+                getOrCreateEncodedPointerEdge(
+                    PC, BlockEdges, *PersonalityPointerEncoding, RecordReader,
+                    B, RecordOffset + RecordReader.getOffset(), "personality")
+                    .takeError())
+          return Err;
+        break;
+      }
+      case 'R':
+        if (auto PE = readPointerEncoding(RecordReader, B, "address")) {
+          CIEInfo.AddressEncoding = *PE;
+          if (CIEInfo.AddressEncoding == dwarf::DW_EH_PE_omit)
+            return make_error<JITLinkError>(
+                "Invalid address encoding DW_EH_PE_omit in CIE at " +
+                formatv("{0:x}", (B.getAddress() + RecordOffset).getValue()));
+        } else
+          return PE.takeError();
+        break;
+      default:
+        llvm_unreachable("Invalid augmentation string field");
+      }
+    }
+
+    if (RecordReader.getOffset() - AugmentationDataStartOffset >
+        AugmentationDataLength)
+      return make_error<JITLinkError>("Read past the end of the augmentation "
+                                      "data while parsing fields");
+  }
+
+  assert(!PC.CIEInfos.count(CIESymbol.getAddress()) &&
+         "Multiple CIEs recorded at the same address?");
+  PC.CIEInfos[CIESymbol.getAddress()] = std::move(CIEInfo);
+
+  return Error::success();
+}
+
+Error EHFrameEdgeFixer::processFDE(ParseContext &PC, Block &B,
+                                   size_t RecordOffset, size_t RecordLength,
+                                   size_t CIEDeltaFieldOffset,
+                                   uint32_t CIEDelta,
+                                   const BlockEdgeMap &BlockEdges) {
+  LLVM_DEBUG(dbgs() << "      Record is FDE\n");
+
+  orc::ExecutorAddr RecordAddress = B.getAddress() + RecordOffset;
+
+  auto RecordContent = B.getContent().slice(RecordOffset, RecordLength);
+  BinaryStreamReader RecordReader(
+      StringRef(RecordContent.data(), RecordContent.size()),
+      PC.G.getEndianness());
+
+  // Skip past the CIE delta field: we've already read this far.
+  RecordReader.setOffset(CIEDeltaFieldOffset + 4);
+
+  auto &FDESymbol =
+      PC.G.addAnonymousSymbol(B, RecordOffset, RecordLength, false, false);
+
+  CIEInformation *CIEInfo = nullptr;
+
+  {
+    // Process the CIE pointer field.
+    auto CIEEdgeItr = BlockEdges.find(RecordOffset + CIEDeltaFieldOffset);
+    orc::ExecutorAddr CIEAddress =
+        RecordAddress + orc::ExecutorAddrDiff(CIEDeltaFieldOffset) -
+        orc::ExecutorAddrDiff(CIEDelta);
+    if (CIEEdgeItr == BlockEdges.end()) {
+
+      LLVM_DEBUG({
+        dbgs() << "        Adding edge at "
+               << (RecordAddress + CIEDeltaFieldOffset)
+               << " to CIE at: " << CIEAddress << "\n";
+      });
+      if (auto CIEInfoOrErr = PC.findCIEInfo(CIEAddress))
+        CIEInfo = *CIEInfoOrErr;
+      else
+        return CIEInfoOrErr.takeError();
+      assert(CIEInfo->CIESymbol && "CIEInfo has no CIE symbol set");
+      B.addEdge(NegDelta32, RecordOffset + CIEDeltaFieldOffset,
+                *CIEInfo->CIESymbol, 0);
+    } else {
+      LLVM_DEBUG({
+        dbgs() << "        Already has edge at "
+               << (RecordAddress + CIEDeltaFieldOffset) << " to CIE at "
+               << CIEAddress << "\n";
+      });
+      auto &EI = CIEEdgeItr->second;
+      if (EI.Addend)
+        return make_error<JITLinkError>(
+            "CIE edge at " +
+            formatv("{0:x16}", RecordAddress + CIEDeltaFieldOffset) +
+            " has non-zero addend");
+      if (auto CIEInfoOrErr = PC.findCIEInfo(EI.Target->getAddress()))
+        CIEInfo = *CIEInfoOrErr;
+      else
+        return CIEInfoOrErr.takeError();
+    }
+  }
+
+  // Process the PC-Begin field.
+  LLVM_DEBUG({
+    dbgs() << "        Processing PC-begin at "
+           << (RecordAddress + RecordReader.getOffset()) << "\n";
+  });
+  if (auto PCBegin = getOrCreateEncodedPointerEdge(
+          PC, BlockEdges, CIEInfo->AddressEncoding, RecordReader, B,
+          RecordReader.getOffset(), "PC begin")) {
+    assert(*PCBegin && "PC-begin symbol not set");
+    // Add a keep-alive edge from the FDE target to the FDE to ensure that the
+    // FDE is kept alive if its target is.
+    LLVM_DEBUG({
+      dbgs() << "        Adding keep-alive edge from target at "
+             << (*PCBegin)->getBlock().getAddress() << " to FDE at "
+             << RecordAddress << "\n";
+    });
+    (*PCBegin)->getBlock().addEdge(Edge::KeepAlive, 0, FDESymbol, 0);
+  } else
+    return PCBegin.takeError();
+
+  // Skip over the PC range size field.
+  if (auto Err = skipEncodedPointer(CIEInfo->AddressEncoding, RecordReader))
+    return Err;
+
+  if (CIEInfo->AugmentationDataPresent) {
+    uint64_t AugmentationDataSize;
+    if (auto Err = RecordReader.readULEB128(AugmentationDataSize))
+      return Err;
+
+    if (CIEInfo->LSDAPresent)
+      if (auto Err = getOrCreateEncodedPointerEdge(
+                         PC, BlockEdges, CIEInfo->LSDAEncoding, RecordReader, B,
+                         RecordReader.getOffset(), "LSDA")
+                         .takeError())
+        return Err;
+  } else {
+    LLVM_DEBUG(dbgs() << "        Record does not have LSDA field.\n");
+  }
+
+  return Error::success();
+}
+
+Expected<EHFrameEdgeFixer::AugmentationInfo>
+EHFrameEdgeFixer::parseAugmentationString(BinaryStreamReader &RecordReader) {
   AugmentationInfo AugInfo;
   uint8_t NextChar;
   uint8_t *NextField = &AugInfo.Fields[0];
 
-  if (auto Err = EHFrameReader.readInteger(NextChar))
+  if (auto Err = RecordReader.readInteger(NextChar))
     return std::move(Err);
 
   while (NextChar != 0) {
@@ -107,7 +413,7 @@ EHFrameBinaryParser::parseAugmentationString() {
       AugInfo.AugmentationDataPresent = true;
       break;
     case 'e':
-      if (auto Err = EHFrameReader.readInteger(NextChar))
+      if (auto Err = RecordReader.readInteger(NextChar))
         return std::move(Err);
       if (NextChar != 'h')
         return make_error<JITLinkError>("Unrecognized substring e" +
@@ -126,389 +432,226 @@ EHFrameBinaryParser::parseAugmentationString() {
                                       " in augmentation string");
     }
 
-    if (auto Err = EHFrameReader.readInteger(NextChar))
+    if (auto Err = RecordReader.readInteger(NextChar))
       return std::move(Err);
   }
 
   return std::move(AugInfo);
 }
 
-Expected<JITTargetAddress> EHFrameBinaryParser::readAbsolutePointer() {
-  static_assert(sizeof(JITTargetAddress) == sizeof(uint64_t),
-                "Result must be able to hold a uint64_t");
-  JITTargetAddress Addr;
-  if (PointerSize == 8) {
-    if (auto Err = EHFrameReader.readInteger(Addr))
-      return std::move(Err);
-  } else if (PointerSize == 4) {
-    uint32_t Addr32;
-    if (auto Err = EHFrameReader.readInteger(Addr32))
-      return std::move(Err);
-    Addr = Addr32;
-  } else
-    llvm_unreachable("Pointer size is not 32-bit or 64-bit");
-  return Addr;
-}
-
-Error EHFrameBinaryParser::processCIE(size_t RecordOffset,
-                                      size_t RecordLength) {
-  // Use the dwarf namespace for convenient access to pointer encoding
-  // constants.
+Expected<uint8_t> EHFrameEdgeFixer::readPointerEncoding(BinaryStreamReader &R,
+                                                        Block &InBlock,
+                                                        const char *FieldName) {
   using namespace dwarf;
 
-  LLVM_DEBUG(dbgs() << "  Record is CIE\n");
+  uint8_t PointerEncoding;
+  if (auto Err = R.readInteger(PointerEncoding))
+    return std::move(Err);
 
-  auto &CIESymbol =
-      createCIERecord(EHFrameAddress + RecordOffset,
-                      EHFrameContent.substr(RecordOffset, RecordLength));
-
-  CIEInformation CIEInfo(CIESymbol);
-
-  uint8_t Version = 0;
-  if (auto Err = EHFrameReader.readInteger(Version))
-    return Err;
-
-  if (Version != 0x01)
-    return make_error<JITLinkError>("Bad CIE version " + Twine(Version) +
-                                    " (should be 0x01) in eh-frame");
-
-  auto AugInfo = parseAugmentationString();
-  if (!AugInfo)
-    return AugInfo.takeError();
-
-  // Skip the EH Data field if present.
-  if (AugInfo->EHDataFieldPresent)
-    if (auto Err = EHFrameReader.skip(PointerSize))
-      return Err;
-
-  // Read and sanity check the code alignment factor.
-  {
-    uint64_t CodeAlignmentFactor = 0;
-    if (auto Err = EHFrameReader.readULEB128(CodeAlignmentFactor))
-      return Err;
-    if (CodeAlignmentFactor != 1)
-      return make_error<JITLinkError>("Unsupported CIE code alignment factor " +
-                                      Twine(CodeAlignmentFactor) +
-                                      " (expected 1)");
+  bool Supported = true;
+  switch (PointerEncoding & 0xf) {
+  case DW_EH_PE_uleb128:
+  case DW_EH_PE_udata2:
+  case DW_EH_PE_sleb128:
+  case DW_EH_PE_sdata2:
+    Supported = false;
+    break;
   }
-
-  // Read and sanity check the data alignment factor.
-  {
-    int64_t DataAlignmentFactor = 0;
-    if (auto Err = EHFrameReader.readSLEB128(DataAlignmentFactor))
-      return Err;
-    if (DataAlignmentFactor != -8)
-      return make_error<JITLinkError>("Unsupported CIE data alignment factor " +
-                                      Twine(DataAlignmentFactor) +
-                                      " (expected -8)");
-  }
-
-  // Skip the return address register field.
-  if (auto Err = EHFrameReader.skip(1))
-    return Err;
-
-  uint64_t AugmentationDataLength = 0;
-  if (auto Err = EHFrameReader.readULEB128(AugmentationDataLength))
-    return Err;
-
-  uint32_t AugmentationDataStartOffset = EHFrameReader.getOffset();
-
-  uint8_t *NextField = &AugInfo->Fields[0];
-  while (uint8_t Field = *NextField++) {
-    switch (Field) {
-    case 'L': {
-      CIEInfo.FDEsHaveLSDAField = true;
-      uint8_t LSDAPointerEncoding;
-      if (auto Err = EHFrameReader.readInteger(LSDAPointerEncoding))
-        return Err;
-      if (LSDAPointerEncoding != (DW_EH_PE_pcrel | DW_EH_PE_absptr))
-        return make_error<JITLinkError>(
-            "Unsupported LSDA pointer encoding " +
-            formatv("{0:x2}", LSDAPointerEncoding) + " in CIE at " +
-            formatv("{0:x16}", CIESymbol.getAddress()));
+  if (Supported) {
+    switch (PointerEncoding & 0x70) {
+    case DW_EH_PE_textrel:
+    case DW_EH_PE_datarel:
+    case DW_EH_PE_funcrel:
+    case DW_EH_PE_aligned:
+      Supported = false;
       break;
-    }
-    case 'P': {
-      uint8_t PersonalityPointerEncoding = 0;
-      if (auto Err = EHFrameReader.readInteger(PersonalityPointerEncoding))
-        return Err;
-      if (PersonalityPointerEncoding !=
-          (DW_EH_PE_indirect | DW_EH_PE_pcrel | DW_EH_PE_sdata4))
-        return make_error<JITLinkError>(
-            "Unspported personality pointer "
-            "encoding " +
-            formatv("{0:x2}", PersonalityPointerEncoding) + " in CIE at " +
-            formatv("{0:x16}", CIESymbol.getAddress()));
-      uint32_t PersonalityPointerAddress;
-      if (auto Err = EHFrameReader.readInteger(PersonalityPointerAddress))
-        return Err;
-      break;
-    }
-    case 'R': {
-      uint8_t FDEPointerEncoding;
-      if (auto Err = EHFrameReader.readInteger(FDEPointerEncoding))
-        return Err;
-      if (FDEPointerEncoding != (DW_EH_PE_pcrel | DW_EH_PE_absptr))
-        return make_error<JITLinkError>(
-            "Unsupported FDE address pointer "
-            "encoding " +
-            formatv("{0:x2}", FDEPointerEncoding) + " in CIE at " +
-            formatv("{0:x16}", CIESymbol.getAddress()));
-      break;
-    }
-    default:
-      llvm_unreachable("Invalid augmentation string field");
     }
   }
 
-  if (EHFrameReader.getOffset() - AugmentationDataStartOffset >
-      AugmentationDataLength)
-    return make_error<JITLinkError>("Read past the end of the augmentation "
-                                    "data while parsing fields");
+  if (Supported)
+    return PointerEncoding;
 
-  assert(!CIEInfos.count(CIESymbol.getAddress()) &&
-         "Multiple CIEs recorded at the same address?");
-  CIEInfos[CIESymbol.getAddress()] = std::move(CIEInfo);
+  return make_error<JITLinkError>("Unsupported pointer encoding " +
+                                  formatv("{0:x2}", PointerEncoding) + " for " +
+                                  FieldName + "in CFI record at " +
+                                  formatv("{0:x16}", InBlock.getAddress()));
+}
 
+Error EHFrameEdgeFixer::skipEncodedPointer(uint8_t PointerEncoding,
+                                           BinaryStreamReader &RecordReader) {
+  using namespace dwarf;
+
+  // Switch absptr to corresponding udata encoding.
+  if ((PointerEncoding & 0xf) == DW_EH_PE_absptr)
+    PointerEncoding |= (PointerSize == 8) ? DW_EH_PE_udata8 : DW_EH_PE_udata4;
+
+  switch (PointerEncoding & 0xf) {
+  case DW_EH_PE_udata4:
+  case DW_EH_PE_sdata4:
+    if (auto Err = RecordReader.skip(4))
+      return Err;
+    break;
+  case DW_EH_PE_udata8:
+  case DW_EH_PE_sdata8:
+    if (auto Err = RecordReader.skip(8))
+      return Err;
+    break;
+  default:
+    llvm_unreachable("Unrecognized encoding");
+  }
   return Error::success();
 }
 
-Error EHFrameBinaryParser::processFDE(size_t RecordOffset, size_t RecordLength,
-                                      JITTargetAddress CIEPointerAddress,
-                                      uint32_t CIEPointer) {
-  LLVM_DEBUG(dbgs() << "  Record is FDE\n");
+Expected<Symbol *> EHFrameEdgeFixer::getOrCreateEncodedPointerEdge(
+    ParseContext &PC, const BlockEdgeMap &BlockEdges, uint8_t PointerEncoding,
+    BinaryStreamReader &RecordReader, Block &BlockToFix,
+    size_t PointerFieldOffset, const char *FieldName) {
+  using namespace dwarf;
+
+  if (PointerEncoding == DW_EH_PE_omit)
+    return nullptr;
+
+  // If there's already an edge here then just skip the encoded pointer and
+  // return the edge's target.
+  {
+    auto EdgeI = BlockEdges.find(PointerFieldOffset);
+    if (EdgeI != BlockEdges.end()) {
+      LLVM_DEBUG({
+        dbgs() << "        Existing edge at "
+               << (BlockToFix.getAddress() + PointerFieldOffset) << " to "
+               << FieldName << " at " << EdgeI->second.Target->getAddress();
+        if (EdgeI->second.Target->hasName())
+          dbgs() << " (" << EdgeI->second.Target->getName() << ")";
+        dbgs() << "\n";
+      });
+      if (auto Err = skipEncodedPointer(PointerEncoding, RecordReader))
+        return std::move(Err);
+      return EdgeI->second.Target;
+    }
+  }
+
+  // Switch absptr to corresponding udata encoding.
+  if ((PointerEncoding & 0xf) == DW_EH_PE_absptr)
+    PointerEncoding |= (PointerSize == 8) ? DW_EH_PE_udata8 : DW_EH_PE_udata4;
+
+  // We need to create an edge. Start by reading the field value.
+  uint64_t FieldValue;
+  bool Is64Bit = false;
+  switch (PointerEncoding & 0xf) {
+  case DW_EH_PE_udata4: {
+    uint32_t Val;
+    if (auto Err = RecordReader.readInteger(Val))
+      return std::move(Err);
+    FieldValue = Val;
+    break;
+  }
+  case DW_EH_PE_sdata4: {
+    uint32_t Val;
+    if (auto Err = RecordReader.readInteger(Val))
+      return std::move(Err);
+    FieldValue = Val;
+    break;
+  }
+  case DW_EH_PE_udata8:
+  case DW_EH_PE_sdata8:
+    Is64Bit = true;
+    if (auto Err = RecordReader.readInteger(FieldValue))
+      return std::move(Err);
+    break;
+  default:
+    llvm_unreachable("Unsupported encoding");
+  }
+
+  // Find the edge target and edge kind to use.
+  orc::ExecutorAddr Target;
+  Edge::Kind PtrEdgeKind = Edge::Invalid;
+  if ((PointerEncoding & 0x70) == DW_EH_PE_pcrel) {
+    Target = BlockToFix.getAddress() + PointerFieldOffset;
+    PtrEdgeKind = Is64Bit ? Delta64 : Delta32;
+  } else
+    PtrEdgeKind = Is64Bit ? Pointer64 : Pointer32;
+  Target += FieldValue;
+
+  // Find or create a symbol to point the edge at.
+  auto TargetSym = getOrCreateSymbol(PC, Target);
+  if (!TargetSym)
+    return TargetSym.takeError();
+  BlockToFix.addEdge(PtrEdgeKind, PointerFieldOffset, *TargetSym, 0);
 
   LLVM_DEBUG({
-    dbgs() << "  CIE pointer: "
-           << format("0x%016" PRIx64, CIEPointerAddress - CIEPointer) << "\n";
+    dbgs() << "        Adding edge at "
+           << (BlockToFix.getAddress() + PointerFieldOffset) << " to "
+           << FieldName << " at " << TargetSym->getAddress();
+    if (TargetSym->hasName())
+      dbgs() << " (" << TargetSym->getName() << ")";
+    dbgs() << "\n";
   });
 
-  auto CIEInfoItr = CIEInfos.find(CIEPointerAddress - CIEPointer);
-  if (CIEInfoItr == CIEInfos.end())
-    return make_error<JITLinkError>(
-        "FDE at " + formatv("{0:x16}", EHFrameAddress + RecordOffset) +
-        " points to non-existant CIE at " +
-        formatv("{0:x16}", CIEPointerAddress - CIEPointer));
-  auto &CIEInfo = CIEInfoItr->second;
+  return &*TargetSym;
+}
 
-  // Read and sanity check the PC-start pointer and size.
-  JITTargetAddress PCBeginAddress = EHFrameAddress + EHFrameReader.getOffset();
+Expected<Symbol &> EHFrameEdgeFixer::getOrCreateSymbol(ParseContext &PC,
+                                                       orc::ExecutorAddr Addr) {
+  // See whether we have a canonical symbol for the given address already.
+  auto CanonicalSymI = PC.AddrToSym.find(Addr);
+  if (CanonicalSymI != PC.AddrToSym.end())
+    return *CanonicalSymI->second;
 
-  auto PCBeginDelta = readAbsolutePointer();
-  if (!PCBeginDelta)
-    return PCBeginDelta.takeError();
+  // Otherwise search for a block covering the address and create a new symbol.
+  auto *B = PC.AddrToBlock.getBlockCovering(Addr);
+  if (!B)
+    return make_error<JITLinkError>("No symbol or block covering address " +
+                                    formatv("{0:x16}", Addr));
 
-  JITTargetAddress PCBegin = PCBeginAddress + *PCBeginDelta;
+  auto &S =
+      PC.G.addAnonymousSymbol(*B, Addr - B->getAddress(), 0, false, false);
+  PC.AddrToSym[S.getAddress()] = &S;
+  return S;
+}
+
+char EHFrameNullTerminator::NullTerminatorBlockContent[4] = {0, 0, 0, 0};
+
+EHFrameNullTerminator::EHFrameNullTerminator(StringRef EHFrameSectionName)
+    : EHFrameSectionName(EHFrameSectionName) {}
+
+Error EHFrameNullTerminator::operator()(LinkGraph &G) {
+  auto *EHFrame = G.findSectionByName(EHFrameSectionName);
+
+  if (!EHFrame)
+    return Error::success();
+
   LLVM_DEBUG({
-    dbgs() << "    PC begin: " << format("0x%016" PRIx64, PCBegin) << "\n";
+    dbgs() << "EHFrameNullTerminator adding null terminator to "
+           << EHFrameSectionName << "\n";
   });
 
-  auto *TargetSymbol = getSymbolAtAddress(PCBegin);
-
-  if (!TargetSymbol)
-    return make_error<JITLinkError>("FDE PC-begin " +
-                                    formatv("{0:x16}", PCBegin) +
-                                    " does not point at symbol");
-
-  if (TargetSymbol->getAddress() != PCBegin)
-    return make_error<JITLinkError>(
-        "FDE PC-begin " + formatv("{0:x16}", PCBegin) +
-        " does not point to start of symbol at " +
-        formatv("{0:x16}", TargetSymbol->getAddress()));
-
-  LLVM_DEBUG(dbgs() << "  FDE target: " << *TargetSymbol << "\n");
-
-  // Skip over the PC range size field.
-  if (auto Err = EHFrameReader.skip(PointerSize))
-    return Err;
-
-  Symbol *LSDASymbol = nullptr;
-  JITTargetAddress LSDAAddress = 0;
-  if (CIEInfo.FDEsHaveLSDAField) {
-    uint64_t AugmentationDataSize;
-    if (auto Err = EHFrameReader.readULEB128(AugmentationDataSize))
-      return Err;
-    if (AugmentationDataSize != PointerSize)
-      return make_error<JITLinkError>(
-          "Unexpected FDE augmentation data size (expected " +
-          Twine(PointerSize) + ", got " + Twine(AugmentationDataSize) +
-          ") for FDE at " + formatv("{0:x16}", EHFrameAddress + RecordOffset));
-    LSDAAddress = EHFrameAddress + EHFrameReader.getOffset();
-    auto LSDADelta = readAbsolutePointer();
-    if (!LSDADelta)
-      return LSDADelta.takeError();
-
-    JITTargetAddress LSDA = LSDAAddress + *LSDADelta;
-
-    LSDASymbol = getSymbolAtAddress(LSDA);
-
-    if (!LSDASymbol)
-      return make_error<JITLinkError>("FDE LSDA " + formatv("{0:x16}", LSDA) +
-                                      " does not point at symbol");
-
-    if (LSDASymbol->getAddress() != LSDA)
-      return make_error<JITLinkError>(
-          "FDE LSDA " + formatv("{0:x16}", LSDA) +
-          " does not point to start of symbol at " +
-          formatv("{0:x16}", LSDASymbol->getAddress()));
-
-    LLVM_DEBUG(dbgs() << "  FDE LSDA: " << *LSDASymbol << "\n");
-  }
-
-  JITTargetAddress RecordAddress = EHFrameAddress + RecordOffset;
-  auto FDESymbol = createFDERecord(
-      RecordAddress, EHFrameContent.substr(RecordOffset, RecordLength),
-      *CIEInfo.CIESymbol, CIEPointerAddress - RecordAddress, *TargetSymbol,
-      PCBeginAddress - RecordAddress, LSDASymbol, LSDAAddress - RecordAddress);
-
-  return FDESymbol.takeError();
-}
-
-// Determine whether we can register EH tables.
-#if (defined(__GNUC__) && !defined(__ARM_EABI__) && !defined(__ia64__) &&      \
-     !(defined(_AIX) && defined(__ibmxl__)) && !defined(__SEH__) &&            \
-     !defined(__USING_SJLJ_EXCEPTIONS__))
-#define HAVE_EHTABLE_SUPPORT 1
-#else
-#define HAVE_EHTABLE_SUPPORT 0
-#endif
-
-#if HAVE_EHTABLE_SUPPORT
-extern "C" void __register_frame(const void *);
-extern "C" void __deregister_frame(const void *);
-
-Error registerFrameWrapper(const void *P) {
-  __register_frame(P);
+  auto &NullTerminatorBlock =
+      G.createContentBlock(*EHFrame, NullTerminatorBlockContent,
+                           orc::ExecutorAddr(~uint64_t(4)), 1, 0);
+  G.addAnonymousSymbol(NullTerminatorBlock, 0, 4, false, true);
   return Error::success();
 }
 
-Error deregisterFrameWrapper(const void *P) {
-  __deregister_frame(P);
-  return Error::success();
+EHFrameRegistrar::~EHFrameRegistrar() = default;
+
+Error InProcessEHFrameRegistrar::registerEHFrames(
+    orc::ExecutorAddrRange EHFrameSection) {
+  return orc::registerEHFrameSection(EHFrameSection.Start.toPtr<void *>(),
+                                     EHFrameSection.size());
 }
 
-#else
-
-// The building compiler does not have __(de)register_frame but
-// it may be found at runtime in a dynamically-loaded library.
-// For example, this happens when building LLVM with Visual C++
-// but using the MingW runtime.
-static Error registerFrameWrapper(const void *P) {
-  static void((*RegisterFrame)(const void *)) = 0;
-
-  if (!RegisterFrame)
-    *(void **)&RegisterFrame =
-        llvm::sys::DynamicLibrary::SearchForAddressOfSymbol("__register_frame");
-
-  if (RegisterFrame) {
-    RegisterFrame(P);
-    return Error::success();
-  }
-
-  return make_error<JITLinkError>("could not register eh-frame: "
-                                  "__register_frame function not found");
+Error InProcessEHFrameRegistrar::deregisterEHFrames(
+    orc::ExecutorAddrRange EHFrameSection) {
+  return orc::deregisterEHFrameSection(EHFrameSection.Start.toPtr<void *>(),
+                                       EHFrameSection.size());
 }
-
-static Error deregisterFrameWrapper(const void *P) {
-  static void((*DeregisterFrame)(const void *)) = 0;
-
-  if (!DeregisterFrame)
-    *(void **)&DeregisterFrame =
-        llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(
-            "__deregister_frame");
-
-  if (DeregisterFrame) {
-    DeregisterFrame(P);
-    return Error::success();
-  }
-
-  return make_error<JITLinkError>("could not deregister eh-frame: "
-                                  "__deregister_frame function not found");
-}
-#endif
-
-#ifdef __APPLE__
-
-template <typename HandleFDEFn>
-Error walkAppleEHFrameSection(const char *const SectionStart,
-                              size_t SectionSize,
-                              HandleFDEFn HandleFDE) {
-  const char *CurCFIRecord = SectionStart;
-  const char *End = SectionStart + SectionSize;
-  uint64_t Size = *reinterpret_cast<const uint32_t *>(CurCFIRecord);
-
-  while (CurCFIRecord != End && Size != 0) {
-    const char *OffsetField = CurCFIRecord + (Size == 0xffffffff ? 12 : 4);
-    if (Size == 0xffffffff)
-      Size = *reinterpret_cast<const uint64_t *>(CurCFIRecord + 4) + 12;
-    else
-      Size += 4;
-    uint32_t Offset = *reinterpret_cast<const uint32_t *>(OffsetField);
-    if (Offset != 0)
-      if (auto Err = HandleFDE(CurCFIRecord))
-        return Err;
-
-    LLVM_DEBUG({
-      dbgs() << "Registering eh-frame section:\n";
-      dbgs() << "Processing " << (Offset ? "FDE" : "CIE") << " @"
-             << (void *)CurCFIRecord << ": [";
-      for (unsigned I = 0; I < Size; ++I)
-        dbgs() << format(" 0x%02" PRIx8, *(CurCFIRecord + I));
-      dbgs() << " ]\n";
-    });
-    CurCFIRecord += Size;
-
-    Size = *reinterpret_cast<const uint32_t *>(CurCFIRecord);
-  }
-
-  return Error::success();
-}
-
-#endif // __APPLE__
-
-Error registerEHFrameSection(const void *EHFrameSectionAddr,
-                             size_t EHFrameSectionSize) {
-#ifdef __APPLE__
-  // On Darwin __register_frame has to be called for each FDE entry.
-  return walkAppleEHFrameSection(static_cast<const char *>(EHFrameSectionAddr),
-                                 EHFrameSectionSize,
-                                 registerFrameWrapper);
-#else
-  // On Linux __register_frame takes a single argument:
-  // a pointer to the start of the .eh_frame section.
-
-  // How can it find the end? Because crtendS.o is linked
-  // in and it has an .eh_frame section with four zero chars.
-  return registerFrameWrapper(EHFrameSectionAddr);
-#endif
-}
-
-Error deregisterEHFrameSection(const void *EHFrameSectionAddr,
-                               size_t EHFrameSectionSize) {
-#ifdef __APPLE__
-  return walkAppleEHFrameSection(static_cast<const char *>(EHFrameSectionAddr),
-                                 EHFrameSectionSize,
-                                 deregisterFrameWrapper);
-#else
-  return deregisterFrameWrapper(EHFrameSectionAddr);
-#endif
-}
-
-EHFrameRegistrar::~EHFrameRegistrar() {}
-
-InProcessEHFrameRegistrar &InProcessEHFrameRegistrar::getInstance() {
-  static InProcessEHFrameRegistrar Instance;
-  return Instance;
-}
-
-InProcessEHFrameRegistrar::InProcessEHFrameRegistrar() {}
 
 LinkGraphPassFunction
 createEHFrameRecorderPass(const Triple &TT,
                           StoreFrameRangeFunction StoreRangeAddress) {
   const char *EHFrameSectionName = nullptr;
   if (TT.getObjectFormat() == Triple::MachO)
-    EHFrameSectionName = "__eh_frame";
+    EHFrameSectionName = "__TEXT,__eh_frame";
   else
     EHFrameSectionName = ".eh_frame";
 
@@ -517,16 +660,17 @@ createEHFrameRecorderPass(const Triple &TT,
        StoreFrameRange = std::move(StoreRangeAddress)](LinkGraph &G) -> Error {
     // Search for a non-empty eh-frame and record the address of the first
     // symbol in it.
-    JITTargetAddress Addr = 0;
+    orc::ExecutorAddr Addr;
     size_t Size = 0;
     if (auto *S = G.findSectionByName(EHFrameSectionName)) {
       auto R = SectionRange(*S);
       Addr = R.getStart();
       Size = R.getSize();
     }
-    if (Addr == 0 && Size != 0)
-      return make_error<JITLinkError>("__eh_frame section can not have zero "
-                                      "address with non-zero size");
+    if (!Addr && Size != 0)
+      return make_error<JITLinkError>(
+          StringRef(EHFrameSectionName) +
+          " section can not have zero address with non-zero size");
     StoreFrameRange(Addr, Size);
     return Error::success();
   };

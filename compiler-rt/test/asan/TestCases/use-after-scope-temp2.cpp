@@ -1,9 +1,8 @@
-// RUN: %clangxx_asan %stdcxx11 -O1 -fsanitize-address-use-after-scope %s -o %t && \
+// RUN: %clangxx_asan -O1 -fsanitize-address-use-after-scope %s -o %t && \
 // RUN:     not %run %t 2>&1 | FileCheck %s
 
-
 struct IntHolder {
-  const IntHolder& Self() const {
+  __attribute__((noinline)) const IntHolder &Self() const {
     return *this;
   }
   int val = 3;

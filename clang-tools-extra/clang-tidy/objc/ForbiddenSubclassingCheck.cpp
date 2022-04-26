@@ -7,11 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "ForbiddenSubclassingCheck.h"
+#include "../utils/OptionsUtils.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
-#include "../utils/OptionsUtils.h"
 
 using namespace clang::ast_matchers;
 
@@ -49,10 +49,6 @@ ForbiddenSubclassingCheck::ForbiddenSubclassingCheck(
 }
 
 void ForbiddenSubclassingCheck::registerMatchers(MatchFinder *Finder) {
-  // this check should only be applied to ObjC sources.
-  if (!getLangOpts().ObjC)
-    return;
-
   Finder->addMatcher(
       objcInterfaceDecl(
           isDerivedFrom(

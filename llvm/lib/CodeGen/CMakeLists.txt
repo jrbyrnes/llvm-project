@@ -1,4 +1,31 @@
-add_llvm_library(LLVMCodeGen
+if (DEFINED LLVM_HAVE_TF_AOT OR DEFINED LLVM_HAVE_TF_API)
+  include(TensorFlowCompile)
+  set(LLVM_RAEVICT_MODEL_PATH_DEFAULT "models/regalloc-eviction")
+
+  # This url points to the most recent most which is known to be compatible with
+  # LLVM. When better models are published, this url should be updated to aid
+  # discoverability.
+  set(LLVM_RAEVICT_MODEL_CURRENT_URL "https://github.com/google/ml-compiler-opt/releases/download/regalloc-evict-v1.0/regalloc-evict-e67430c-v1.0.tar.gz")
+
+  if (DEFINED LLVM_HAVE_TF_AOT)
+    tf_find_and_compile(
+      ${LLVM_RAEVICT_MODEL_PATH}
+      ${LLVM_RAEVICT_MODEL_CURRENT_URL}
+      ${LLVM_RAEVICT_MODEL_PATH_DEFAULT}
+      "../Analysis/models/gen-regalloc-eviction-test-model.py"
+      serve
+      action
+      RegallocEvictModel
+      llvm::RegallocEvictModel
+    )
+  endif()
+
+  if (DEFINED LLVM_HAVE_TF_API)
+    list(APPEND MLLinkDeps ${tensorflow_c_api} ${tensorflow_fx})
+  endif()
+endif()
+
+add_llvm_component_library(LLVMCodeGen
   AggressiveAntiDepBreaker.cpp
   AllocationOrder.cpp
   Analysis.cpp
@@ -7,12 +34,17 @@ add_llvm_library(LLVMCodeGen
   BranchFolding.cpp
   BranchRelaxation.cpp
   BreakFalseDeps.cpp
-  BuiltinGCs.cpp
+  BasicBlockSections.cpp
   CalcSpillWeights.cpp
   CallingConvLower.cpp
+  CFGuardLongjmp.cpp
+  CFIFixup.cpp
   CFIInstrInserter.cpp
   CodeGen.cpp
+  CodeGenCommonISel.cpp
+  CodeGenPassBuilder.cpp
   CodeGenPrepare.cpp
+  CommandFlags.cpp
   CriticalAntiDepBreaker.cpp
   DeadMachineInstructionElim.cpp
   DetectDeadLanes.cpp
@@ -20,18 +52,20 @@ add_llvm_library(LLVMCodeGen
   DwarfEHPrepare.cpp
   EarlyIfConversion.cpp
   EdgeBundles.cpp
+  EHContGuardCatchret.cpp
   ExecutionDomainFix.cpp
   ExpandMemCmp.cpp
   ExpandPostRAPseudos.cpp
   ExpandReductions.cpp
+  ExpandVectorPredication.cpp
   FaultMaps.cpp
   FEntryInserter.cpp
   FinalizeISel.cpp
+  FixupStatepointCallerSaved.cpp
   FuncletLayout.cpp
   GCMetadata.cpp
   GCMetadataPrinter.cpp
   GCRootLowering.cpp
-  GCStrategy.cpp
   GlobalMerge.cpp
   HardwareLoops.cpp
   IfConversion.cpp
@@ -42,16 +76,17 @@ add_llvm_library(LLVMCodeGen
   InterleavedAccessPass.cpp
   InterleavedLoadCombinePass.cpp
   IntrinsicLowering.cpp
+  JMCInstrumenter.cpp
   LatencyPriorityQueue.cpp
   LazyMachineBlockFrequencyInfo.cpp
   LexicalScopes.cpp
-  LiveDebugValues.cpp
   LiveDebugVariables.cpp
   LiveIntervals.cpp
   LiveInterval.cpp
   LiveIntervalUnion.cpp
   LivePhysRegs.cpp
   LiveRangeCalc.cpp
+  LiveIntervalCalc.cpp
   LiveRangeEdit.cpp
   LiveRangeShrink.cpp
   LiveRegMatrix.cpp
@@ -70,12 +105,16 @@ add_llvm_library(LLVMCodeGen
   MachineCombiner.cpp
   MachineCopyPropagation.cpp
   MachineCSE.cpp
+  MachineCheckDebugify.cpp
+  MachineCycleAnalysis.cpp
+  MachineDebugify.cpp
   MachineDominanceFrontier.cpp
   MachineDominators.cpp
   MachineFrameInfo.cpp
   MachineFunction.cpp
   MachineFunctionPass.cpp
   MachineFunctionPrinterPass.cpp
+  MachineFunctionSplitter.cpp
   MachineInstrBundle.cpp
   MachineInstr.cpp
   MachineLICM.cpp
@@ -83,23 +122,35 @@ add_llvm_library(LLVMCodeGen
   MachineLoopUtils.cpp
   MachineModuleInfo.cpp
   MachineModuleInfoImpls.cpp
+  MachineModuleSlotTracker.cpp
   MachineOperand.cpp
   MachineOptimizationRemarkEmitter.cpp
   MachineOutliner.cpp
+  MachinePassManager.cpp
   MachinePipeliner.cpp
   MachinePostDominators.cpp
   MachineRegionInfo.cpp
   MachineRegisterInfo.cpp
   MachineScheduler.cpp
   MachineSink.cpp
+  MachineSizeOpts.cpp
+  MachineSSAContext.cpp
   MachineSSAUpdater.cpp
+  MachineStripDebug.cpp
   MachineTraceMetrics.cpp
   MachineVerifier.cpp
+  MIRFSDiscriminator.cpp
+  MIRSampleProfile.cpp
+  MIRYamlMapping.cpp
+  MLRegallocEvictAdvisor.cpp
   ModuloSchedule.cpp
+  MultiHazardRecognizer.cpp
   PatchableFunction.cpp
+  MBFIWrapper.cpp
   MIRPrinter.cpp
   MIRPrintingPass.cpp
   MacroFusion.cpp
+  NonRelocatableStringpool.cpp
   OptimizePHIs.cpp
   ParallelCG.cpp
   PeepholeOptimizer.cpp
@@ -110,29 +161,38 @@ add_llvm_library(LLVMCodeGen
   PreISelIntrinsicLowering.cpp
   ProcessImplicitDefs.cpp
   PrologEpilogInserter.cpp
+  PseudoProbeInserter.cpp
   PseudoSourceValue.cpp
+  RDFGraph.cpp
+  RDFLiveness.cpp
+  RDFRegisters.cpp
   ReachingDefAnalysis.cpp
   RegAllocBase.cpp
   RegAllocBasic.cpp
+  RegAllocEvictionAdvisor.cpp
   RegAllocFast.cpp
   RegAllocGreedy.cpp
   RegAllocPBQP.cpp
+  RegAllocScore.cpp
   RegisterClassInfo.cpp
   RegisterCoalescer.cpp
   RegisterPressure.cpp
   RegisterScavenging.cpp
+  RemoveRedundantDebugValues.cpp
   RenameIndependentSubregs.cpp
+  MachineStableHash.cpp
   MIRVRegNamerUtils.cpp
   MIRNamerPass.cpp
   MIRCanonicalizerPass.cpp
   RegisterUsageInfo.cpp
   RegUsageInfoCollector.cpp
   RegUsageInfoPropagate.cpp
+  ReplaceWithVeclib.cpp
   ResetMachineFunctionPass.cpp
+  RegisterBank.cpp
+  RegisterBankInfo.cpp
   SafeStack.cpp
-  SafeStackColoring.cpp
   SafeStackLayout.cpp
-  ScalarizeMaskedMemIntrin.cpp
   ScheduleDAG.cpp
   ScheduleDAGInstrs.cpp
   ScheduleDAGPrinter.cpp
@@ -161,22 +221,42 @@ add_llvm_library(LLVMCodeGen
   TargetRegisterInfo.cpp
   TargetSchedule.cpp
   TargetSubtargetInfo.cpp
+  TypePromotion.cpp
   TwoAddressInstructionPass.cpp
   UnreachableBlockElim.cpp
   ValueTypes.cpp
+  VLIWMachineScheduler.cpp
   VirtRegMap.cpp
   WasmEHPrepare.cpp
   WinEHPrepare.cpp
   XRayInstrumentation.cpp
+  ${GeneratedMLSources}
+
+  LiveDebugValues/LiveDebugValues.cpp
+  LiveDebugValues/VarLocBasedImpl.cpp
+  LiveDebugValues/InstrRefBasedImpl.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/CodeGen
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/CodeGen/PBQP
 
-  LINK_LIBS ${LLVM_PTHREAD_LIB}
+  LINK_LIBS ${LLVM_PTHREAD_LIB} ${MLLinkDeps}
 
   DEPENDS
   intrinsics_gen
+  ${MLDeps}
+
+  LINK_COMPONENTS
+  Analysis
+  BitReader
+  BitWriter
+  Core
+  MC
+  ProfileData
+  Scalar
+  Support
+  Target
+  TransformUtils
   )
 
 add_subdirectory(SelectionDAG)

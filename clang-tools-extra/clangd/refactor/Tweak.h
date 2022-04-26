@@ -16,23 +16,24 @@
 //     It is performed when the user actually chooses the action.
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_REFACTOR_ACTIONS_TWEAK_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_REFACTOR_ACTIONS_TWEAK_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_REFACTOR_TWEAK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_REFACTOR_TWEAK_H
 
 #include "ParsedAST.h"
-#include "Path.h"
-#include "Protocol.h"
 #include "Selection.h"
 #include "SourceCode.h"
+#include "index/Index.h"
+#include "support/Path.h"
 #include "clang/Tooling/Core/Replacement.h"
 #include "llvm/ADT/Optional.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include <string>
 
 namespace clang {
 namespace clangd {
+
+class FeatureModuleSet;
 
 /// An interface base for small context-sensitive refactoring actions.
 /// To implement a new tweak use the following pattern in a .cpp file:
@@ -46,11 +47,15 @@ class Tweak {
 public:
   /// Input to prepare and apply tweaks.
   struct Selection {
-    Selection(ParsedAST &AST, unsigned RangeBegin, unsigned RangeEnd);
+    Selection(const SymbolIndex *Index, ParsedAST &AST, unsigned RangeBegin,
+              unsigned RangeEnd, SelectionTree ASTSelection,
+              llvm::vfs::FileSystem *VFS);
     /// The text of the active document.
     llvm::StringRef Code;
-    /// Parsed AST of the active file.
-    ParsedAST &AST;
+    /// The Index for handling codebase related queries.
+    const SymbolIndex *Index = nullptr;
+    /// The parsed active file. Never null. (Pointer so Selection is movable).
+    ParsedAST *AST;
     /// A location of the cursor in the editor.
     // FIXME: Cursor is redundant and should be removed
     SourceLocation Cursor;
@@ -60,26 +65,23 @@ public:
     unsigned SelectionEnd;
     /// The AST nodes that were selected.
     SelectionTree ASTSelection;
+    /// File system used to access source code (for cross-file tweaks).
+    /// This is only populated when applying a tweak, not during prepare.
+    llvm::vfs::FileSystem *FS = nullptr;
     // FIXME: provide a way to get sources and ASTs for other files.
   };
 
-  /// Output of a tweak.
-  enum Intent {
-    /// Apply changes that preserve the behavior of the code.
-    Refactor,
-    /// Provide information to the user.
-    Info,
-  };
   struct Effect {
     /// A message to be displayed to the user.
     llvm::Optional<std::string> ShowMessage;
-    /// A mapping from file path(the one used for accessing the underlying VFS)
-    /// to edits.
-    llvm::StringMap<Edit> ApplyEdits;
+    FileEdits ApplyEdits;
+    /// Whether the edits should be formatted before presenting to the client.
+    /// Note that it applies to all files.
+    bool FormatEdits = true;
 
     static Effect showMessage(StringRef S) {
       Effect E;
-      E.ShowMessage = S;
+      E.ShowMessage = std::string(S);
       return E;
     }
 
@@ -118,7 +120,7 @@ public:
   virtual std::string title() const = 0;
   /// Describes what kind of action this is.
   /// EXPECTS: prepare() was called and returned true.
-  virtual Intent intent() const = 0;
+  virtual llvm::StringLiteral kind() const = 0;
   /// Is this a 'hidden' tweak, which are off by default.
   virtual bool hidden() const { return false; }
 };
@@ -133,13 +135,15 @@ public:
 /// can run on the selection.
 std::vector<std::unique_ptr<Tweak>>
 prepareTweaks(const Tweak::Selection &S,
-              llvm::function_ref<bool(const Tweak &)> Filter);
+              llvm::function_ref<bool(const Tweak &)> Filter,
+              const FeatureModuleSet *Modules);
 
 // Calls prepare() on the tweak with a given ID.
 // If prepare() returns false, returns an error.
 // If prepare() returns true, returns the corresponding tweak.
-llvm::Expected<std::unique_ptr<Tweak>> prepareTweak(StringRef TweakID,
-                                                    const Tweak::Selection &S);
+llvm::Expected<std::unique_ptr<Tweak>>
+prepareTweak(StringRef ID, const Tweak::Selection &S,
+             const FeatureModuleSet *Modules);
 } // namespace clangd
 } // namespace clang
 

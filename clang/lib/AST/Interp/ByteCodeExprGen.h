@@ -21,14 +21,13 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/StmtVisitor.h"
+#include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/Optional.h"
 
 namespace clang {
 class QualType;
 
 namespace interp {
-class Function;
-class State;
 
 template <class Emitter> class LocalScope;
 template <class Emitter> class RecordScope;

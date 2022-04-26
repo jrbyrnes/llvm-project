@@ -1,4 +1,4 @@
-//===-- SymbolVendorELF.cpp ----------------------------------*- C++ -*-===//
+//===-- SymbolVendorELF.cpp -----------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -8,7 +8,7 @@
 
 #include "SymbolVendorELF.h"
 
-#include <string.h>
+#include <cstring>
 
 #include "Plugins/ObjectFile/ELF/ObjectFileELF.h"
 #include "lldb/Core/Module.h"
@@ -25,12 +25,11 @@
 using namespace lldb;
 using namespace lldb_private;
 
+LLDB_PLUGIN_DEFINE(SymbolVendorELF)
+
 // SymbolVendorELF constructor
 SymbolVendorELF::SymbolVendorELF(const lldb::ModuleSP &module_sp)
     : SymbolVendor(module_sp) {}
-
-// Destructor
-SymbolVendorELF::~SymbolVendorELF() {}
 
 void SymbolVendorELF::Initialize() {
   PluginManager::RegisterPlugin(GetPluginNameStatic(),
@@ -41,12 +40,7 @@ void SymbolVendorELF::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
 }
 
-lldb_private::ConstString SymbolVendorELF::GetPluginNameStatic() {
-  static ConstString g_name("ELF");
-  return g_name;
-}
-
-const char *SymbolVendorELF::GetPluginDescriptionStatic() {
+llvm::StringRef SymbolVendorELF::GetPluginDescriptionStatic() {
   return "Symbol vendor for ELF that looks for dSYM files that match "
          "executables.";
 }
@@ -82,8 +76,7 @@ SymbolVendorELF::CreateInstance(const lldb::ModuleSP &module_sp,
   if (!fspec)
     fspec = obj_file->GetDebugLink().getValueOr(FileSpec());
 
-  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
-  Timer scoped_timer(func_cat, "SymbolVendorELF::CreateInstance (module = %s)",
+  LLDB_SCOPED_TIMERF("SymbolVendorELF::CreateInstance (module = %s)",
                      module_sp->GetFileSpec().GetPath().c_str());
 
   ModuleSpec module_spec;
@@ -119,14 +112,17 @@ SymbolVendorELF::CreateInstance(const lldb::ModuleSP &module_sp,
   SectionList *objfile_section_list = dsym_objfile_sp->GetSectionList();
 
   static const SectionType g_sections[] = {
-      eSectionTypeDWARFDebugAbbrev,   eSectionTypeDWARFDebugAddr,
-      eSectionTypeDWARFDebugAranges,  eSectionTypeDWARFDebugCuIndex,
-      eSectionTypeDWARFDebugFrame,    eSectionTypeDWARFDebugInfo,
-      eSectionTypeDWARFDebugLine,     eSectionTypeDWARFDebugLoc,
-      eSectionTypeDWARFDebugMacInfo,  eSectionTypeDWARFDebugPubNames,
-      eSectionTypeDWARFDebugPubTypes, eSectionTypeDWARFDebugRanges,
-      eSectionTypeDWARFDebugStr,      eSectionTypeDWARFDebugStrOffsets,
-      eSectionTypeELFSymbolTable,     eSectionTypeDWARFGNUDebugAltLink,
+      eSectionTypeDWARFDebugAbbrev,     eSectionTypeDWARFDebugAddr,
+      eSectionTypeDWARFDebugAranges,    eSectionTypeDWARFDebugCuIndex,
+      eSectionTypeDWARFDebugFrame,      eSectionTypeDWARFDebugInfo,
+      eSectionTypeDWARFDebugLine,       eSectionTypeDWARFDebugLineStr,
+      eSectionTypeDWARFDebugLoc,        eSectionTypeDWARFDebugLocLists,
+      eSectionTypeDWARFDebugMacInfo,    eSectionTypeDWARFDebugMacro,
+      eSectionTypeDWARFDebugNames,      eSectionTypeDWARFDebugPubNames,
+      eSectionTypeDWARFDebugPubTypes,   eSectionTypeDWARFDebugRanges,
+      eSectionTypeDWARFDebugRngLists,   eSectionTypeDWARFDebugStr,
+      eSectionTypeDWARFDebugStrOffsets, eSectionTypeDWARFDebugTypes,
+      eSectionTypeELFSymbolTable,       eSectionTypeDWARFGNUDebugAltLink,
   };
   for (SectionType section_type : g_sections) {
     if (SectionSP section_sp =
@@ -143,8 +139,3 @@ SymbolVendorELF::CreateInstance(const lldb::ModuleSP &module_sp,
   symbol_vendor->AddSymbolFileRepresentation(dsym_objfile_sp);
   return symbol_vendor;
 }
-
-// PluginInterface protocol
-ConstString SymbolVendorELF::GetPluginName() { return GetPluginNameStatic(); }
-
-uint32_t SymbolVendorELF::GetPluginVersion() { return 1; }

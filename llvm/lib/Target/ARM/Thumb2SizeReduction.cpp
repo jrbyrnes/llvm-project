@@ -43,7 +43,7 @@
 
 using namespace llvm;
 
-#define DEBUG_TYPE "t2-reduce-size"
+#define DEBUG_TYPE "thumb2-reduce-size"
 #define THUMB2_SIZE_REDUCE_NAME "Thumb2 instruction size reduce pass"
 
 STATISTIC(NumNarrows,  "Number of 32-bit instrs reduced to 16-bit ones");
@@ -457,7 +457,7 @@ Thumb2SizeReduce::ReduceLoadStore(MachineBasicBlock &MBB, MachineInstr *MI,
       return false;
 
     if (!MI->hasOneMemOperand() ||
-        (*MI->memoperands_begin())->getAlignment() < 4)
+        (*MI->memoperands_begin())->getAlign() < Align(4))
       return false;
 
     // We're creating a completely different type of load/store - LDM from LDR.
@@ -502,8 +502,8 @@ Thumb2SizeReduce::ReduceLoadStore(MachineBasicBlock &MBB, MachineInstr *MI,
     // For the non-writeback version (this one), the base register must be
     // one of the registers being loaded.
     bool isOK = false;
-    for (unsigned i = 3; i < MI->getNumOperands(); ++i) {
-      if (MI->getOperand(i).getReg() == BaseReg) {
+    for (const MachineOperand &MO : llvm::drop_begin(MI->operands(), 3)) {
+      if (MO.getReg() == BaseReg) {
         isOK = true;
         break;
       }
@@ -516,13 +516,23 @@ Thumb2SizeReduce::ReduceLoadStore(MachineBasicBlock &MBB, MachineInstr *MI,
     isLdStMul = true;
     break;
   }
-  case ARM::t2STMIA:
-    // If the base register is killed, we don't care what its value is after the
-    // instruction, so we can use an updating STMIA.
+  case ARM::t2STMIA: {
+    // t2STMIA is reduced to tSTMIA_UPD which has writeback. We can only do this
+    // if the base register is killed, as then it doesn't matter what its value
+    // is after the instruction.
     if (!MI->getOperand(0).isKill())
       return false;
 
+    // If the base register is in the register list and isn't the lowest
+    // numbered register (i.e. it's in operand 4 onwards) then with writeback
+    // the stored value is unknown, so we can't convert to tSTMIA_UPD.
+    Register BaseReg = MI->getOperand(0).getReg();
+    for (const MachineOperand &MO : llvm::drop_begin(MI->operands(), 4))
+      if (MO.getReg() == BaseReg)
+        return false;
+
     break;
+  }
   case ARM::t2LDMIA_RET: {
     Register BaseReg = MI->getOperand(1).getReg();
     if (BaseReg != ARM::SP)
@@ -601,8 +611,8 @@ Thumb2SizeReduce::ReduceLoadStore(MachineBasicBlock &MBB, MachineInstr *MI,
   }
 
   // Transfer the rest of operands.
-  for (unsigned e = MI->getNumOperands(); OpNum != e; ++OpNum)
-    MIB.add(MI->getOperand(OpNum));
+  for (const MachineOperand &MO : llvm::drop_begin(MI->operands(), OpNum))
+    MIB.add(MO);
 
   // Transfer memoperands.
   MIB.setMemRefs(MI->memoperands());
@@ -676,7 +686,7 @@ Thumb2SizeReduce::ReduceSpecial(MachineBasicBlock &MBB, MachineInstr *MI,
   default: break;
   case ARM::t2ADDSri:
   case ARM::t2ADDSrr: {
-    unsigned PredReg = 0;
+    Register PredReg;
     if (getInstrPredicate(*MI, PredReg) == ARMCC::AL) {
       switch (Opc) {
       default: break;
@@ -708,7 +718,7 @@ Thumb2SizeReduce::ReduceSpecial(MachineBasicBlock &MBB, MachineInstr *MI,
   case ARM::t2CMPrr: {
     // Try to reduce to the lo-reg only version first. Why there are two
     // versions of the instruction is a mystery.
-    // It would be nice to just have two entries in the master table that
+    // It would be nice to just have two entries in the main table that
     // are prioritized, but the table assumes a unique entry for each
     // source insn opcode. So for now, we hack a local entry record to use.
     static const ReduceEntry NarrowEntry =
@@ -718,7 +728,7 @@ Thumb2SizeReduce::ReduceSpecial(MachineBasicBlock &MBB, MachineInstr *MI,
     return ReduceToNarrow(MBB, MI, Entry, LiveCPSR, IsSelfLoop);
   }
   case ARM::t2TEQrr: {
-    unsigned PredReg = 0;
+    Register PredReg;
     // Can only convert to eors if we're not in an IT block.
     if (getInstrPredicate(*MI, PredReg) != ARMCC::AL)
       break;
@@ -789,7 +799,7 @@ Thumb2SizeReduce::ReduceTo2Addr(MachineBasicBlock &MBB, MachineInstr *MI,
 
   // Check if it's possible / necessary to transfer the predicate.
   const MCInstrDesc &NewMCID = TII->get(Entry.NarrowOpc2);
-  unsigned PredReg = 0;
+  Register PredReg;
   ARMCC::CondCodes Pred = getInstrPredicate(*MI, PredReg);
   bool SkipPred = false;
   if (Pred != ARMCC::AL) {
@@ -882,7 +892,7 @@ Thumb2SizeReduce::ReduceToNarrow(MachineBasicBlock &MBB, MachineInstr *MI,
 
   // Check if it's possible / necessary to transfer the predicate.
   const MCInstrDesc &NewMCID = TII->get(Entry.NarrowOpc1);
-  unsigned PredReg = 0;
+  Register PredReg;
   ARMCC::CondCodes Pred = getInstrPredicate(*MI, PredReg);
   bool SkipPred = false;
   if (Pred != ARMCC::AL) {
@@ -1137,9 +1147,8 @@ bool Thumb2SizeReduce::runOnMachineFunction(MachineFunction &MF) {
   // predecessors.
   ReversePostOrderTraversal<MachineFunction*> RPOT(&MF);
   bool Modified = false;
-  for (ReversePostOrderTraversal<MachineFunction*>::rpo_iterator
-       I = RPOT.begin(), E = RPOT.end(); I != E; ++I)
-    Modified |= ReduceMBB(**I);
+  for (MachineBasicBlock *MBB : RPOT)
+    Modified |= ReduceMBB(*MBB);
   return Modified;
 }
 

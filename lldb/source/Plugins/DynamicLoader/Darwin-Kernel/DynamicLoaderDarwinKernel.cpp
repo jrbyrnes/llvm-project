@@ -1,5 +1,4 @@
-//===-- DynamicLoaderDarwinKernel.cpp -----------------------------*- C++
-//-*-===//
+//===-- DynamicLoaderDarwinKernel.cpp -------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -26,6 +25,7 @@
 #include "lldb/Target/ThreadPlanRunToAddress.h"
 #include "lldb/Utility/DataBuffer.h"
 #include "lldb/Utility/DataBufferHeap.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/State.h"
 
@@ -36,7 +36,7 @@
 
 //#define ENABLE_DEBUG_PRINTF // COMMENT THIS LINE OUT PRIOR TO CHECKIN
 #ifdef ENABLE_DEBUG_PRINTF
-#include <stdio.h>
+#include <cstdio>
 #define DEBUG_PRINTF(fmt, ...) printf(fmt, ##__VA_ARGS__)
 #else
 #define DEBUG_PRINTF(fmt, ...)
@@ -44,6 +44,8 @@
 
 using namespace lldb;
 using namespace lldb_private;
+
+LLDB_PLUGIN_DEFINE(DynamicLoaderDarwinKernel)
 
 // Progressively greater amounts of scanning we will allow For some targets
 // very early in startup, we can't do any random reads of memory or we can
@@ -106,7 +108,7 @@ public:
     m_collection_sp->Initialize(g_dynamicloaderdarwinkernel_properties);
   }
 
-  ~DynamicLoaderDarwinKernelProperties() override {}
+  ~DynamicLoaderDarwinKernelProperties() override = default;
 
   bool GetLoadKexts() const {
     const uint32_t idx = ePropertyLoadKexts;
@@ -123,14 +125,9 @@ public:
   }
 };
 
-typedef std::shared_ptr<DynamicLoaderDarwinKernelProperties>
-    DynamicLoaderDarwinKernelPropertiesSP;
-
-static const DynamicLoaderDarwinKernelPropertiesSP &GetGlobalProperties() {
-  static DynamicLoaderDarwinKernelPropertiesSP g_settings_sp;
-  if (!g_settings_sp)
-    g_settings_sp = std::make_shared<DynamicLoaderDarwinKernelProperties>();
-  return g_settings_sp;
+static DynamicLoaderDarwinKernelProperties &GetGlobalProperties() {
+  static DynamicLoaderDarwinKernelProperties g_settings;
+  return g_settings;
 }
 
 // Create an instance of this class. This function is filled into the plugin
@@ -239,11 +236,12 @@ DynamicLoaderDarwinKernel::SearchForKernelAtSameLoadAddr(Process *process) {
 // address of the kernel if one was found, else LLDB_INVALID_ADDRESS.
 lldb::addr_t
 DynamicLoaderDarwinKernel::SearchForKernelWithDebugHints(Process *process) {
-  if (GetGlobalProperties()->GetScanType() == eKASLRScanNone)
+  if (GetGlobalProperties().GetScanType() == eKASLRScanNone)
     return LLDB_INVALID_ADDRESS;
 
   Status read_err;
   addr_t kernel_addresses_64[] = {
+      0xfffffff000002010ULL,
       0xfffffff000004010ULL, // newest arm64 devices
       0xffffff8000004010ULL, // 2014-2015-ish arm64 devices
       0xffffff8000002010ULL, // oldest arm64 devices
@@ -290,8 +288,8 @@ DynamicLoaderDarwinKernel::SearchForKernelWithDebugHints(Process *process) {
 // LLDB_INVALID_ADDRESS.
 lldb::addr_t
 DynamicLoaderDarwinKernel::SearchForKernelNearPC(Process *process) {
-  if (GetGlobalProperties()->GetScanType() == eKASLRScanNone ||
-      GetGlobalProperties()->GetScanType() == eKASLRScanLowgloAddresses) {
+  if (GetGlobalProperties().GetScanType() == eKASLRScanNone ||
+      GetGlobalProperties().GetScanType() == eKASLRScanLowgloAddresses) {
     return LLDB_INVALID_ADDRESS;
   }
 
@@ -348,7 +346,7 @@ DynamicLoaderDarwinKernel::SearchForKernelNearPC(Process *process) {
 // kernel if one was found, else LLDB_INVALID_ADDRESS.
 lldb::addr_t DynamicLoaderDarwinKernel::SearchForKernelViaExhaustiveSearch(
     Process *process) {
-  if (GetGlobalProperties()->GetScanType() != eKASLRScanExhaustiveScan) {
+  if (GetGlobalProperties().GetScanType() != eKASLRScanExhaustiveScan) {
     return LLDB_INVALID_ADDRESS;
   }
 
@@ -398,7 +396,7 @@ DynamicLoaderDarwinKernel::ReadMachHeader(addr_t addr, Process *process, llvm::M
     *read_error = false;
 
   // Read the mach header and see whether it looks like a kernel
-  if (process->DoReadMemory (addr, &header, sizeof(header), error) !=
+  if (process->ReadMemory(addr, &header, sizeof(header), error) !=
       sizeof(header)) {
     if (read_error)
       *read_error = true;
@@ -437,7 +435,7 @@ lldb_private::UUID
 DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress(lldb::addr_t addr,
                                                         Process *process,
                                                         bool *read_error) {
-  Log *log(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_DYNAMIC_LOADER));
+  Log *log = GetLog(LLDBLog::DynamicLoader);
   if (addr == LLDB_INVALID_ADDRESS) {
     if (read_error)
       *read_error = true;
@@ -513,14 +511,11 @@ DynamicLoaderDarwinKernel::DynamicLoaderDarwinKernel(Process *process,
       m_kext_summary_header(), m_known_kexts(), m_mutex(),
       m_break_id(LLDB_INVALID_BREAK_ID) {
   Status error;
-  PlatformSP platform_sp(
-      Platform::Create(PlatformDarwinKernel::GetPluginNameStatic(), error));
-  // Only select the darwin-kernel Platform if we've been asked to load kexts.
-  // It can take some time to scan over all of the kext info.plists and that
-  // shouldn't be done if kext loading is explicitly disabled.
-  if (platform_sp.get() && GetGlobalProperties()->GetLoadKexts()) {
+  PlatformSP platform_sp =
+      process->GetTarget().GetDebugger().GetPlatformList().Create(
+          PlatformDarwinKernel::GetPluginNameStatic());
+  if (platform_sp.get())
     process->GetTarget().SetPlatform(platform_sp);
-  }
 }
 
 // Destructor
@@ -652,7 +647,7 @@ UUID DynamicLoaderDarwinKernel::KextImageInfo::GetUUID() const {
 
 bool DynamicLoaderDarwinKernel::KextImageInfo::ReadMemoryModule(
     Process *process) {
-  Log *log = lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_HOST);
+  Log *log = GetLog(LLDBLog::Host);
   if (m_memory_module_sp.get() != nullptr)
     return true;
   if (m_load_address == LLDB_INVALID_ADDRESS)
@@ -763,7 +758,7 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
   // for the kernel, we'll need to read the load commands out of memory to get it.
   if (m_uuid.IsValid() == false) {
     if (ReadMemoryModule(process) == false) {
-      Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_DYNAMIC_LOADER));
+      Log *log = GetLog(LLDBLog::DynamicLoader);
       LLDB_LOGF(log,
                 "Unable to read '%s' from memory at address 0x%" PRIx64
                 " to get the segment load addresses.",
@@ -791,18 +786,15 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
       module_spec.GetArchitecture() = target.GetArchitecture();
 
       // For the kernel, we really do need an on-disk file copy of the binary
-      // to do anything useful. This will force a clal to
+      // to do anything useful. This will force a call to dsymForUUID if it
+      // exists, instead of depending on the DebugSymbols preferences being
+      // set.
       if (IsKernel()) {
-        if (Symbols::DownloadObjectAndSymbolFile(module_spec, true)) {
+        Status error;
+        if (Symbols::DownloadObjectAndSymbolFile(module_spec, error, true)) {
           if (FileSystem::Instance().Exists(module_spec.GetFileSpec())) {
             m_module_sp = std::make_shared<Module>(module_spec.GetFileSpec(),
                                                    target.GetArchitecture());
-            if (m_module_sp.get() &&
-                m_module_sp->MatchesModuleSpec(module_spec)) {
-              ModuleList loaded_module_list;
-              loaded_module_list.Append(m_module_sp);
-              target.ModulesDidLoad(loaded_module_list);
-            }
           }
         }
       }
@@ -810,15 +802,16 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
       // If the current platform is PlatformDarwinKernel, create a ModuleSpec
       // with the filename set to be the bundle ID for this kext, e.g.
       // "com.apple.filesystems.msdosfs", and ask the platform to find it.
+      // PlatformDarwinKernel does a special scan for kexts on the local
+      // system.
       PlatformSP platform_sp(target.GetPlatform());
       if (!m_module_sp && platform_sp) {
-        ConstString platform_name(platform_sp->GetPluginName());
         static ConstString g_platform_name(
             PlatformDarwinKernel::GetPluginNameStatic());
-        if (platform_name == g_platform_name) {
+        if (platform_sp->GetPluginName() == g_platform_name.GetStringRef()) {
           ModuleSpec kext_bundle_module_spec(module_spec);
           FileSpec kext_filespec(m_name.c_str());
-	  FileSpecList search_paths = target.GetExecutableSearchPaths();
+          FileSpecList search_paths = target.GetExecutableSearchPaths();
           kext_bundle_module_spec.GetFileSpec() = kext_filespec;
           platform_sp->GetSharedModule(kext_bundle_module_spec, process,
                                        m_module_sp, &search_paths, nullptr,
@@ -847,7 +840,7 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
     // UUIDs
     if (m_module_sp) {
       if (m_uuid.IsValid() && m_module_sp->GetUUID() == m_uuid) {
-        target.GetImages().AppendIfNeeded(m_module_sp);
+        target.GetImages().AppendIfNeeded(m_module_sp, false);
         if (IsKernel() &&
             target.GetExecutableModulePointer() != m_module_sp.get()) {
           target.SetExecutableModule(m_module_sp, eLoadDependentsNo);
@@ -943,6 +936,14 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
                m_module_sp->GetFileSpec().GetPath().c_str());
     }
     s.Flush();
+  }
+
+  // Notify the target about the module being added;
+  // set breakpoints, load dSYM scripts, etc. as needed.
+  if (is_loaded && m_module_sp) {
+    ModuleList loaded_module_list;
+    loaded_module_list.Append(m_module_sp);
+    target.ModulesDidLoad(loaded_module_list);
   }
 
   return is_loaded;
@@ -1064,7 +1065,7 @@ bool DynamicLoaderDarwinKernel::BreakpointHitCallback(
 bool DynamicLoaderDarwinKernel::BreakpointHit(StoppointCallbackContext *context,
                                               user_id_t break_id,
                                               user_id_t break_loc_id) {
-  Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_DYNAMIC_LOADER));
+  Log *log = GetLog(LLDBLog::DynamicLoader);
   LLDB_LOGF(log, "DynamicLoaderDarwinKernel::BreakpointHit (...)\n");
 
   ReadAllKextSummaries();
@@ -1089,16 +1090,16 @@ bool DynamicLoaderDarwinKernel::ReadKextSummaryHeader() {
     uint8_t buf[24];
     DataExtractor data(buf, sizeof(buf), byte_order, addr_size);
     const size_t count = 4 * sizeof(uint32_t) + addr_size;
-    const bool prefer_file_cache = false;
+    const bool force_live_memory = true;
     if (m_process->GetTarget().ReadPointerFromMemory(
-            m_kext_summary_header_ptr_addr, prefer_file_cache, error,
-            m_kext_summary_header_addr)) {
+            m_kext_summary_header_ptr_addr, error,
+            m_kext_summary_header_addr, force_live_memory)) {
       // We got a valid address for our kext summary header and make sure it
       // isn't NULL
       if (m_kext_summary_header_addr.IsValid() &&
           m_kext_summary_header_addr.GetFileAddress() != 0) {
         const size_t bytes_read = m_process->GetTarget().ReadMemory(
-            m_kext_summary_header_addr, prefer_file_cache, buf, count, error);
+            m_kext_summary_header_addr, buf, count, error, force_live_memory);
         if (bytes_read == count) {
           lldb::offset_t offset = 0;
           m_kext_summary_header.version = data.GetU32(&offset);
@@ -1160,7 +1161,7 @@ bool DynamicLoaderDarwinKernel::ReadKextSummaryHeader() {
 bool DynamicLoaderDarwinKernel::ParseKextSummaries(
     const Address &kext_summary_addr, uint32_t count) {
   KextImageInfo::collection kext_summaries;
-  Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_DYNAMIC_LOADER));
+  Log *log = GetLog(LLDBLog::DynamicLoader);
   LLDB_LOGF(log,
             "Kexts-changed breakpoint hit, there are %d kexts currently.\n",
             count);
@@ -1173,7 +1174,7 @@ bool DynamicLoaderDarwinKernel::ParseKextSummaries(
   // read the plugin.dynamic-loader.darwin-kernel.load-kexts setting -- if the
   // user requested no kext loading, don't print any messages about kexts &
   // don't try to read them.
-  const bool load_kexts = GetGlobalProperties()->GetLoadKexts();
+  const bool load_kexts = GetGlobalProperties().GetLoadKexts();
 
   // By default, all kexts we've loaded in the past are marked as "remove" and
   // all of the kexts we just found out about from ReadKextSummaries are marked
@@ -1369,10 +1370,9 @@ uint32_t DynamicLoaderDarwinKernel::ReadKextSummaries(
   DataBufferHeap data(count, 0);
   Status error;
 
-  const bool prefer_file_cache = false;
+  const bool force_live_memory = true;
   const size_t bytes_read = m_process->GetTarget().ReadMemory(
-      kext_summary_addr, prefer_file_cache, data.GetBytes(), data.GetByteSize(),
-      error);
+      kext_summary_addr, data.GetBytes(), data.GetByteSize(), error, force_live_memory);
   if (bytes_read == count) {
 
     DataExtractor extractor(data.GetBytes(), data.GetByteSize(), endian,
@@ -1517,7 +1517,7 @@ ThreadPlanSP
 DynamicLoaderDarwinKernel::GetStepThroughTrampolinePlan(Thread &thread,
                                                         bool stop_others) {
   ThreadPlanSP thread_plan_sp;
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_STEP));
+  Log *log = GetLog(LLDBLog::Step);
   LLDB_LOGF(log, "Could not find symbol for step through.");
   return thread_plan_sp;
 }
@@ -1545,28 +1545,16 @@ void DynamicLoaderDarwinKernel::DebuggerInitialize(
           debugger, DynamicLoaderDarwinKernelProperties::GetSettingName())) {
     const bool is_global_setting = true;
     PluginManager::CreateSettingForDynamicLoaderPlugin(
-        debugger, GetGlobalProperties()->GetValueProperties(),
+        debugger, GetGlobalProperties().GetValueProperties(),
         ConstString("Properties for the DynamicLoaderDarwinKernel plug-in."),
         is_global_setting);
   }
 }
 
-lldb_private::ConstString DynamicLoaderDarwinKernel::GetPluginNameStatic() {
-  static ConstString g_name("darwin-kernel");
-  return g_name;
-}
-
-const char *DynamicLoaderDarwinKernel::GetPluginDescriptionStatic() {
+llvm::StringRef DynamicLoaderDarwinKernel::GetPluginDescriptionStatic() {
   return "Dynamic loader plug-in that watches for shared library loads/unloads "
          "in the MacOSX kernel.";
 }
-
-// PluginInterface protocol
-lldb_private::ConstString DynamicLoaderDarwinKernel::GetPluginName() {
-  return GetPluginNameStatic();
-}
-
-uint32_t DynamicLoaderDarwinKernel::GetPluginVersion() { return 1; }
 
 lldb::ByteOrder
 DynamicLoaderDarwinKernel::GetByteOrderFromMagic(uint32_t magic) {

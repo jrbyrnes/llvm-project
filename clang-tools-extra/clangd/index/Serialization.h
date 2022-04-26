@@ -21,11 +21,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_RIFF_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_RIFF_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_SERIALIZATION_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_SERIALIZATION_H
 
 #include "Headers.h"
-#include "Index.h"
+#include "index/Index.h"
 #include "index/Symbol.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/Support/Error.h"
@@ -49,7 +49,7 @@ struct IndexFileIn {
   llvm::Optional<tooling::CompileCommand> Cmd;
 };
 // Parse an index file. The input must be a RIFF or YAML file.
-llvm::Expected<IndexFileIn> readIndexFile(llvm::StringRef);
+llvm::Expected<IndexFileIn> readIndexFile(llvm::StringRef, SymbolOrigin);
 
 // Specifies the contents of an index file to be written.
 struct IndexFileOut {
@@ -77,16 +77,12 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const IndexFileOut &O);
 std::string toYAML(const Symbol &);
 std::string toYAML(const std::pair<SymbolID, ArrayRef<Ref>> &);
 std::string toYAML(const Relation &);
+std::string toYAML(const Ref &);
 
 // Build an in-memory static index from an index file.
 // The size should be relatively small, so data can be managed in memory.
 std::unique_ptr<SymbolIndex> loadIndex(llvm::StringRef Filename,
-                                       bool UseDex = true);
-
-// Used for serializing SymbolRole as used in Relation.
-enum class RelationKind : uint8_t { BaseOf };
-RelationKind symbolRoleToRelationKind(index::SymbolRole);
-index::SymbolRole relationKindToSymbolRole(RelationKind);
+                                       SymbolOrigin Origin, bool UseDex = true);
 
 } // namespace clangd
 } // namespace clang

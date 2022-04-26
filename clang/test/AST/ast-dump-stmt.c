@@ -1,4 +1,12 @@
-// RUN: %clang_cc1 -std=gnu11 -ast-dump %s | FileCheck -strict-whitespace %s
+// Test without serialization:
+// RUN: %clang_cc1 -std=gnu11 -ast-dump %s \
+// RUN: | FileCheck -strict-whitespace %s
+//
+// Test with serialization:
+// RUN: %clang_cc1 -std=gnu11 -emit-pch -o %t %s
+// RUN: %clang_cc1 -x c -std=gnu11 -include-pch %t -ast-dump-all /dev/null \
+// RUN: | sed -e "s/ <undeserialized declarations>//" -e "s/ imported//" \
+// RUN: | FileCheck -strict-whitespace %s
 
 int TestLocation = 0;
 // CHECK:      VarDecl{{.*}}TestLocation
@@ -11,7 +19,7 @@ int TestIndent = 1 + (1);
 // CHECK-NEXT: {{^}}|   `-ParenExpr{{.*0[^()]*$}}
 // CHECK-NEXT: {{^}}|     `-IntegerLiteral{{.*0[^()]*$}}
 
-void TestDeclStmt() {
+void TestDeclStmt(void) {
   int x = 0;
   int y, z;
 }

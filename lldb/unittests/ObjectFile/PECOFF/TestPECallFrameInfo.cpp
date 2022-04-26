@@ -1,4 +1,4 @@
-//===-- TestPECallFrameInfo.cpp ------------------------------*- C++ -*-===//
+//===-- TestPECallFrameInfo.cpp -------------------------------------------===//
 //
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -11,6 +11,7 @@
 
 #include "Plugins/ObjectFile/PECOFF/ObjectFilePECOFF.h"
 #include "Plugins/Process/Utility/lldb-x86-register-enums.h"
+#include "TestingSupport/SubsystemRAII.h"
 #include "TestingSupport/TestUtilities.h"
 
 #include "lldb/Core/Module.h"
@@ -22,16 +23,7 @@ using namespace lldb_private;
 using namespace lldb;
 
 class PECallFrameInfoTest : public testing::Test {
-public:
-  void SetUp() override {
-    FileSystem::Initialize();
-    ObjectFilePECOFF::Initialize();
-  }
-
-  void TearDown() override {
-    ObjectFilePECOFF::Terminate();
-    FileSystem::Terminate();
-  }
+  SubsystemRAII<FileSystem, ObjectFilePECOFF> subsystems;
 
 protected:
   void GetUnwindPlan(addr_t file_addr, UnwindPlan &plan) const;
@@ -200,7 +192,7 @@ symbols:         []
 )");
   ASSERT_THAT_EXPECTED(ExpectedFile, llvm::Succeeded());
 
-  ModuleSP module_sp = std::make_shared<Module>(ModuleSpec(FileSpec(ExpectedFile->name())));
+  ModuleSP module_sp = std::make_shared<Module>(ExpectedFile->moduleSpec());
   ObjectFile *object_file = module_sp->GetObjectFile();
   ASSERT_NE(object_file, nullptr);
 

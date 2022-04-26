@@ -14,11 +14,12 @@
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/CompilationDatabase.h"
+#include "clang/Tooling/DependencyScanning/DependencyScanningFilesystem.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "gtest/gtest.h"
 #include <algorithm>
@@ -83,9 +84,11 @@ TEST(DependencyScanner, ScanDepsReuseFilemanager) {
   auto VFS = new llvm::vfs::InMemoryFileSystem();
   VFS->setCurrentWorkingDirectory(CWD);
   auto Sept = llvm::sys::path::get_separator();
-  std::string HeaderPath = llvm::formatv("{0}root{0}header.h", Sept);
-  std::string SymlinkPath = llvm::formatv("{0}root{0}symlink.h", Sept);
-  std::string TestPath = llvm::formatv("{0}root{0}test.cpp", Sept);
+  std::string HeaderPath =
+      std::string(llvm::formatv("{0}root{0}header.h", Sept));
+  std::string SymlinkPath =
+      std::string(llvm::formatv("{0}root{0}symlink.h", Sept));
+  std::string TestPath = std::string(llvm::formatv("{0}root{0}test.cpp", Sept));
 
   VFS->addFile(HeaderPath, 0, llvm::MemoryBuffer::getMemBuffer("\n"));
   VFS->addHardLink(SymlinkPath, HeaderPath);
@@ -130,10 +133,13 @@ TEST(DependencyScanner, ScanDepsReuseFilemanagerSkippedFile) {
   auto VFS = new llvm::vfs::InMemoryFileSystem();
   VFS->setCurrentWorkingDirectory(CWD);
   auto Sept = llvm::sys::path::get_separator();
-  std::string HeaderPath = llvm::formatv("{0}root{0}header.h", Sept);
-  std::string SymlinkPath = llvm::formatv("{0}root{0}symlink.h", Sept);
-  std::string TestPath = llvm::formatv("{0}root{0}test.cpp", Sept);
-  std::string Test2Path = llvm::formatv("{0}root{0}test2.cpp", Sept);
+  std::string HeaderPath =
+      std::string(llvm::formatv("{0}root{0}header.h", Sept));
+  std::string SymlinkPath =
+      std::string(llvm::formatv("{0}root{0}symlink.h", Sept));
+  std::string TestPath = std::string(llvm::formatv("{0}root{0}test.cpp", Sept));
+  std::string Test2Path =
+      std::string(llvm::formatv("{0}root{0}test2.cpp", Sept));
 
   VFS->addFile(HeaderPath, 0,
                llvm::MemoryBuffer::getMemBuffer("#pragma once\n"));
@@ -169,9 +175,11 @@ TEST(DependencyScanner, ScanDepsReuseFilemanagerHasInclude) {
   auto VFS = new llvm::vfs::InMemoryFileSystem();
   VFS->setCurrentWorkingDirectory(CWD);
   auto Sept = llvm::sys::path::get_separator();
-  std::string HeaderPath = llvm::formatv("{0}root{0}header.h", Sept);
-  std::string SymlinkPath = llvm::formatv("{0}root{0}symlink.h", Sept);
-  std::string TestPath = llvm::formatv("{0}root{0}test.cpp", Sept);
+  std::string HeaderPath =
+      std::string(llvm::formatv("{0}root{0}header.h", Sept));
+  std::string SymlinkPath =
+      std::string(llvm::formatv("{0}root{0}symlink.h", Sept));
+  std::string TestPath = std::string(llvm::formatv("{0}root{0}test.cpp", Sept));
 
   VFS->addFile(HeaderPath, 0, llvm::MemoryBuffer::getMemBuffer("\n"));
   VFS->addHardLink(SymlinkPath, HeaderPath);
@@ -196,5 +204,53 @@ TEST(DependencyScanner, ScanDepsReuseFilemanagerHasInclude) {
   EXPECT_EQ(convert_to_slash(Deps[5]), "/root/symlink.h");
 }
 
+namespace dependencies {
+TEST(DependencyScanningFilesystem, IgnoredFilesAreCachedSeparately1) {
+  auto VFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+  VFS->addFile("/mod.h", 0,
+               llvm::MemoryBuffer::getMemBuffer("#include <foo.h>\n"
+                                                "// hi there!\n"));
+
+  DependencyScanningFilesystemSharedCache SharedCache;
+  auto Mappings = std::make_unique<ExcludedPreprocessorDirectiveSkipMapping>();
+  DependencyScanningWorkerFilesystem DepFS(SharedCache, VFS, Mappings.get());
+
+  DepFS.enableMinimizationOfAllFiles(); // Let's be explicit for clarity.
+  auto StatusMinimized0 = DepFS.status("/mod.h");
+  DepFS.disableMinimization("/mod.h");
+  auto StatusFull1 = DepFS.status("/mod.h");
+
+  EXPECT_TRUE(StatusMinimized0);
+  EXPECT_TRUE(StatusFull1);
+  EXPECT_EQ(StatusMinimized0->getSize(), 17u);
+  EXPECT_EQ(StatusFull1->getSize(), 30u);
+  EXPECT_EQ(StatusMinimized0->getName(), StringRef("/mod.h"));
+  EXPECT_EQ(StatusFull1->getName(), StringRef("/mod.h"));
+}
+
+TEST(DependencyScanningFilesystem, IgnoredFilesAreCachedSeparately2) {
+  auto VFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+  VFS->addFile("/mod.h", 0,
+               llvm::MemoryBuffer::getMemBuffer("#include <foo.h>\n"
+                                                "// hi there!\n"));
+
+  DependencyScanningFilesystemSharedCache SharedCache;
+  auto Mappings = std::make_unique<ExcludedPreprocessorDirectiveSkipMapping>();
+  DependencyScanningWorkerFilesystem DepFS(SharedCache, VFS, Mappings.get());
+
+  DepFS.disableMinimization("/mod.h");
+  auto StatusFull0 = DepFS.status("/mod.h");
+  DepFS.enableMinimizationOfAllFiles();
+  auto StatusMinimized1 = DepFS.status("/mod.h");
+
+  EXPECT_TRUE(StatusFull0);
+  EXPECT_TRUE(StatusMinimized1);
+  EXPECT_EQ(StatusFull0->getSize(), 30u);
+  EXPECT_EQ(StatusMinimized1->getSize(), 17u);
+  EXPECT_EQ(StatusFull0->getName(), StringRef("/mod.h"));
+  EXPECT_EQ(StatusMinimized1->getName(), StringRef("/mod.h"));
+}
+
+} // end namespace dependencies
 } // end namespace tooling
 } // end namespace clang

@@ -253,7 +253,7 @@ Use instruction emulation to reduce the overhead for breakpoints
 At present, breakpoints are implemented by inserting a trap instruction, then
 when the trap is hit, replace the trap with the actual instruction and single
 step. Then swap back and continue. This causes problems for read only text, and
-also means that no-stop debugging ust either stop all threads briefly to handle
+also means that no-stop debugging must either stop all threads briefly to handle
 this two-step or risk missing some breakpoint hits. If you emulated the
 instruction and wrote back the results, you wouldn't have these problems, and
 it would also save a stop per breakpoint hit. Since we use breakpoints to
@@ -408,3 +408,12 @@ a sketch of this in the settings parsing code) was to be able to say:
   (lldb) settings set target{arch=x86_64}.process.thread{name=foo}...
 
 The exact details are still to be worked out, however.
+
+Resurrect Type Validators
+-------------------------
+
+This half-implemented feature was removed in
+https://reviews.llvm.org/D71310 but the general idea might still be
+useful: Type Validators look at a ValueObject, and make sure that
+there is nothing semantically wrong with the object's contents to
+easily catch corrupted data.

@@ -15,6 +15,7 @@
 
 #include "llvm-c/Remarks.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/Remarks/Remark.h"
 #include "llvm/Remarks/RemarkFormat.h"
 #include "llvm/Remarks/RemarkParser.h"
 #include "llvm/Support/CommandLine.h"
@@ -225,14 +226,17 @@ static bool readLocationInfo(LocationInfoTy &LocationInfo) {
     };
 
     if (Remark.PassName == "inline") {
-      auto &LI = LocationInfo[File][Line][Remark.FunctionName][Column];
+      auto &LI = LocationInfo[std::string(File)][Line]
+                             [std::string(Remark.FunctionName)][Column];
       UpdateLLII(LI.Inlined);
     } else if (Remark.PassName == "loop-unroll") {
-      auto &LI = LocationInfo[File][Line][Remark.FunctionName][Column];
+      auto &LI = LocationInfo[std::string(File)][Line]
+                             [std::string(Remark.FunctionName)][Column];
       LI.UnrollCount = UnrollCount;
       UpdateLLII(LI.Unrolled);
     } else if (Remark.PassName == "loop-vectorize") {
-      auto &LI = LocationInfo[File][Line][Remark.FunctionName][Column];
+      auto &LI = LocationInfo[std::string(File)][Line]
+                             [std::string(Remark.FunctionName)][Column];
       LI.VectorizationFactor = VectorizationFactor;
       LI.InterleaveCount = InterleaveCount;
       UpdateLLII(LI.Vectorized);
@@ -244,7 +248,7 @@ static bool readLocationInfo(LocationInfoTy &LocationInfo) {
 
 static bool writeReport(LocationInfoTy &LocationInfo) {
   std::error_code EC;
-  llvm::raw_fd_ostream OS(OutputFileName, EC, llvm::sys::fs::OF_Text);
+  llvm::raw_fd_ostream OS(OutputFileName, EC, llvm::sys::fs::OF_TextWithCRLF);
   if (EC) {
     WithColor::error() << "Can't open file " << OutputFileName << ": "
                        << EC.message() << "\n";

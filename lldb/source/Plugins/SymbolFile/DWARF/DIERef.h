@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef SymbolFileDWARF_DIERef_h_
-#define SymbolFileDWARF_DIERef_h_
+#ifndef LLDB_SOURCE_PLUGINS_SYMBOLFILE_DWARF_DIEREF_H
+#define LLDB_SOURCE_PLUGINS_SYMBOLFILE_DWARF_DIEREF_H
 
 #include "lldb/Core/dwarf.h"
 #include "llvm/ADT/Optional.h"
@@ -44,6 +44,47 @@ public:
 
   dw_offset_t die_offset() const { return m_die_offset; }
 
+  bool operator<(DIERef other) const {
+    if (m_dwo_num_valid != other.m_dwo_num_valid)
+      return m_dwo_num_valid < other.m_dwo_num_valid;
+    if (m_dwo_num_valid && (m_dwo_num != other.m_dwo_num))
+      return m_dwo_num < other.m_dwo_num;
+    if (m_section != other.m_section)
+      return m_section < other.m_section;
+    return m_die_offset < other.m_die_offset;
+  }
+
+  bool operator==(const DIERef &rhs) const {
+    return dwo_num() == rhs.dwo_num() && m_section == rhs.m_section &&
+           m_die_offset == rhs.m_die_offset;
+  }
+
+  bool operator!=(const DIERef &rhs) const { return !(*this == rhs); }
+
+  /// Decode a serialized version of this object from data.
+  ///
+  /// \param data
+  ///   The decoder object that references the serialized data.
+  ///
+  /// \param offset_ptr
+  ///   A pointer that contains the offset from which the data will be decoded
+  ///   from that gets updated as data gets decoded.
+  ///
+  /// \return
+  ///   Returns a valid DIERef if decoding succeeded, llvm::None if there was
+  ///   unsufficient or invalid values that were decoded.
+  static llvm::Optional<DIERef> Decode(const lldb_private::DataExtractor &data,
+                                       lldb::offset_t *offset_ptr);
+
+  /// Encode this object into a data encoder object.
+  ///
+  /// This allows this object to be serialized to disk.
+  ///
+  /// \param encoder
+  ///   A data encoder object that serialized bytes will be encoded into.
+  ///
+  void Encode(lldb_private::DataEncoder &encoder) const;
+
 private:
   uint32_t m_dwo_num : 30;
   uint32_t m_dwo_num_valid : 1;
@@ -60,4 +101,4 @@ template<> struct format_provider<DIERef> {
 };
 } // namespace llvm
 
-#endif // SymbolFileDWARF_DIERef_h_
+#endif // LLDB_SOURCE_PLUGINS_SYMBOLFILE_DWARF_DIEREF_H

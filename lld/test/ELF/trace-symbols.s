@@ -13,6 +13,11 @@
 # RUN: rm -f %t2.a
 # RUN: llvm-ar rcs %t2.a %t2
 
+# RUN: ld.lld -y foo -shared %t1 %t1.so -o /dev/null | \
+# RUN:   FileCheck --check-prefix=PREEMPT %s --implicit-check-not=foo
+# PREEMPT:      trace-symbols.s.tmp1: definition of foo
+# PREEMPT-NEXT: trace-symbols.s.tmp1.so: shared definition of foo
+
 # RUN: ld.lld -y foo -trace-symbol common -trace-symbol=hsymbol \
 # RUN:   %t %t1 %t2 -o %t3 | FileCheck -check-prefix=OBJECTRFOO %s
 # OBJECTRFOO: trace-symbols.s.tmp: reference to foo
@@ -45,7 +50,7 @@
 # RUN:   FileCheck -check-prefix=FOO_AND_COMMON %s
 # FOO_AND_COMMON: trace-symbols.s.tmp: reference to foo
 # FOO_AND_COMMON: trace-symbols.s.tmp2: definition of foo
-# FOO_AND_COMMON: trace-symbols.s.tmp1.a: lazy definition of common
+# FOO_AND_COMMON: trace-symbols.s.tmp1.a({{.*}}.tmp1): lazy definition of common
 
 # RUN: ld.lld -y foo -y common %t %t1.so %t2 -o %t3 | \
 # RUN:   FileCheck -check-prefix=SHLIBDCOMMON %s

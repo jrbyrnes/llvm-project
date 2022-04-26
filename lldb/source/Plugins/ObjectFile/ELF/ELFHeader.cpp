@@ -1,4 +1,4 @@
-//===-- ELFHeader.cpp ----------------------------------------- -*- C++ -*-===//
+//===-- ELFHeader.cpp -----------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -207,6 +207,9 @@ unsigned ELFHeader::GetRelocationJumpSlotType() const {
     break;
   case EM_S390:
     slot = R_390_JMP_SLOT;
+    break;
+  case EM_RISCV:
+    slot = R_RISCV_JUMP_SLOT;
     break;
   }
 

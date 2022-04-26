@@ -30,7 +30,7 @@ class CloneChecker
 public:
   // Checker options.
   int MinComplexity;
-  bool ReportNormalClones;
+  bool ReportNormalClones = false;
   StringRef IgnoredFilesPattern;
 
 private:
@@ -208,6 +208,6 @@ void ento::registerCloneChecker(CheckerManager &Mgr) {
     .getCheckerStringOption(Checker, "IgnoredFilesPattern");
 }
 
-bool ento::shouldRegisterCloneChecker(const LangOptions &LO) {
+bool ento::shouldRegisterCloneChecker(const CheckerManager &mgr) {
   return true;
 }

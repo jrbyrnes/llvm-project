@@ -347,10 +347,13 @@ public:
   const bool MemCounter::disable_checking = false;
 #endif
 
+TEST_DIAGNOSTIC_PUSH
+TEST_MSVC_DIAGNOSTIC_IGNORED(4640) // '%s' construction of local static object is not thread safe (/Zc:threadSafeInit-)
 inline MemCounter* getGlobalMemCounter() {
   static MemCounter counter((MemCounter::MemCounterCtorArg_()));
   return &counter;
 }
+TEST_DIAGNOSTIC_POP
 
 MemCounter &globalMemCounter = *getGlobalMemCounter();
 

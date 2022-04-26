@@ -10,7 +10,7 @@
 #define LLD_ELF_SCRIPT_PARSER_H
 
 #include "lld/Common/LLVM.h"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/MemoryBufferRef.h"
 
 namespace lld {
 namespace elf {
@@ -26,6 +26,8 @@ void readDynamicList(MemoryBufferRef mb);
 
 // Parses the defsym expression.
 void readDefsym(StringRef name, MemoryBufferRef mb);
+
+bool hasWildcard(StringRef s);
 
 } // namespace elf
 } // namespace lld

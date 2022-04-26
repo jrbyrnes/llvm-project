@@ -44,6 +44,7 @@
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugLoc.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -389,7 +390,7 @@ bool HexagonHardwareLoops::runOnMachineFunction(MachineFunction &MF) {
   TRI = HST.getRegisterInfo();
 
   for (auto &L : *MLI)
-    if (!L->getParentLoop()) {
+    if (L->isOutermost()) {
       bool L0Used = false;
       bool L1Used = false;
       Changed |= convertToHardwareLoop(L, L0Used, L1Used);
@@ -466,8 +467,8 @@ bool HexagonHardwareLoops::findInductionRegister(MachineLoop *L,
   if (!PredI->isCompare())
     return false;
 
-  unsigned CmpReg1 = 0, CmpReg2 = 0;
-  int CmpImm = 0, CmpMask = 0;
+  Register CmpReg1, CmpReg2;
+  int64_t CmpImm = 0, CmpMask = 0;
   bool CmpAnalyzed =
       TII->analyzeCompare(*PredI, CmpReg1, CmpReg2, CmpMask, CmpImm);
   // Fail if the compare was not analyzed, or it's not comparing a register
@@ -639,7 +640,7 @@ CountValue *HexagonHardwareLoops::getLoopTripCount(MachineLoop *L,
   if (!TB || (FB && TB != Header && FB != Header))
     return nullptr;
 
-  // Branches of form "if (!P) ..." cause HexagonInstrInfo::AnalyzeBranch
+  // Branches of form "if (!P) ..." cause HexagonInstrInfo::analyzeBranch
   // to put imm(0), followed by P in the vector Cond.
   // If TB is not the header, it means that the "not-taken" path must lead
   // to the header.
@@ -650,8 +651,8 @@ CountValue *HexagonHardwareLoops::getLoopTripCount(MachineLoop *L,
   MachineInstr *CondI = MRI->getVRegDef(PredReg);
   unsigned CondOpc = CondI->getOpcode();
 
-  unsigned CmpReg1 = 0, CmpReg2 = 0;
-  int Mask = 0, ImmValue = 0;
+  Register CmpReg1, CmpReg2;
+  int64_t Mask = 0, ImmValue = 0;
   bool AnalyzedCmp =
       TII->analyzeCompare(*CondI, CmpReg1, CmpReg2, Mask, ImmValue);
   if (!AnalyzedCmp)
@@ -1013,12 +1014,10 @@ bool HexagonHardwareLoops::containsInvalidInstruction(MachineLoop *L,
   LLVM_DEBUG(dbgs() << "\nhw_loop head, "
                     << printMBBReference(**L->block_begin()));
   for (MachineBasicBlock *MBB : L->getBlocks()) {
-    for (MachineBasicBlock::iterator
-           MII = MBB->begin(), E = MBB->end(); MII != E; ++MII) {
-      const MachineInstr *MI = &*MII;
-      if (isInvalidLoopOperation(MI, IsInnerHWLoop)) {
+    for (const MachineInstr &MI : *MBB) {
+      if (isInvalidLoopOperation(&MI, IsInnerHWLoop)) {
         LLVM_DEBUG(dbgs() << "\nCannot convert to hw_loop due to:";
-                   MI->dump(););
+                   MI.dump(););
         return true;
       }
     }
@@ -1033,8 +1032,7 @@ bool HexagonHardwareLoops::containsInvalidInstruction(MachineLoop *L,
 bool HexagonHardwareLoops::isDead(const MachineInstr *MI,
                               SmallVectorImpl<MachineInstr *> &DeadPhis) const {
   // Examine each operand.
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    const MachineOperand &MO = MI->getOperand(i);
+  for (const MachineOperand &MO : MI->operands()) {
     if (!MO.isReg() || !MO.isDef())
       continue;
 
@@ -1088,21 +1086,19 @@ void HexagonHardwareLoops::removeIfDead(MachineInstr *MI) {
     // It is possible that some DBG_VALUE instructions refer to this
     // instruction.  Examine each def operand for such references;
     // if found, mark the DBG_VALUE as undef (but don't delete it).
-    for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-      const MachineOperand &MO = MI->getOperand(i);
+    for (const MachineOperand &MO : MI->operands()) {
       if (!MO.isReg() || !MO.isDef())
         continue;
       Register Reg = MO.getReg();
-      MachineRegisterInfo::use_iterator nextI;
-      for (MachineRegisterInfo::use_iterator I = MRI->use_begin(Reg),
-           E = MRI->use_end(); I != E; I = nextI) {
-        nextI = std::next(I);  // I is invalidated by the setReg
-        MachineOperand &Use = *I;
-        MachineInstr *UseMI = I->getParent();
+      // We use make_early_inc_range here because setReg below invalidates the
+      // iterator.
+      for (MachineOperand &MO :
+           llvm::make_early_inc_range(MRI->use_operands(Reg))) {
+        MachineInstr *UseMI = MO.getParent();
         if (UseMI == MI)
           continue;
-        if (Use.isDebug())
-          UseMI->getOperand(0).setReg(0U);
+        if (MO.isDebug())
+          MO.setReg(0U);
       }
     }
 
@@ -1123,7 +1119,7 @@ void HexagonHardwareLoops::removeIfDead(MachineInstr *MI) {
 bool HexagonHardwareLoops::convertToHardwareLoop(MachineLoop *L,
                                                  bool &RecL0used,
                                                  bool &RecL1used) {
-  // This is just for sanity.
+  // This is just to confirm basic correctness.
   assert(L->getHeader() && "Loop without a header?");
 
   bool Changed = false;
@@ -1131,8 +1127,8 @@ bool HexagonHardwareLoops::convertToHardwareLoop(MachineLoop *L,
   bool L1Used = false;
 
   // Process nested loops first.
-  for (MachineLoop::iterator I = L->begin(), E = L->end(); I != E; ++I) {
-    Changed |= convertToHardwareLoop(*I, RecL0used, RecL1used);
+  for (MachineLoop *I : *L) {
+    Changed |= convertToHardwareLoop(I, RecL0used, RecL1used);
     L0Used |= RecL0used;
     L1Used |= RecL1used;
   }
@@ -1369,10 +1365,8 @@ bool HexagonHardwareLoops::isLoopFeeder(MachineLoop *L, MachineBasicBlock *A,
     LLVM_DEBUG(dbgs() << "\nhw_loop head, "
                       << printMBBReference(**L->block_begin()));
     // Ignore all BBs that form Loop.
-    for (MachineBasicBlock *MBB : L->getBlocks()) {
-      if (A == MBB)
-        return false;
-    }
+    if (llvm::is_contained(L->getBlocks(), A))
+      return false;
     MachineInstr *Def = MRI->getVRegDef(MO->getReg());
     LoopFeederPhi.insert(std::make_pair(MO->getReg(), Def));
     return true;
@@ -1431,7 +1425,7 @@ bool HexagonHardwareLoops::loopCountMayWrapOrUnderFlow(
   Register Reg = InitVal->getReg();
 
   // We don't know the value of a physical register.
-  if (!Register::isVirtualRegister(Reg))
+  if (!Reg.isVirtual())
     return true;
 
   MachineInstr *Def = MRI->getVRegDef(Reg);
@@ -1454,8 +1448,8 @@ bool HexagonHardwareLoops::loopCountMayWrapOrUnderFlow(
   for (MachineRegisterInfo::use_instr_nodbg_iterator I = MRI->use_instr_nodbg_begin(Reg),
          E = MRI->use_instr_nodbg_end(); I != E; ++I) {
     MachineInstr *MI = &*I;
-    unsigned CmpReg1 = 0, CmpReg2 = 0;
-    int CmpMask = 0, CmpValue = 0;
+    Register CmpReg1, CmpReg2;
+    int64_t CmpMask = 0, CmpValue = 0;
 
     if (!TII->analyzeCompare(*MI, CmpReg1, CmpReg2, CmpMask, CmpValue))
       continue;
@@ -1509,7 +1503,7 @@ bool HexagonHardwareLoops::checkForImmediate(const MachineOperand &MO,
   int64_t TV;
 
   Register R = MO.getReg();
-  if (!Register::isVirtualRegister(R))
+  if (!R.isVirtual())
     return false;
   MachineInstr *DI = MRI->getVRegDef(R);
   unsigned DOpc = DI->getOpcode();
@@ -1593,16 +1587,6 @@ void HexagonHardwareLoops::setImmediate(MachineOperand &MO, int64_t Val) {
   MO.setReg(NewR);
 }
 
-static bool isImmValidForOpcode(unsigned CmpOpc, int64_t Imm) {
-  // These two instructions are not extendable.
-  if (CmpOpc == Hexagon::A4_cmpbeqi)
-    return isUInt<8>(Imm);
-  if (CmpOpc == Hexagon::A4_cmpbgti)
-    return isInt<8>(Imm);
-  // The rest of the comparison-with-immediate instructions are extendable.
-  return true;
-}
-
 bool HexagonHardwareLoops::fixupInductionVariable(MachineLoop *L) {
   MachineBasicBlock *Header = L->getHeader();
   MachineBasicBlock *Latch = L->getLoopLatch();
@@ -1656,7 +1640,7 @@ bool HexagonHardwareLoops::fixupInductionVariable(MachineLoop *L) {
 
   MachineBasicBlock *TB = nullptr, *FB = nullptr;
   SmallVector<MachineOperand,2> Cond;
-  // AnalyzeBranch returns true if it fails to analyze branch.
+  // analyzeBranch returns true if it fails to analyze branch.
   bool NotAnalyzed = TII->analyzeBranch(*ExitingBlock, TB, FB, Cond, false);
   if (NotAnalyzed || Cond.empty())
     return false;
@@ -1692,7 +1676,7 @@ bool HexagonHardwareLoops::fixupInductionVariable(MachineLoop *L) {
 
   // Expecting a predicate register as a condition.  It won't be a hardware
   // predicate register at this point yet, just a vreg.
-  // HexagonInstrInfo::AnalyzeBranch for negated branches inserts imm(0)
+  // HexagonInstrInfo::analyzeBranch for negated branches inserts imm(0)
   // into Cond, followed by the predicate register.  For non-negated branches
   // it's just the register.
   unsigned CSz = Cond.size();
@@ -1818,9 +1802,9 @@ bool HexagonHardwareLoops::fixupInductionVariable(MachineLoop *L) {
       // Most comparisons of register against an immediate value allow
       // the immediate to be constant-extended. There are some exceptions
       // though. Make sure the new combination will work.
-      if (CmpImmOp->isImm())
-        if (!isImmValidForOpcode(PredDef->getOpcode(), CmpImm))
-          return false;
+      if (CmpImmOp->isImm() && !TII->isExtendable(*PredDef) &&
+          !TII->isValidOffset(PredDef->getOpcode(), CmpImm, TRI, false))
+        return false;
 
       // Make sure that the compare happens after the bump.  Otherwise,
       // after the fixup, the compare would use a yet-undefined register.
@@ -1879,8 +1863,7 @@ MachineBasicBlock *HexagonHardwareLoops::createPreheaderForLoop(
   if (TII->analyzeBranch(*ExitingBlock, TB, FB, Tmp1, false))
     return nullptr;
 
-  for (MBBVector::iterator I = Preds.begin(), E = Preds.end(); I != E; ++I) {
-    MachineBasicBlock *PB = *I;
+  for (MachineBasicBlock *PB : Preds) {
     bool NotAnalyzed = TII->analyzeBranch(*PB, TB, FB, Tmp1, false);
     if (NotAnalyzed)
       return nullptr;
@@ -1928,8 +1911,8 @@ MachineBasicBlock *HexagonHardwareLoops::createPreheaderForLoop(
       for (int i = PN->getNumOperands()-2; i > 0; i -= 2) {
         MachineBasicBlock *PredB = PN->getOperand(i+1).getMBB();
         if (PredB != Latch) {
-          PN->RemoveOperand(i+1);
-          PN->RemoveOperand(i);
+          PN->removeOperand(i+1);
+          PN->removeOperand(i);
         }
       }
       PN->addOperand(MachineOperand::CreateReg(NewPR, false));
@@ -1962,8 +1945,7 @@ MachineBasicBlock *HexagonHardwareLoops::createPreheaderForLoop(
 
   TB = FB = nullptr;
 
-  for (MBBVector::iterator I = Preds.begin(), E = Preds.end(); I != E; ++I) {
-    MachineBasicBlock *PB = *I;
+  for (MachineBasicBlock *PB : Preds) {
     if (PB != Latch) {
       Tmp2.clear();
       bool NotAnalyzed = TII->analyzeBranch(*PB, TB, FB, Tmp2, false);

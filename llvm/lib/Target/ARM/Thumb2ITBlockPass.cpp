@@ -183,7 +183,7 @@ Thumb2ITBlock::MoveCopyOutOfITBlock(MachineInstr *MI,
     ++I;
 
   if (I != E) {
-    unsigned NPredReg = 0;
+    Register NPredReg;
     ARMCC::CondCodes NCC = getITInstrPredicate(*I, NPredReg);
     if (NCC == CC || NCC == OCC)
       return true;
@@ -199,7 +199,7 @@ bool Thumb2ITBlock::InsertITInstructions(MachineBasicBlock &MBB) {
   while (MBBI != E) {
     MachineInstr *MI = &*MBBI;
     DebugLoc dl = MI->getDebugLoc();
-    unsigned PredReg = 0;
+    Register PredReg;
     ARMCC::CondCodes CC = getITInstrPredicate(*MI, PredReg);
     if (CC == ARMCC::AL) {
       ++MBBI;
@@ -226,9 +226,10 @@ bool Thumb2ITBlock::InsertITInstructions(MachineBasicBlock &MBB) {
     ARMCC::CondCodes OCC = ARMCC::getOppositeCondition(CC);
     unsigned Mask = 0, Pos = 3;
 
-    // v8 IT blocks are limited to one conditional op unless -arm-no-restrict-it
+    // IT blocks are limited to one conditional op if -arm-restrict-it
     // is set: skip the loop
     if (!restrictIT) {
+      LLVM_DEBUG(dbgs() << "Allowing complex IT block\n";);
       // Branches, including tricky ones like LDM_RET, need to end an IT
       // block so check the instruction we just put in the block.
       for (; MBBI != E && Pos &&
@@ -239,7 +240,7 @@ bool Thumb2ITBlock::InsertITInstructions(MachineBasicBlock &MBB) {
         MachineInstr *NMI = &*MBBI;
         MI = NMI;
 
-        unsigned NPredReg = 0;
+        Register NPredReg;
         ARMCC::CondCodes NCC = getITInstrPredicate(*NMI, NPredReg);
         if (NCC == CC || NCC == OCC) {
           Mask |= ((NCC ^ CC) & 1) << Pos;
