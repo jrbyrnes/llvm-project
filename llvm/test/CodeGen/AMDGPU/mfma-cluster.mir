@@ -1,0 +1,54 @@
+# RUN: llc -march=amdgcn -mcpu=gfx90a -start-before=machine-scheduler %s -o - -amdgpu-mfma-cluster=1 --debug-only=amdgpu-subtarget,machine-scheduler  2>&1 | FileCheck -check-prefix=DEFAULT %s
+# RUN: llc -march=amdgcn -mcpu=gfx90a -start-before=machine-scheduler %s -o - -amdgpu-mfma-cluster=1 -amdgpu-mfma-cluster-size=2 --misched-bottomup --debug-only=amdgpu-subtarget,machine-scheduler  2>&1 | FileCheck -check-prefix=TWOLIMIT %s
+
+
+# DEFAULT: Cluster MFMA SU(2) - SU(6)
+# DEFAULT-NEXT: Copying Preds from SU(6):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec 
+# DEFAULT-NEXT: To SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: Copy Pred SU(5) 
+# DEFAULT-NEXT: Copy Pred SU(4)
+# DEFAULT-NEXT: Cluster MFMA SU(2) - SU(10)
+# DEFAULT-NEXT: Copying Preds from SU(10):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: To SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: Copy Pred SU(5)
+# DEFAULT-NEXT: Copy Pred SU(4)
+# DEFAULT-NEXT: Cluster MFMA SU(2) - SU(12)
+# DEFAULT-NEXT: Copying Preds from SU(12):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: To SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: Copy Pred SU(1)
+# DEFAULT-NEXT: Copy Pred SU(0)
+
+
+# TWOLIMIT: Cluster MFMA SU(2) - SU(6)
+# TWOLIMIT-NEXT:Copying Preds from SU(6):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: To SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: Copy Pred SU(5)
+# TWOLIMIT-NEXT: Copy Pred SU(4)
+# TWOLIMIT-NEXT: Cluster MFMA SU(10) - SU(11)
+# TWOLIMIT-NEXT: Copying Preds from SU(11):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0,  0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: To SU(10):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: Copy Pred SU(9)
+# TWOLIMIT-NEXT: Copy Pred SU(8)
+# TWOLIMIT-NEXT: Copy Pred SU(6)
+
+---
+name: sched_test
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins:  $agpr0_agpr1_agpr2_agpr3, $agpr4_agpr5_agpr6_agpr7,  $agpr8_agpr9_agpr10_agpr11, $agpr12_agpr13_agpr14_agpr15
+    $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+    $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+    $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+    $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+    $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+    $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+    $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+
+...
