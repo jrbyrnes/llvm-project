@@ -1,0 +1,247 @@
+# REQUIRES : asserts
+# RUN: llc -march=amdgcn -mcpu=gfx90a -run-pass=machine-scheduler %s -o - --debug-only=amdgpu-subtarget,machine-scheduler  2>&1 | FileCheck -check-prefix=DEFAULT %s
+# RUN: llc -march=amdgcn -mcpu=gfx90a -run-pass=machine-scheduler %s -o - -amdgpu-mfma-cluster=1 --debug-only=amdgpu-subtarget,machine-scheduler  2>&1 | FileCheck -check-prefix=PRERA %s
+# RUN: llc -march=amdgcn -mcpu=gfx90a -run-pass=machine-scheduler %s -o - -amdgpu-mfma-cluster=1 -amdgpu-mfma-cluster-size=2 --debug-only=amdgpu-subtarget,machine-scheduler  2>&1 | FileCheck -check-prefix=TWOLIMIT %s
+# RUN: llc -march=amdgcn -mcpu=gfx90a -start-before=si-post-ra-bundler %s -o - -amdgpu-mfma-cluster=1 --debug-only=amdgpu-subtarget,machine-scheduler 2>&1| FileCheck -check-prefix=POSTRA %s
+
+
+---
+name: no_cluster
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $sgpr0, $vgpr10_vgpr11
+    $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+    $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+    $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+    GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+    $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+    $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+    $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+    $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+    $vgpr7 = GLOBAL_LOAD_USHORT $vgpr8_vgpr9, 0, 0, implicit $exec
+...
+
+# PRERA: *** Final schedule for %bb.0 ***
+# PRERA-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(4):   $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(5):   GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+# PRERA-NEXT: SU(6):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(7):   $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+# PRERA-NEXT: SU(8):   $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+# PRERA-NEXT: SU(2):   $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+# PRERA-NEXT: SU(3):   $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+# PRERA-NEXT: SU(11):   $vgpr7 = GLOBAL_LOAD_USHORT $vgpr8_vgpr9, 0, 0, implicit $exec
+# PRERA-NEXT: SU(9):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# PRERA-NEXT: SU(10):   $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+
+# DEFAULT: *** Final schedule for %bb.0 ***
+# DEFAULT-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(4):   $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(5):   GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(6):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(7):   $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(8):   $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(2):   $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+# DEFAULT-NEXT: SU(3):   $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+# DEFAULT-NEXT: SU(11):   $vgpr7 = GLOBAL_LOAD_USHORT $vgpr8_vgpr9, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(9):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# DEFAULT-NEXT: SU(10):   $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+
+---
+name: basic_cluster
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins:  $agpr0_agpr1_agpr2_agpr3, $agpr4_agpr5_agpr6_agpr7,  $agpr8_agpr9_agpr10_agpr11, $agpr12_agpr13_agpr14_agpr15
+    $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+    $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+    $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+    $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+    $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+    $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+    $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+...
+
+# DEFAULT: *** Final schedule for %bb.0 ***
+# DEFAULT-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(4):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(5):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(6):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(7):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# DEFAULT-NEXT: SU(10):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(8):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(9):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(11):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(12):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(3):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+
+# PRERA: Cluster MFMA SU(2) - SU(6)
+# PRERA-NEXT: Cluster MFMA SU(2) - SU(10)
+# PRERA-NEXT: Cluster MFMA SU(2) - SU(12)
+# PRERA: *** Final schedule for %bb.0 ***
+# PRERA-NEXT: SU(4):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(5):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(6):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(10):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(7):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# PRERA-NEXT: SU(12):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(8):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(9):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(11):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(3):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+
+# TWOLIMIT: Cluster MFMA SU(2) - SU(6)
+# TWOLIMIT: Cluster MFMA SU(10) - SU(11)
+# TWOLIMIT: *** Final schedule for %bb.0 ***
+# TWOLIMIT-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# TWOLIMIT-NEXT: SU(4):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# TWOLIMIT-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# TWOLIMIT-NEXT: SU(5):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# TWOLIMIT-NEXT: SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: SU(6):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: SU(7):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# TWOLIMIT-NEXT: SU(8):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# TWOLIMIT-NEXT: SU(9):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# TWOLIMIT-NEXT: SU(10):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: SU(11):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# TWOLIMIT-NEXT: SU(12):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+
+
+# POSTRA: Cluster MFMA SU(2) - SU(6)
+# POSTRA-NEXT: Cluster MFMA SU(2) - SU(10)
+# POSTRA-NEXT: Cluster MFMA SU(2) - SU(12)
+# POSTRA: *** Final schedule for %bb.0 ***
+# POSTRA-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(4):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(7):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# POSTRA-NEXT: SU(8):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(5):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(2):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(9):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(12):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(3):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(6):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(10):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(11):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+
+---
+name: complex_cluster
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins:  $agpr0_agpr1_agpr2_agpr3, $agpr4_agpr5_agpr6_agpr7,  $agpr8_agpr9_agpr10_agpr11, $agpr12_agpr13_agpr14_agpr15, $sgpr0, $vgpr10_vgpr11 
+    $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+    $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+    $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+    GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+    $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+    $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+    $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+    $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+    $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+    $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+    $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+    $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+    $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+    $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+...
+
+# DEFAULT: *** Final schedule for %bb.0 ***
+# DEFAULT-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(4):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(8):   $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(9):   GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(5):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(6):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(10):   $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(20):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(7):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(11):   $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+# DEFAULT-NEXT: SU(12):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(13):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# DEFAULT-NEXT: SU(16):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(14):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(15):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# DEFAULT-NEXT: SU(17):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# DEFAULT-NEXT: SU(18):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# DEFAULT-NEXT: SU(19):   $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+# DEFAULT-NEXT: SU(2):   $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+# DEFAULT-NEXT: SU(3):   $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+
+# PRERA: Cluster MFMA SU(12) - SU(16)
+# PRERA-NEXT: Cluster MFMA SU(12) - SU(20)
+# PRERA: *** Final schedule for %bb.0 ***
+# PRERA-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(4):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(8):   $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(9):   GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+# PRERA-NEXT: SU(5):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(6):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(10):   $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+# PRERA-NEXT: SU(7):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(11):   $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+# PRERA-NEXT: SU(16):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(12):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(13):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# PRERA-NEXT: SU(20):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(14):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(15):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# PRERA-NEXT: SU(17):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# PRERA-NEXT: SU(18):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# PRERA-NEXT: SU(19):   $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+# PRERA-NEXT: SU(2):   $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+# PRERA-NEXT: SU(3):   $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+
+
+# POSTRA: Cluster MFMA SU(12) - SU(16)
+# POSTRA-NEXT: Cluster MFMA SU(12) - SU(20)
+# POSTRA: *** Final schedule for %bb.0 ***
+# POSTRA-NEXT: SU(0):   $vgpr1 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(1):   $vgpr0 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(5):   $vgpr2 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(6):   $vgpr3 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(7):   $vgpr4 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(4):   $agpr0_agpr1_agpr2_agpr3 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr0_agpr1_agpr2_agpr3, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(8):   $vgpr1 = V_ADD_F16_e32 $vgpr1, $vgpr0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(9):   GLOBAL_STORE_DWORD $vgpr10_vgpr11, $vgpr1, 0, 0, implicit $exec
+# POSTRA-NEXT: SU(10):   $vgpr3 = DS_READ_U16_gfx9 $vgpr2, 0, 0, implicit $exec
+# POSTRA-NEXT: SU(11):   $vgpr4 = GLOBAL_LOAD_USHORT $vgpr0_vgpr1, 0, 0, implicit $exec
+# POSTRA-NEXT: SU(13):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# POSTRA-NEXT: SU(14):   $vgpr5 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(15):   $vgpr6 = V_MOV_B32_e32 1, implicit $exec
+# POSTRA-NEXT: SU(2):   $vgpr8 = V_MOV_B32_e32 0, implicit $exec
+# POSTRA-NEXT: SU(3):   $vgpr9 = V_MOV_B32_e32 9, implicit $exec
+# POSTRA-NEXT: SU(12):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(20):   $agpr12_agpr13_agpr14_agpr15 = V_MFMA_F32_4X4X1F32_e64 $vgpr1, $vgpr0, $agpr12_agpr13_agpr14_agpr15, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(16):   $agpr8_agpr9_agpr10_agpr11 = V_MFMA_F32_4X4X1F32_e64 $vgpr3, $vgpr4, $agpr8_agpr9_agpr10_agpr11, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(17):   $agpr4_agpr5_agpr6_agpr7 = V_MFMA_F32_4X4X1F32_e64 $vgpr5, $vgpr6, $agpr4_agpr5_agpr6_agpr7, 0, 0, 0, implicit $mode, implicit $exec
+# POSTRA-NEXT: SU(18):   $vgpr5 = V_XOR_B32_e32 $vgpr1, $vgpr0, implicit $exec
+# POSTRA-NEXT: SU(19):   $vgpr6 = V_MUL_LO_U32_e64 $vgpr1, $sgpr0, implicit $exec
+
