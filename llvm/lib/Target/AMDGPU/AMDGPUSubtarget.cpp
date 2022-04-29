@@ -54,15 +54,6 @@ static cl::opt<bool> UseAA("amdgpu-use-aa-in-codegen",
                            cl::desc("Enable the use of AA during codegen."),
                            cl::init(true));
 
-static cl::opt<bool> EnableMFMACluster("amdgpu-mfma-cluster",
-                                       cl::desc("Enable MFMA clustering"),
-                                       cl::init(false));
-
-static cl::opt<unsigned>
-    MFMAClusterSize("amdgpu-mfma-cluster-size", cl::init(5), cl::Hidden,
-                    cl::desc("The maximum number of MFMA insts to "
-                             "attempt to cluster together."));
-
 GCNSubtarget::~GCNSubtarget() = default;
 
 GCNSubtarget &
@@ -843,124 +834,6 @@ void GCNSubtarget::adjustSchedDependency(SUnit *Def, int DefOpIdx, SUnit *Use,
 }
 
 namespace {
-struct MFMAClusterDAGMutation : ScheduleDAGMutation {
-  const SIInstrInfo *TII;
-  ScheduleDAGMI *DAG;
-
-  MFMAClusterDAGMutation(const SIInstrInfo *tii) : TII(tii) {}
-
-  void collectMFMASUnits(SmallVectorImpl<SUnit *> &MFMASUnits) {
-    for (SUnit &SU : DAG->SUnits) {
-      MachineInstr &MAI = *SU.getInstr();
-      if (!TII->isMAI(MAI) ||
-          MAI.getOpcode() == AMDGPU::V_ACCVGPR_WRITE_B32_e64 ||
-          MAI.getOpcode() == AMDGPU::V_ACCVGPR_READ_B32_e64)
-        continue;
-
-      MFMASUnits.push_back(&SU);
-
-      LLVM_DEBUG(dbgs() << "Found MFMA: "; DAG->dumpNode(SU););
-    }
-  }
-
-  void clusterNeighboringMFMAs(llvm::ArrayRef<SUnit *> MFMASUnits) {
-
-    DenseMap<unsigned, unsigned> SUnit2ClusterInfo;
-
-    for (unsigned Idx = 0, End = MFMASUnits.size(); Idx < (End - 1); ++Idx) {
-      if (SUnit2ClusterInfo.count(MFMASUnits[Idx]->NodeNum))
-        continue; // we don't want to cluster against a different cluster
-
-      auto MFMAOpa = MFMASUnits[Idx];
-      SmallVector<SDep, 4> ClusterSuccs(MFMAOpa->Succs);
-      unsigned NextIdx = Idx + 1;
-      unsigned ClusterSize = 1;
-
-      // Attempt to cluster all the remaining MFMASunits with MFMAOpa
-      // Clustering in this manner allows for nicely handling the preds and
-      // succs s.t. they dont get interspersed in the cluster
-      while (NextIdx < End) {
-        if (ClusterSize >= MFMAClusterSize)
-          break;
-
-        for (; NextIdx < End; ++NextIdx) {
-          // Only add independent MFMAs that have not been previously clustered
-          if (!SUnit2ClusterInfo.count(MFMASUnits[NextIdx]->NodeNum) &&
-              !DAG->IsReachable(MFMASUnits[NextIdx], MFMAOpa) &&
-              !DAG->IsReachable(MFMAOpa, MFMASUnits[NextIdx]))
-            break;
-        }
-        if (NextIdx == End)
-          break;
-
-        auto MFMAOpb = MFMASUnits[NextIdx];
-        if (MFMAOpa->NodeNum > MFMAOpb->NodeNum)
-          std::swap(MFMAOpa, MFMAOpb);
-
-        DAG->addEdge(MFMAOpb, SDep(MFMAOpa, SDep::Cluster));
-
-        LLVM_DEBUG(dbgs() << "Cluster MFMA SU(" << MFMAOpa->NodeNum << ") - SU("
-                          << MFMAOpb->NodeNum << ")\n");
-
-        LLVM_DEBUG(dbgs() << "Copying Preds from "; DAG->dumpNode(*MFMAOpb);
-                   dbgs() << "To "; DAG->dumpNode(*MFMAOpa););
-
-        SmallVector<SDep, 4> OpaPreds(MFMAOpa->Preds);
-        for (const SDep &Pred : MFMAOpb->Preds) {
-          if (Pred.getSUnit() == MFMAOpa)
-            continue;
-          LLVM_DEBUG(dbgs()
-                     << "Copy Pred SU(" << Pred.getSUnit()->NodeNum << ")\n");
-          DAG->addEdge(MFMAOpa, SDep(Pred.getSUnit(), SDep::Artificial));
-        }
-
-        SUnit2ClusterInfo[MFMAOpb->NodeNum] = MFMAOpa->NodeNum;
-        SUnit2ClusterInfo[MFMAOpa->NodeNum] = MFMAOpa->NodeNum;
-        ++ClusterSize;
-        // Aggregate the succs over each inst in the cluster
-        ClusterSuccs.append(MFMAOpb->Succs);
-      }
-
-      for (auto Node : SUnit2ClusterInfo) {
-        if (Node.second != MFMAOpa->NodeNum)
-          continue; // only add the combined succs to the current cluster
-
-        for (const SDep &Succ : ClusterSuccs) {
-          if (Succ.getSUnit() == &DAG->SUnits[Node.first])
-            continue;
-
-          DAG->addEdge(Succ.getSUnit(),
-                       SDep(&DAG->SUnits[Node.first], SDep::Artificial));
-        }
-      }
-    }
-  }
-
-  void apply(ScheduleDAGInstrs *DAGInstrs) override {
-    const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
-    const SIMachineFunctionInfo *MFI =
-        DAGInstrs->MF.getInfo<SIMachineFunctionInfo>();
-    // The purpose of clustering is to aid with multive wave scheduling
-    // If our occupancy doesn't support multi waves, bypass clustering
-    if (!ST.hasMAIInsts() || MFI->getOccupancy() < 2)
-      return;
-    DAG = static_cast<ScheduleDAGMI *>(DAGInstrs);
-    const TargetSchedModel *TSchedModel = DAGInstrs->getSchedModel();
-    if (!TSchedModel || DAG->SUnits.empty())
-      return;
-
-    SmallVector<SUnit *, 32> MFMASUnits;
-    collectMFMASUnits(MFMASUnits);
-
-    if (MFMASUnits.size() < 2)
-      return;
-
-    clusterNeighboringMFMAs(MFMASUnits);
-  }
-};
-} // namespace
-
-namespace {
 struct FillMFMAShadowMutation : ScheduleDAGMutation {
   const SIInstrInfo *TII;
 
@@ -1088,15 +961,8 @@ struct FillMFMAShadowMutation : ScheduleDAGMutation {
 void GCNSubtarget::getPostRAMutations(
     std::vector<std::unique_ptr<ScheduleDAGMutation>> &Mutations) const {
   Mutations.push_back(std::make_unique<FillMFMAShadowMutation>(&InstrInfo));
-  Mutations.push_back(std::make_unique<MFMAClusterDAGMutation>(&InstrInfo));
 }
 
-std::unique_ptr<ScheduleDAGMutation>
-GCNSubtarget::createMFMAClusterDAGMutation(const TargetInstrInfo *TII) const {
-  return EnableMFMACluster
-             ? std::make_unique<MFMAClusterDAGMutation>(&InstrInfo)
-             : nullptr;
-}
 
 std::unique_ptr<ScheduleDAGMutation>
 GCNSubtarget::createFillMFMAShadowMutation(const TargetInstrInfo *TII) const {

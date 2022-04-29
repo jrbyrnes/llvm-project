@@ -1160,9 +1160,6 @@ public:
       const override;
 
   std::unique_ptr<ScheduleDAGMutation>
-  createMFMAClusterDAGMutation(const TargetInstrInfo *TII) const;
-
-  std::unique_ptr<ScheduleDAGMutation>
   createFillMFMAShadowMutation(const TargetInstrInfo *TII) const;
 
   bool isWave32() const {

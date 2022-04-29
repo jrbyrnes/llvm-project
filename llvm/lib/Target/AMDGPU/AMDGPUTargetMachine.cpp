@@ -16,6 +16,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUAliasAnalysis.h"
 #include "AMDGPUExportClustering.h"
+#include "AMDGPUMFMAClustering.h"
 #include "AMDGPUMacroFusion.h"
 #include "AMDGPUTargetObjectFile.h"
 #include "AMDGPUTargetTransformInfo.h"
@@ -395,7 +396,7 @@ createGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
     new GCNScheduleDAGMILive(C, std::make_unique<GCNMaxOccupancySchedStrategy>(C));
   const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
   DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
-  DAG->addMutation(ST.createMFMAClusterDAGMutation(DAG->TII));
+  DAG->addMutation(createMFMAClusterDAGMutation());
   DAG->addMutation(createAMDGPUMacroFusionDAGMutation());
   DAG->addMutation(createAMDGPUExportClusteringDAGMutation());
   return DAG;
@@ -877,7 +878,7 @@ public:
     const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
     DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
     DAG->addMutation(ST.createFillMFMAShadowMutation(DAG->TII));
-    DAG->addMutation(ST.createMFMAClusterDAGMutation(DAG->TII));
+    DAG->addMutation(createMFMAClusterDAGMutation());
     return DAG;
   }
 
