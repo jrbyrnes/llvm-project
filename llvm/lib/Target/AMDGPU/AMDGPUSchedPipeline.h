@@ -1,4 +1,4 @@
-//===- AMDGPUMFMAClustering.h - AMDGPU MFMA Clustering ------*- C++ -*-===//
+//===- AMDGPUSchedPipeline.h - AMDGPU Schedule Pipelining --------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -14,7 +14,7 @@
 
 namespace llvm {
 
-std::unique_ptr<ScheduleDAGMutation> createMFMAClusterDAGMutation();
+std::unique_ptr<ScheduleDAGMutation> createSchedPipelineDAGMutation();
 
 } // namespace llvm
 
