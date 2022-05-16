@@ -177,34 +177,46 @@ InFlightDiagnostic Parser::emitWrongTokenError(const Twine &message) {
   if (state.curToken.is(Token::eof))
     loc = SMLoc::getFromPointer(loc.getPointer() - 1);
 
+  // This is the location we were originally asked to report the error at.
+  auto originalLoc = loc;
+
   // Determine if the token is at the start of the current line.
   const char *bufferStart = state.lex.getBufferBegin();
   const char *curPtr = loc.getPointer();
 
+  // Use this StringRef to keep track of what we are going to back up through,
+  // it provides nicer string search functions etc.
+  StringRef startOfBuffer(bufferStart, curPtr - bufferStart);
+
   // Back up over entirely blank lines.
   while (1) {
     // Back up until we see a \n, but don't look past the buffer start.
-    curPtr = StringRef(bufferStart, curPtr - bufferStart).rtrim(" \t").end();
+    startOfBuffer = startOfBuffer.rtrim(" \t");
 
     // For tokens with no preceding source line, just emit at the original
     // location.
-    if (curPtr == bufferStart || curPtr[-1] != '\n')
-      return emitError(loc, message);
+    if (startOfBuffer.empty())
+      return emitError(originalLoc, message);
+
+    // If we found something that isn't the end of line, then we're done.
+    if (startOfBuffer.back() != '\n' && startOfBuffer.back() != '\r')
+      return emitError(SMLoc::getFromPointer(startOfBuffer.end()), message);
+
+    // Drop the \n so we emit the diagnostic at the end of the line.
+    startOfBuffer = startOfBuffer.drop_back();
 
     // Check to see if the preceding line has a comment on it.  We assume that a
     // `//` is the start of a comment, which is mostly correct.
     // TODO: This will do the wrong thing for // in a string literal.
-    --curPtr;
-    auto prevLine = StringRef(bufferStart, curPtr - bufferStart);
-    size_t newLineIndex = prevLine.rfind('\n');
+    auto prevLine = startOfBuffer;
+    size_t newLineIndex = prevLine.find_last_of("\n\r");
     if (newLineIndex != StringRef::npos)
       prevLine = prevLine.drop_front(newLineIndex);
+
+    // If we find a // in the current line, then emit the diagnostic before it.
     size_t commentStart = prevLine.find("//");
     if (commentStart != StringRef::npos)
-      curPtr = prevLine.begin() + commentStart;
-
-    // Otherwise, we can move backwards at least this line.
-    loc = SMLoc::getFromPointer(curPtr);
+      startOfBuffer = startOfBuffer.drop_back(prevLine.size() - commentStart);
   }
 }
 
@@ -1629,52 +1641,38 @@ FailureOr<OperationName> OperationParser::parseCustomOperationName() {
   std::string opName = getTokenSpelling().str();
   if (opName.empty())
     return (emitError("empty operation name is invalid"), failure());
-
   consumeToken();
 
+  // Check to see if this operation name is already registered.
   Optional<RegisteredOperationName> opInfo =
       RegisteredOperationName::lookup(opName, getContext());
-  StringRef defaultDialect = getState().defaultDialectStack.back();
-  Dialect *dialect = nullptr;
-  if (opInfo) {
-    dialect = &opInfo->getDialect();
-  } else {
-    if (StringRef(opName).contains('.')) {
-      // This op has a dialect, we try to check if we can register it in the
-      // context on the fly.
-      StringRef dialectName = StringRef(opName).split('.').first;
-      dialect = getContext()->getLoadedDialect(dialectName);
-      if (!dialect && (dialect = getContext()->getOrLoadDialect(dialectName)))
-        opInfo = RegisteredOperationName::lookup(opName, getContext());
-    } else {
-      // If the operation name has no namespace prefix we lookup the current
-      // default dialect (set through OpAsmOpInterface).
-      opInfo = RegisteredOperationName::lookup(
-          Twine(defaultDialect + "." + opName).str(), getContext());
-      if (opInfo) {
-        dialect = &opInfo->getDialect();
-        opName = opInfo->getStringRef().str();
-      } else if (!defaultDialect.empty()) {
-        dialect = getContext()->getOrLoadDialect(defaultDialect);
-        opName = (defaultDialect + "." + opName).str();
-      }
-    }
+  if (opInfo)
+    return *opInfo;
+
+  // If the operation doesn't have a dialect prefix try using the default
+  // dialect.
+  auto opNameSplit = StringRef(opName).split('.');
+  StringRef dialectName = opNameSplit.first;
+  if (opNameSplit.second.empty()) {
+    dialectName = getState().defaultDialectStack.back();
+    opName = (dialectName + "." + opName).str();
   }
 
+  // Try to load the dialect before returning the operation name to make sure
+  // the operation has a chance to be registered.
+  getContext()->getOrLoadDialect(dialectName);
   return OperationName(opName, getContext());
 }
 
 Operation *
 OperationParser::parseCustomOperation(ArrayRef<ResultRecord> resultIDs) {
   SMLoc opLoc = getToken().getLoc();
+  StringRef originalOpName = getTokenSpelling();
 
   FailureOr<OperationName> opNameInfo = parseCustomOperationName();
   if (failed(opNameInfo))
     return nullptr;
-
   StringRef opName = opNameInfo->getStringRef();
-  Dialect *dialect = opNameInfo->getDialect();
-  Optional<RegisteredOperationName> opInfo = opNameInfo->getRegisteredInfo();
 
   // This is the actual hook for the custom op parsing, usually implemented by
   // the op itself (`Op::parse()`). We retrieve it either from the
@@ -1683,7 +1681,7 @@ OperationParser::parseCustomOperation(ArrayRef<ResultRecord> resultIDs) {
   bool isIsolatedFromAbove = false;
 
   StringRef defaultDialect = "";
-  if (opInfo) {
+  if (auto opInfo = opNameInfo->getRegisteredInfo()) {
     parseAssemblyFn = opInfo->getParseAssemblyFn();
     isIsolatedFromAbove = opInfo->hasTrait<OpTrait::IsIsolatedFromAbove>();
     auto *iface = opInfo->getInterface<OpAsmOpInterface>();
@@ -1691,10 +1689,13 @@ OperationParser::parseCustomOperation(ArrayRef<ResultRecord> resultIDs) {
       defaultDialect = iface->getDefaultDialect();
   } else {
     Optional<Dialect::ParseOpHook> dialectHook;
-    if (dialect)
+    if (Dialect *dialect = opNameInfo->getDialect())
       dialectHook = dialect->getParseOperationHook(opName);
     if (!dialectHook.hasValue()) {
-      emitError(opLoc) << "custom op '" << opName << "' is unknown";
+      InFlightDiagnostic diag =
+          emitError(opLoc) << "custom op '" << originalOpName << "' is unknown";
+      if (originalOpName != opName)
+        diag << " (tried '" << opName << "' as well)";
       return nullptr;
     }
     parseAssemblyFn = *dialectHook;
