@@ -240,6 +240,7 @@ static void addPipelineEdges(llvm::ArrayRef<llvm::ArrayRef<SUnit *>> Groups,
   }
 }
 
+/*
 void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
   TII = ST.getInstrInfo();
@@ -263,10 +264,10 @@ void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   collectSUnits(MFMASUnits, VMEMReadSUnits, DSWriteSUnits, DSReadSUnits, TII, DAG);
 
   addPipelineEdges(Groups, DAG);
-}
+}*/
 
 
-void PipelineDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
+void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
   TII = ST.getInstrInfo();
   if (!ST.hasMAIInsts())
@@ -283,14 +284,15 @@ void PipelineDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   SmallVector<SUnit *, 32> DSWriteSUnits;
   SmallVector<SUnit *, 32> DSReadSUnits;
 
-  SmallVector<SmallVectorImpl<Sunit *>, 4> Groups = {&VMEMReadSunits, &DSReadSunits,
-                                                     &MFMASUnits, &DSWriteSunits};
+  SmallVector<llvm::ArrayRef<SUnit *>, 4> Groups = {VMEMReadSUnits, DSReadSUnits,
+                                                    MFMASUnits, DSWriteSUnits};
 
   collectSUnits(MFMASUnits, VMEMReadSUnits, DSWriteSUnits, DSReadSUnits, TII, DAG);
 
   addPipelineEdges(Groups, DAG);
 }
 
+/*
 static void collectSUnits(SmallVectorImpl<SUnit *> &MFMASUnits,
                               SmallVectorImpl<SUnit *> &VMEMReadSUnits,
                               SmallVectorImpl<SUnit *> &DSWriteSUnits,
@@ -344,7 +346,7 @@ static void addPipelineEdges(SmallVectorImpl<SmallVectorImpl<SUnit *>> Groups,
     }
   }
 }
-
+*/
 } // namespace
 
 namespace llvm {
