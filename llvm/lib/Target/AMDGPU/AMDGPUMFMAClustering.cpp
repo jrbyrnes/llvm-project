@@ -141,7 +141,7 @@ static void clusterNeighboringMFMAs(llvm::ArrayRef<SUnit *> MFMASUnits,
                   DAG);
   }
 }
-
+/*
 void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
   TII = ST.getInstrInfo();
@@ -160,6 +160,111 @@ void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
 
   clusterNeighboringMFMAs(MFMASUnits, DAG);
 }
+void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
+  const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
+  TII = ST.getInstrInfo();
+  if (!ST.hasMAIInsts())
+    return;
+  DAG = static_cast<ScheduleDAGMI *>(DAGInstrs);
+  const TargetSchedModel *TSchedModel = DAGInstrs->getSchedModel();
+  if (!TSchedModel || DAG->SUnits.empty())
+    return;
+
+  // TODO -- data structure and ENUM to 
+  // have extensible "chunk" ordering?
+  SmallVector<SUnit *, 32> MFMASUnits;
+  SmallVector<SUnit *, 32> VMEMReadSUnits;
+  SmallVector<SUnit *, 32> DSWriteSUnits;
+  SmallVector<SUnit *, 32> DSReadSUnits;
+
+  SmallVector<llvm::ArrayRef<SUnit *>, 4> Groups = {&VMEMReadSUnits, &DSReadSUnits,
+                                                     &MFMASUnits, &DSWriteSUnits};
+
+  collectSUnits(MFMASUnits, VMEMReadSUnits, DSWriteSUnits, DSReadSUnits, TII, DAG);
+
+  addPipelineEdges(Groups, DAG);
+}
+*/
+
+static void collectSUnits(SmallVectorImpl<SUnit *> &MFMASUnits,
+                              SmallVectorImpl<SUnit *> &VMEMReadSUnits,
+                              SmallVectorImpl<SUnit *> &DSWriteSUnits,
+                              SmallVectorImpl<SUnit *> &DSReadSUnits,
+                              const SIInstrInfo *TII, ScheduleDAGInstrs *DAG) {
+  for (SUnit &SU : DAG->SUnits) {
+    MachineInstr &MI = *SU.getInstr();
+
+    if (TII->isMAI(MI) &&
+        MI.getOpcode() != AMDGPU::V_ACCVGPR_WRITE_B32_e64 &&
+        MI.getOpcode() != AMDGPU::V_ACCVGPR_READ_B32_e64) {
+      MFMASUnits.push_back(&SU);
+      LLVM_DEBUG(dbgs() << "Found MFMA: "; DAG->dumpNode(SU););
+    }
+
+    else if (TII->isDS(MI)) {
+      if (MI.mayLoad()) {
+        DSReadSUnits.push_back(&SU);
+        LLVM_DEBUG(dbgs() << "Found DS Read: "; DAG->dumpNode(SU););
+      }
+      if (MI.mayStore()) {
+        DSWriteSUnits.push_back(&SU);
+        LLVM_DEBUG(dbgs() << "Found DS Write: "; DAG->dumpNode(SU););
+      }
+    }
+
+    else if (TII->isFLAT(MI) || TII->isVMEM(MI)) {
+      // !TII->isDS(MI) is implied by control flow
+      if (MI.mayLoad()) {
+        VMEMReadSUnits.push_back(&SU);
+        LLVM_DEBUG(dbgs() << "Found VMEM read: "; DAG->dumpNode(SU););
+      }
+    }   
+  }
+}
+
+static void addPipelineEdges(llvm::ArrayRef<llvm::ArrayRef<SUnit *>> Groups,
+                             ScheduleDAGInstrs *DAG) {
+  for (int i = 0; i < Groups.size() - 1; i++) {
+    auto GroupA = Groups[i];
+    for (int j = i + 1; j < Groups.size(); j++) {
+      auto GroupB = Groups[j];
+
+      for (auto SUnitA : GroupA) {
+        for (auto SUnitB : GroupB) {
+          if (DAG->canAddEdge(SUnitB, SUnitA)) {
+            DAG->addEdge(SUnitB, SDep(SUnitA, SDep::Artificial));
+          }
+        }
+      }
+    }
+  }
+}
+
+void MFMAClusterDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
+  const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
+  TII = ST.getInstrInfo();
+  if (!ST.hasMAIInsts())
+    return;
+  DAG = static_cast<ScheduleDAGMI *>(DAGInstrs);
+  const TargetSchedModel *TSchedModel = DAGInstrs->getSchedModel();
+  if (!TSchedModel || DAG->SUnits.empty())
+    return;
+
+  // TODO -- data structure and ENUM to 
+  // have extensible "chunk" ordering?
+  SmallVector<SUnit *, 32> MFMASUnits;
+  SmallVector<SUnit *, 32> VMEMReadSUnits;
+  SmallVector<SUnit *, 32> DSWriteSUnits;
+  SmallVector<SUnit *, 32> DSReadSUnits;
+
+  SmallVector<llvm::ArrayRef<SUnit *>, 4> Groups = {VMEMReadSUnits, DSReadSUnits,
+                                                     MFMASUnits, DSWriteSUnits};
+
+  collectSUnits(MFMASUnits, VMEMReadSUnits, DSWriteSUnits, DSReadSUnits, TII, DAG);
+
+  addPipelineEdges(Groups, DAG);
+}
+
 
 void PipelineDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   const GCNSubtarget &ST = DAGInstrs->MF.getSubtarget<GCNSubtarget>();
