@@ -186,3 +186,7 @@ add_subdirectory(Utils)
 add_subdirectory(OptSched)
 
 target_link_libraries(LLVMAMDGPUCodeGen PRIVATE LLVMOptSched)
+
+target_include_directories(LLVMAMDGPUCodeGen PRIVATE OptSched/include OptSched/lib)
+
+
