@@ -84,6 +84,7 @@ static unsigned countOperands(SDNode *Node, unsigned NumExpUses,
 void InstrEmitter::
 EmitCopyFromReg(SDNode *Node, unsigned ResNo, bool IsClone, bool IsCloned,
                 Register SrcReg, DenseMap<SDValue, Register> &VRBaseMap) {
+  errs() << "In emitcopyfromreg\n";
   Register VRBase;
   if (SrcReg.isVirtual()) {
     // Just use the input register directly!
@@ -1157,10 +1158,12 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
   case ISD::TokenFactor: // fall thru
     break;
   case ISD::CopyToReg: {
+    errs() << "Found copyToReg\n"; Node->print(errs()); errs() << "\n";
     Register DestReg = cast<RegisterSDNode>(Node->getOperand(1))->getReg();
     SDValue SrcVal = Node->getOperand(2);
     if (Register::isVirtualRegister(DestReg) && SrcVal.isMachineOpcode() &&
         SrcVal.getMachineOpcode() == TargetOpcode::IMPLICIT_DEF) {
+      errs() << "Emitting IMPLICIT_DEF instead of COPY\n";
       // Instead building a COPY to that vreg destination, build an
       // IMPLICIT_DEF instruction instead.
       BuildMI(*MBB, InsertPos, Node->getDebugLoc(),
@@ -1168,14 +1171,21 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
       break;
     }
     Register SrcReg;
-    if (RegisterSDNode *R = dyn_cast<RegisterSDNode>(SrcVal))
+    if (RegisterSDNode *R = dyn_cast<RegisterSDNode>(SrcVal)) {
+      errs() << "got srcreg from srcval\n";
       SrcReg = R->getReg();
-    else
+    }
+    else {
+      errs() << "used getVR to get srcReg\n";
       SrcReg = getVR(SrcVal, VRBaseMap);
+    }
 
-    if (SrcReg == DestReg) // Coalesced away the copy? Ignore.
+    if (SrcReg == DestReg) {// Coalesced away the copy? Ignore. 
+      errs() << "Src == Dest, skipping\n";
       break;
+    }
 
+    errs() << "Emitting COPY to: " << DestReg.id() << "\n";
     BuildMI(*MBB, InsertPos, Node->getDebugLoc(), TII->get(TargetOpcode::COPY),
             DestReg).addReg(SrcReg);
     break;

@@ -567,6 +567,8 @@ void ScheduleDAGRRList::ReleasePredecessors(SUnit *SU) {
       if (!LiveRegGens[Pred.getReg()]) {
         ++NumLiveRegs;
         LiveRegGens[Pred.getReg()] = SU;
+        errs() << "Added to live regs: " << Pred.getReg();
+        errs() << printReg(Pred.getReg(), TRI);
       }
     }
   }
@@ -1321,6 +1323,7 @@ static void CheckForLiveRegDefMasked(SUnit *SU, const uint32_t *RegMask,
                                      SmallSet<unsigned, 4> &RegAdded,
                                      SmallVectorImpl<unsigned> &LRegs) {
   // Look at all live registers. Skip Reg0 and the special CallResource.
+  errs() << "In checkforliveregdef\n";
   for (unsigned i = 1, e = LiveRegDefs.size()-1; i != e; ++i) {
     if (!LiveRegDefs[i]) continue;
     if (LiveRegDefs[i] == SU) continue;
@@ -1344,8 +1347,11 @@ static const uint32_t *getNodeRegMask(const SDNode *N) {
 /// whatever is necessary (i.e. backtracking or cloning) to make it possible.
 bool ScheduleDAGRRList::
 DelayForLiveRegsBottomUp(SUnit *SU, SmallVectorImpl<unsigned> &LRegs) {
+  dbgs() << "In delay for live regs\n";
   if (NumLiveRegs == 0)
     return false;
+
+  dbgs() << "Nonzero live regs: " << NumLiveRegs << "\n";
 
   SmallSet<unsigned, 4> RegAdded;
   // If this node would clobber any "live" register, then it's not ready.
@@ -1353,12 +1359,16 @@ DelayForLiveRegsBottomUp(SUnit *SU, SmallVectorImpl<unsigned> &LRegs) {
   // If SU is the currently live definition of the same register that it uses,
   // then we are free to schedule it.
   for (SDep &Pred : SU->Preds) {
-    if (Pred.isAssignedRegDep() && LiveRegDefs[Pred.getReg()] != SU)
+    if (!Pred.isAssignedRegDep()) errs() << "Not assignedRegDep\n";
+    if (Pred.isAssignedRegDep() && LiveRegDefs[Pred.getReg()] != SU) {
+      errs() << "is assignedregdep && liveRegDef[reg] != SU!!\n";
       CheckForLiveRegDef(Pred.getSUnit(), Pred.getReg(), LiveRegDefs.get(),
                          RegAdded, LRegs, TRI);
+      }
   }
 
   for (SDNode *Node = SU->getNode(); Node; Node = Node->getGluedNode()) {
+    errs() << "Checking node or glued node\n";
     if (Node->getOpcode() == ISD::INLINEASM ||
         Node->getOpcode() == ISD::INLINEASM_BR) {
       // Inline asm can clobber physical defs.
@@ -1387,8 +1397,10 @@ DelayForLiveRegsBottomUp(SUnit *SU, SmallVectorImpl<unsigned> &LRegs) {
       continue;
     }
 
-    if (!Node->isMachineOpcode())
-      continue;
+    if (!Node->isMachineOpcode()) {
+     errs() << "Not machineop\n";
+     continue;
+    }
     // If we're in the middle of scheduling a call, don't begin scheduling
     // another call. Also, don't allow any physical registers to be live across
     // the call.
@@ -1404,10 +1416,12 @@ DelayForLiveRegsBottomUp(SUnit *SU, SmallVectorImpl<unsigned> &LRegs) {
           LRegs.push_back(CallResource);
       }
     }
-    if (const uint32_t *RegMask = getNodeRegMask(Node))
+    if (const uint32_t *RegMask = getNodeRegMask(Node)) {
       CheckForLiveRegDefMasked(SU, RegMask,
                                makeArrayRef(LiveRegDefs.get(), TRI->getNumRegs()),
                                RegAdded, LRegs);
+    }
+    else errs() << "No RegMask\n";
 
     const MCInstrDesc &MCID = TII->get(Node->getMachineOpcode());
     if (MCID.hasOptionalDef()) {
