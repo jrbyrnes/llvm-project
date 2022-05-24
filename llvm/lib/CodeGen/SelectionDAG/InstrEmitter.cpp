@@ -1158,12 +1158,12 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
   case ISD::TokenFactor: // fall thru
     break;
   case ISD::CopyToReg: {
-    errs() << "Found copyToReg\n"; Node->print(errs()); errs() << "\n";
+    //errs() << "Found copyToReg\n"; Node->print(errs()); errs() << "\n";
     Register DestReg = cast<RegisterSDNode>(Node->getOperand(1))->getReg();
     SDValue SrcVal = Node->getOperand(2);
     if (Register::isVirtualRegister(DestReg) && SrcVal.isMachineOpcode() &&
         SrcVal.getMachineOpcode() == TargetOpcode::IMPLICIT_DEF) {
-      errs() << "Emitting IMPLICIT_DEF instead of COPY\n";
+      //errs() << "Emitting IMPLICIT_DEF instead of COPY\n";
       // Instead building a COPY to that vreg destination, build an
       // IMPLICIT_DEF instruction instead.
       BuildMI(*MBB, InsertPos, Node->getDebugLoc(),
@@ -1172,20 +1172,21 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
     }
     Register SrcReg;
     if (RegisterSDNode *R = dyn_cast<RegisterSDNode>(SrcVal)) {
-      errs() << "got srcreg from srcval\n";
+      //errs() << "got srcreg from srcval\n";
       SrcReg = R->getReg();
     }
     else {
-      errs() << "used getVR to get srcReg\n";
+      //errs() << "used getVR to get srcReg\n";
       SrcReg = getVR(SrcVal, VRBaseMap);
     }
 
     if (SrcReg == DestReg) {// Coalesced away the copy? Ignore. 
-      errs() << "Src == Dest, skipping\n";
+      //errs() << "Src == Dest, skipping\n";
       break;
     }
 
-    errs() << "Emitting COPY to: " << DestReg.id() << "\n";
+
+    //errs() << "Emitting COPY to: " << DestReg.id() << "\n";
     BuildMI(*MBB, InsertPos, Node->getDebugLoc(), TII->get(TargetOpcode::COPY),
             DestReg).addReg(SrcReg);
     break;

@@ -1311,6 +1311,7 @@ static void CheckForLiveRegDef(SUnit *SU, unsigned Reg,
 
     // Add Reg to the set of interfering live regs.
     if (RegAdded.insert(*AliasI).second) {
+      errs() << "Inserted to LRegs\n";
       LRegs.push_back(*AliasI);
     }
   }
@@ -1395,6 +1396,15 @@ DelayForLiveRegsBottomUp(SUnit *SU, SmallVectorImpl<unsigned> &LRegs) {
           i += NumVals;
       }
       continue;
+    }
+
+    if (Node->getOpcode() == ISD::CopyToReg) {
+      unsigned Reg = cast<RegisterSDNode>(Node->getOperand(1))->getReg();
+      if (Register::isPhysicalRegister(Reg)) {
+        errs() << "CopyToReg checkForLiveRegDef\n";
+        CheckForLiveRegDef(SU, Reg, LiveRegDefs.get(), RegAdded, LRegs, TRI);
+        errs() << "CopyToReg checkForLiveRegDef End\n";
+      }
     }
 
     if (!Node->isMachineOpcode()) {

@@ -926,8 +926,23 @@ EmitSchedule(MachineBasicBlock::iterator &InsertPos) {
     SmallVector<SDNode *, 4> GluedNodes;
     for (SDNode *N = SU->getNode()->getGluedNode(); N; N = N->getGluedNode())
       GluedNodes.push_back(N);
+    //if (!GluedNodes.empty()) {errs() << "Processing glues for : "; dumpNode(*SU);}
     while (!GluedNodes.empty()) {
       SDNode *N = GluedNodes.back();
+/*      if (N->getOpcode() == ISD::CopyToReg) {
+        //errs() << "Found glued node "; N->dump();
+	Register DestReg = cast<RegisterSDNode>(N->getOperand(1))->getReg();
+        for (SDNode *User : SU->getNode()->uses()) {
+          //errs() << "Found user of parent node: "; User->dump();
+          for (unsigned i = 0, e = User->getNumOperands(); i != e; ++i) {
+            Register OpReg = cast<RegisterSDNode>(N->getOperand(i))->getReg();
+            //if (OpReg == DestReg) {
+            //  errs() << "HIT on same reg\n";
+            //  N->getOperand(i)->dump();
+            //}
+          }
+        }
+      }*/
       auto NewInsn = EmitNode(N, SU->OrigNode != SU, SU->isCloned, VRBaseMap);
       // Remember the source order of the inserted instruction.
       if (HasDbg)
