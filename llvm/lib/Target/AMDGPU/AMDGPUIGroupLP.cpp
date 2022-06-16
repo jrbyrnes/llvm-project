@@ -23,6 +23,8 @@
 #include "llvm/ADT/BitmaskEnum.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
+#include <algorithm>
+#include <string>
 
 using namespace llvm;
 
@@ -36,41 +38,252 @@ static cl::opt<bool>
                             "their ordering for scheduling"),
                    cl::init(false));
 
-static cl::opt<Optional<unsigned>>
-    VMEMGroupMaxSize("amdgpu-igrouplp-vmem-group-size", cl::init(None),
-                     cl::Hidden,
-                     cl::desc("The maximum number of instructions to include "
-                              "in VMEM group."));
+enum class SchedGroupMask {
+  NONE = 0u,
+  ALU = 1u << 0,
+  VALU = 1u << 1,
+  SALU = 1u << 2,
+  MFMA = 1u << 3,
+  VMEM = 1u << 4,
+  VMEM_READ = 1u << 5,
+  VMEM_WRITE = 1u << 6,
+  DS = 1u << 7,
+  DS_READ = 1u << 8,
+  DS_WRITE = 1u << 9,
+  ALL = ALU | VALU | SALU | MFMA | VMEM | VMEM_READ | VMEM_WRITE | DS |
+        DS_READ | DS_WRITE,
+  LLVM_MARK_AS_BITMASK_ENUM(/* LargestFlag = */ ALL)
+};
 
-static cl::opt<Optional<unsigned>>
-    MFMAGroupMaxSize("amdgpu-igrouplp-mfma-group-size", cl::init(None),
-                     cl::Hidden,
-                     cl::desc("The maximum number of instructions to include "
-                              "in MFMA group."));
+// The order of IGroup stages and their optional sizes as returned
+// by the parser.
+static SmallVector<std::pair<SchedGroupMask, Optional<unsigned>>, 8>
+    IGroupLPOrder;
 
-static cl::opt<Optional<unsigned>>
-    LDRGroupMaxSize("amdgpu-igrouplp-ldr-group-size", cl::init(None),
-                    cl::Hidden,
-                    cl::desc("The maximum number of instructions to include "
-                             "in lds/gds read group."));
+struct IGroupOrderParser
+    : public cl::parser<std::pair<SchedGroupMask, Optional<unsigned>>> {
+  IGroupOrderParser(cl::Option &O)
+      : cl::parser<std::pair<SchedGroupMask, Optional<unsigned>>>(O) {}
 
-static cl::opt<Optional<unsigned>>
-    LDWGroupMaxSize("amdgpu-igrouplp-ldw-group-size", cl::init(None),
-                    cl::Hidden,
-                    cl::desc("The maximum number of instructions to include "
-                             "in lds/gds write group."));
+  // Possible categories that a comma seperated string may
+  // fall into
+  enum Token { tok_start, tok_group, tok_number, tok_error };
 
-typedef function_ref<bool(const MachineInstr &, const SIInstrInfo *)>
-    CanAddMIFn;
+  // The previously encountered token type
+  unsigned PrevToken = tok_start;
+
+  // A bit vector encoding the encountered groups thus far
+  SchedGroupMask ObservedGroups = SchedGroupMask::NONE;
+
+  SchedGroupMask getMaskFromStr(const std::string &Token) {
+    if (Token == "alu")
+      return SchedGroupMask::ALU;
+    else if (Token == "valu")
+      return SchedGroupMask::VALU;
+    else if (Token == "salu")
+      return SchedGroupMask::SALU;
+    else if (Token == "mfma")
+      return SchedGroupMask::MFMA;
+    else if (Token == "vmem")
+      return SchedGroupMask::VMEM;
+    else if (Token == "vmemr")
+      return SchedGroupMask::VMEM_READ;
+    else if (Token == "vmemw")
+      return SchedGroupMask::VMEM_WRITE;
+    else if (Token == "ds")
+      return SchedGroupMask::DS;
+    else if (Token == "dsr")
+      return SchedGroupMask::DS_READ;
+    else if (Token == "dsw")
+      return SchedGroupMask::DS_WRITE;
+
+    else
+      return SchedGroupMask::NONE;
+  }
+
+  // Ensure that we do not have multiple occurances of the same
+  // igroup (including potential SubGroups).
+  unsigned handleGroup(std::string &Token, cl::Option &O,
+                       SchedGroupMask TokenMask) {
+    assert(TokenMask != SchedGroupMask::NONE &&
+           TokenMask != SchedGroupMask::ALL);
+    if ((ObservedGroups & TokenMask) != SchedGroupMask::NONE) {
+      O.error("Multiple occurance of " + Token);
+      return tok_error;
+    }
+
+    SchedGroupMask SubGroupMask = SchedGroupMask::NONE;
+    if (TokenMask == SchedGroupMask::ALU)
+      SubGroupMask =
+          SchedGroupMask::SALU | SchedGroupMask::VALU | SchedGroupMask::MFMA;
+    else if (TokenMask == SchedGroupMask::DS)
+      SubGroupMask = SchedGroupMask::DS_READ | SchedGroupMask::DS_WRITE;
+    else if (TokenMask == SchedGroupMask::VMEM)
+      SubGroupMask = SchedGroupMask::VMEM_READ | SchedGroupMask::VMEM_WRITE;
+
+    if (SubGroupMask != SchedGroupMask::NONE) {
+      if ((ObservedGroups & SubGroupMask) != SchedGroupMask::NONE) {
+        O.error("Multiple occurance " + Token +
+                ". Overlaps with existing SubGroup");
+        return tok_error;
+      }
+    }
+
+    // Add group token to encountered groups
+    ObservedGroups |= TokenMask;
+    // Add sub group token to encountered groups
+    ObservedGroups |= SubGroupMask;
+
+    return tok_group;
+  }
+
+  // Check for properly formatted numbers and igroup strings.
+  // If we are unable to easily find one, then flag as error.
+  unsigned getTokenType(StringRef Value, cl::Option &O,
+                        SchedGroupMask &TokenMask) {
+    std::string Token = Value.str();
+    std::string::const_iterator it = Token.begin();
+
+    // Check for a complete natural number. Decimals and
+    // negatives don't make sense in the context of group size,
+    // and are thus not supported
+    if (std::isdigit(*it)) {
+      while (it != Token.end() && std::isdigit(*it))
+        ++it;
+
+      return (it == Token.end()) ? tok_number : tok_error;
+    }
+
+    if (std::isalpha(*it)) {
+      // Transform the string to lower case to allow for
+      // more matching
+      std::transform(Token.begin(), Token.end(), Token.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+
+      // Check if the token matches with a supported IGroup
+      TokenMask = getMaskFromStr(Token);
+      if (TokenMask != SchedGroupMask::NONE) {
+        return handleGroup(Token, O, TokenMask);
+      }
+    }
+    // Bad alphabetical string, or non alpha/numeric string
+    return tok_error;
+  }
+
+  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg,
+             std::pair<SchedGroupMask, Optional<unsigned>> &Value) {
+    int CurrToken = getTokenType(Arg, O, Value.first);
+
+    if (CurrToken == tok_error)
+      return O.error("Invalid Token '" + Arg + "'");
+
+    switch (PrevToken) {
+    case tok_start:
+    case tok_number:
+      // If there has been no token, or if the previous token was a group size,
+      // then we must encounter a group name.
+      if (CurrToken != tok_group)
+        return O.error("Invalid Token '" + Arg + "'. Expected group token.");
+      break;
+    case tok_group:
+      if (CurrToken == tok_number) {
+        IGroupLPOrder.back().second = std::stoi(Arg.str());
+        break;
+      }
+      // If we previously encountered a group name, and the current token is not
+      // a number, then the current token must be a group name
+      if (CurrToken != tok_group)
+        return O.error("Invalid Token '" + Arg +
+                       "'. Expected group or number token.");
+      break;
+    case tok_error:
+    default:
+      // The only other possible token value is tok_error which is already
+      // handled.
+      llvm_unreachable("Unsupported Token occured");
+    }
+
+    PrevToken = CurrToken;
+    return 0;
+  }
+};
+
+static cl::list<std::string,
+                SmallVector<std::pair<SchedGroupMask, Optional<unsigned>>, 8>,
+                IGroupOrderParser>
+    List("amdgpu-igrouplp-order",
+         cl::desc("This option is used to specify the order of groups and "
+                  "their sizes to be used in AMDGPUIGroupLP. To specify, "
+                  "enter a comma seperated list of groups in {salu, valu, "
+                  "mfma, dsr, dsw, vmemr, vmemw, vmem} and an optional size "
+                  "after each."),
+         cl::CommaSeparated, cl::location(IGroupLPOrder));
 
 // Classify instructions into groups to enable fine tuned control over the
 // scheduler. These groups may be more specific than current SchedModel
 // instruction classes.
 class SchedGroup {
 private:
-  // Function that returns true if a non-bundle MI may be inserted into this
-  // group.
-  const CanAddMIFn canAddMI;
+  // Mask that defines which instruction types can be classified into this
+  // SchedGroup. The instruction types correspond to the mask from SCHED_BARRIER
+  // and SCHED_GROUP_BARRIER.
+  SchedGroupMask SGMask;
+
+  // Use SGMask to determine whether we can classify MI as a member of this
+  // SchedGroup object.
+  bool canAddMI(const MachineInstr &MI) const {
+    bool Result = false;
+    if (MI.isMetaInstruction())
+      Result = false;
+
+    else if (((SGMask & SchedGroupMask::ALU) != SchedGroupMask::NONE) &&
+             (TII->isVALU(MI) || TII->isMFMA(MI) || TII->isSALU(MI)))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::VALU) != SchedGroupMask::NONE) &&
+             TII->isVALU(MI) && !TII->isMFMA(MI))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::SALU) != SchedGroupMask::NONE) &&
+             TII->isSALU(MI))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::MFMA) != SchedGroupMask::NONE) &&
+             TII->isMFMA(MI))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::VMEM) != SchedGroupMask::NONE) &&
+             (TII->isVMEM(MI) || (TII->isFLAT(MI) && !TII->isDS(MI))))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::VMEM_READ) != SchedGroupMask::NONE) &&
+             MI.mayLoad() &&
+             (TII->isVMEM(MI) || (TII->isFLAT(MI) && !TII->isDS(MI))))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::VMEM_WRITE) != SchedGroupMask::NONE) &&
+             MI.mayStore() &&
+             (TII->isVMEM(MI) || (TII->isFLAT(MI) && !TII->isDS(MI))))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::DS) != SchedGroupMask::NONE) &&
+             TII->isDS(MI))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::DS_READ) != SchedGroupMask::NONE) &&
+             MI.mayLoad() && TII->isDS(MI))
+      Result = true;
+
+    else if (((SGMask & SchedGroupMask::DS_WRITE) != SchedGroupMask::NONE) &&
+             MI.mayStore() && TII->isDS(MI))
+      Result = true;
+
+    LLVM_DEBUG(dbgs() << "For SchedGroup with mask "
+                      << format_hex((int)SGMask, 10, true)
+                      << (Result ? " added " : " unable to add ") << MI);
+
+    return Result;
+  }
 
   // Maximum number of SUnits that can be added to this group.
   Optional<unsigned> MaxSize;
@@ -78,7 +291,9 @@ private:
   // Collection of SUnits that are classified as members of this group.
   SmallVector<SUnit *, 32> Collection;
 
-  ScheduleDAGInstrs *DAG;
+  ScheduleDAGInstrs *DAG = nullptr;
+
+  const SIInstrInfo *TII;
 
   void tryAddEdge(SUnit *A, SUnit *B) {
     if (A != B && DAG->canAddEdge(B, A)) {
@@ -124,7 +339,7 @@ public:
   }
 
   // Returns true if no more instructions may be added to this group.
-  bool isFull() { return MaxSize.hasValue() && Collection.size() >= *MaxSize; }
+  bool isFull() { return MaxSize && Collection.size() >= *MaxSize; }
 
   // Returns true if SU can be added to this SchedGroup.
   bool canAddSU(SUnit &SU, const SIInstrInfo *TII) {
@@ -132,9 +347,9 @@ public:
       return false;
 
     MachineInstr &MI = *SU.getInstr();
-    if (MI.getOpcode() != TargetOpcode::BUNDLE)
-      return canAddMI(MI, TII);
-
+    if (MI.getOpcode() != TargetOpcode::BUNDLE) {
+      return canAddMI(MI);
+    }
     // Special case for bundled MIs.
     const MachineBasicBlock *MBB = MI.getParent();
     MachineBasicBlock::instr_iterator B = MI.getIterator(), E = ++B;
@@ -142,50 +357,22 @@ public:
       ++E;
 
     // Return true if all of the bundled MIs can be added to this group.
-    return std::all_of(
-        B, E, [this, TII](MachineInstr &MI) { return canAddMI(MI, TII); });
+    return std::all_of(B, E, [this](MachineInstr &MI) { return canAddMI(MI); });
   }
 
   void add(SUnit &SU) { Collection.push_back(&SU); }
 
-  SchedGroup(CanAddMIFn canAddMI, Optional<unsigned> MaxSize,
+  SchedGroup(SchedGroupMask SGMask) : SGMask(SGMask) {}
+
+  SchedGroup(SchedGroupMask SGMask, Optional<unsigned> MaxSize,
              ScheduleDAGInstrs *DAG)
-      : canAddMI(canAddMI), MaxSize(MaxSize), DAG(DAG) {}
+      : SGMask(SGMask), MaxSize(MaxSize), DAG(DAG) {}
+
+  SchedGroup(SchedGroupMask SGMask, Optional<unsigned> MaxSize,
+             ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
+      : SGMask(SGMask), MaxSize(MaxSize), DAG(DAG), TII(TII) {}
+
 };
-
-bool isMFMASGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return TII->isMFMA(MI);
-}
-
-bool isVALUSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return TII->isVALU(MI) && !TII->isMFMA(MI);
-}
-
-bool isSALUSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return TII->isSALU(MI);
-}
-
-bool isVMEMSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return TII->isVMEM(MI) || (TII->isFLAT(MI) && !TII->isDS(MI));
-}
-
-bool isVMEMReadSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return MI.mayLoad() &&
-         (TII->isVMEM(MI) || (TII->isFLAT(MI) && !TII->isDS(MI)));
-}
-
-bool isVMEMWriteSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return MI.mayStore() &&
-         (TII->isVMEM(MI) || (TII->isFLAT(MI) && !TII->isDS(MI)));
-}
-
-bool isDSWriteSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return MI.mayStore() && TII->isDS(MI);
-}
-
-bool isDSReadSGMember(const MachineInstr &MI, const SIInstrInfo *TII) {
-  return MI.mayLoad() && TII->isDS(MI);
-}
 
 class IGroupLPDAGMutation : public ScheduleDAGMutation {
 public:
@@ -205,23 +392,6 @@ private:
   const SIInstrInfo *TII;
 
   ScheduleDAGMI *DAG;
-
-  // Components of the mask that determines which instructions may not be
-  // scheduled across the SCHED_BARRIER.
-  enum class SchedBarrierMasks {
-    NONE = 0u,
-    ALU = 1u << 0,
-    VALU = 1u << 1,
-    SALU = 1u << 2,
-    MFMA = 1u << 3,
-    VMEM = 1u << 4,
-    VMEM_READ = 1u << 5,
-    VMEM_WRITE = 1u << 6,
-    DS = 1u << 7,
-    DS_READ = 1u << 8,
-    DS_WRITE = 1u << 9,
-    LLVM_MARK_AS_BITMASK_ENUM(/* LargestFlag = */ DS_WRITE)
-  };
 
   // Cache SchedGroups of each type if we have multiple SCHED_BARRIERs in a
   // region.
@@ -268,11 +438,26 @@ void IGroupLPDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
   // order in which edges will be added. In other words, given the
   // present ordering, we will try to make each VMEMRead instruction
   // a predecessor of each DSRead instruction, and so on.
-  SmallVector<SchedGroup, 4> PipelineOrderGroups = {
-      SchedGroup(isVMEMSGMember, VMEMGroupMaxSize, DAG),
-      SchedGroup(isDSReadSGMember, LDRGroupMaxSize, DAG),
-      SchedGroup(isMFMASGMember, MFMAGroupMaxSize, DAG),
-      SchedGroup(isDSWriteSGMember, LDWGroupMaxSize, DAG)};
+  SmallVector<SchedGroup, 8> PipelineOrderGroups;
+
+  // Since the input string has been pre-parsed, we know we have a
+  // well formed sequence of well formed strings. They will start with
+  // an IGroup and will optinally be followed by a size.
+  if (IGroupLPOrder.size() > 0) {
+    for (auto &Stage : IGroupLPOrder) {
+      PipelineOrderGroups.push_back(
+          SchedGroup(Stage.first, Stage.second, DAG, TII));
+    }
+  }
+
+  // Default to backwardsly compatible behavior
+  else {
+    PipelineOrderGroups = {
+        SchedGroup(SchedGroupMask::VMEM, None, DAG, TII),
+        SchedGroup(SchedGroupMask::DS_READ, None, DAG, TII),
+        SchedGroup(SchedGroupMask::MFMA, None, DAG, TII),
+        SchedGroup(SchedGroupMask::DS_WRITE, None, DAG, TII)};
+  }
 
   for (SUnit &SU : DAG->SUnits) {
     LLVM_DEBUG(dbgs() << "Checking Node"; DAG->dumpNode(SU));
@@ -324,78 +509,81 @@ void SchedBarrierDAGMutation::addSchedBarrierEdges(SUnit &SchedBarrier) {
 
 void SchedBarrierDAGMutation::getSchedGroupsFromMask(
     int32_t Mask, SmallVectorImpl<SchedGroup *> &SchedGroups) {
-  SchedBarrierMasks SBMask = (SchedBarrierMasks)Mask;
+  SchedGroupMask SBMask = (SchedGroupMask)Mask;
   // See IntrinsicsAMDGPU.td for an explanation of these masks and their
   // mappings.
   //
-  if ((SBMask & SchedBarrierMasks::VALU) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::ALU) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::VALU) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::ALU) == SchedGroupMask::NONE) {
     if (!VALUSchedGroup) {
-      VALUSchedGroup = std::make_unique<SchedGroup>(isVALUSGMember, None, DAG);
+      VALUSchedGroup =
+          std::make_unique<SchedGroup>(SchedGroupMask::VALU, None, DAG);
       initSchedGroup(VALUSchedGroup.get());
     }
 
     SchedGroups.push_back(VALUSchedGroup.get());
   }
 
-  if ((SBMask & SchedBarrierMasks::SALU) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::ALU) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::SALU) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::ALU) == SchedGroupMask::NONE) {
     if (!SALUSchedGroup) {
-      SALUSchedGroup = std::make_unique<SchedGroup>(isSALUSGMember, None, DAG);
+      SALUSchedGroup =
+          std::make_unique<SchedGroup>(SchedGroupMask::SALU, None, DAG);
       initSchedGroup(SALUSchedGroup.get());
     }
 
     SchedGroups.push_back(SALUSchedGroup.get());
   }
 
-  if ((SBMask & SchedBarrierMasks::MFMA) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::ALU) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::MFMA) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::ALU) == SchedGroupMask::NONE) {
     if (!MFMASchedGroup) {
-      MFMASchedGroup = std::make_unique<SchedGroup>(isMFMASGMember, None, DAG);
+      MFMASchedGroup =
+          std::make_unique<SchedGroup>(SchedGroupMask::MFMA, None, DAG);
       initSchedGroup(MFMASchedGroup.get());
     }
 
     SchedGroups.push_back(MFMASchedGroup.get());
   }
 
-  if ((SBMask & SchedBarrierMasks::VMEM_READ) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::VMEM) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::VMEM_READ) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::VMEM) == SchedGroupMask::NONE) {
     if (!VMEMReadSchedGroup) {
       VMEMReadSchedGroup =
-          std::make_unique<SchedGroup>(isVMEMReadSGMember, None, DAG);
+          std::make_unique<SchedGroup>(SchedGroupMask::VMEM_READ, None, DAG);
       initSchedGroup(VMEMReadSchedGroup.get());
     }
 
     SchedGroups.push_back(VMEMReadSchedGroup.get());
   }
 
-  if ((SBMask & SchedBarrierMasks::VMEM_WRITE) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::VMEM) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::VMEM_WRITE) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::VMEM) == SchedGroupMask::NONE) {
     if (!VMEMWriteSchedGroup) {
       VMEMWriteSchedGroup =
-          std::make_unique<SchedGroup>(isVMEMWriteSGMember, None, DAG);
+          std::make_unique<SchedGroup>(SchedGroupMask::VMEM_WRITE, None, DAG);
       initSchedGroup(VMEMWriteSchedGroup.get());
     }
 
     SchedGroups.push_back(VMEMWriteSchedGroup.get());
   }
 
-  if ((SBMask & SchedBarrierMasks::DS_READ) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::DS) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::DS_READ) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::DS) == SchedGroupMask::NONE) {
     if (!DSReadSchedGroup) {
       DSReadSchedGroup =
-          std::make_unique<SchedGroup>(isDSReadSGMember, None, DAG);
+          std::make_unique<SchedGroup>(SchedGroupMask::DS_READ, None, DAG);
       initSchedGroup(DSReadSchedGroup.get());
     }
 
     SchedGroups.push_back(DSReadSchedGroup.get());
   }
 
-  if ((SBMask & SchedBarrierMasks::DS_WRITE) == SchedBarrierMasks::NONE &&
-      (SBMask & SchedBarrierMasks::DS) == SchedBarrierMasks::NONE) {
+  if ((SBMask & SchedGroupMask::DS_WRITE) == SchedGroupMask::NONE &&
+      (SBMask & SchedGroupMask::DS) == SchedGroupMask::NONE) {
     if (!DSWriteSchedGroup) {
       DSWriteSchedGroup =
-          std::make_unique<SchedGroup>(isDSWriteSGMember, None, DAG);
+          std::make_unique<SchedGroup>(SchedGroupMask::DS_WRITE, None, DAG);
       initSchedGroup(DSWriteSchedGroup.get());
     }
 
