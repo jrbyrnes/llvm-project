@@ -42,6 +42,7 @@ GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
     : GenericScheduler(C), TargetOccupancy(0), MF(nullptr),
       HasHighPressure(false) {}
 
+
 void GCNSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   GenericScheduler::initialize(DAG);
 
@@ -599,7 +600,6 @@ void GCNScheduleDAGMILive::runSchedStages() {
         exitRegion();
         continue;
       }
-
       ScheduleDAGMILive::schedule();
       Stage->finalizeGCNRegion();
     }

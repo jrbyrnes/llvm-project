@@ -436,7 +436,7 @@ createGCNMaxILPMachineScheduler(MachineSchedContext *C) {
   ScheduleDAGMILive *DAG =
       new GCNScheduleDAGMILive(C, std::make_unique<GCNMaxILPSchedStrategy>(C));
   DAG->addMutation(createIGroupLPDAGMutation());
-  DAG->addMutation(createSchedBarrierDAGMutation());
+  //DAG->addMutation(createSchedBarrierDAGMutation());
   return DAG;
 }
 

@@ -70,6 +70,7 @@ protected:
   // Pointer to the current SchedStageID.
   SmallVectorImpl<GCNSchedStageID>::iterator CurrentStage = nullptr;
 
+   void postprocessDAG() {/*nothing*/;};
 public:
   // schedule() have seen register pressure over the critical limits and had to
   // track register pressure for actual scheduling heuristics.
