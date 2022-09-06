@@ -9,15 +9,9 @@ define amdgpu_kernel void @vectorLoadCombine(<4 x i8>* %in, i32* %out) {
 ; GCN-NEXT:    v_mov_b32_e32 v0, s0
 ; GCN-NEXT:    v_mov_b32_e32 v1, s1
 ; GCN-NEXT:    flat_load_dword v2, v[0:1]
-; GCN-NEXT:    s_mov_b32 s0, 0x6050400
 ; GCN-NEXT:    v_mov_b32_e32 v0, s2
 ; GCN-NEXT:    v_mov_b32_e32 v1, s3
 ; GCN-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
-; GCN-NEXT:    v_bfe_u32 v3, v2, 8, 8
-; GCN-NEXT:    v_and_b32_e32 v4, 0xff0000, v2
-; GCN-NEXT:    v_perm_b32 v3, v3, v2, s0
-; GCN-NEXT:    v_and_b32_e32 v2, 0xff000000, v2
-; GCN-NEXT:    v_or3_b32 v2, v3, v4, v2
 ; GCN-NEXT:    flat_store_dword v[0:1], v2
 ; GCN-NEXT:    s_endpgm
 entry:

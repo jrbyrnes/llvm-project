@@ -49,6 +49,7 @@ public:
   SDValue getBase() const { return Base; }
   SDValue getIndex() { return Index; }
   SDValue getIndex() const { return Index; }
+  void setOffset(int64_t NewOff) { *Offset = NewOff; }
   bool hasValidOffset() const { return Offset.has_value(); }
   int64_t getOffset() const { return *Offset; }
 
