@@ -4000,6 +4000,13 @@ public:
     return false;
   }
 
+  virtual bool checkForPhysRegDependency(SDNode *Def, SDNode *User, unsigned Op,
+                                      const TargetRegisterInfo *TRI,
+                                      const TargetInstrInfo *TII,
+                                      unsigned &PhysReg, int &Cost) const {
+    return false;
+  }
+
   /// Target-specific combining of register parts into its original value
   virtual SDValue
   joinRegisterPartsIntoValue(SelectionDAG &DAG, const SDLoc &DL,
