@@ -20,15 +20,16 @@ def VOP_F64_F64_F64_F64_VCC : VOPProfile<[f64, f64, f64, f64]> {
 }
 
 class VOP3b_Profile<ValueType vt> : VOPProfile<[vt, vt, vt, vt]> {
-  let Outs64 = (outs DstRC:$vdst, VOPDstS64orS32:$sdst);
-  let Asm64 = "$vdst, $sdst, $src0_modifiers, $src1_modifiers, $src2_modifiers$clamp$omod";
+  let Outs64 = (outs DstRC:$vdst);
+
+  let Asm64 = "$vdst, vcc, $src0_modifiers, $src1_modifiers, $src2_modifiers$clamp$omod";
   let IsSingle = 1;
   let HasExtVOP3DPP = 0;
   let HasExtDPP = 0;
 }
 
-def VOP3b_F32_I1_F32_F32_F32 : VOP3b_Profile<f32>;
-def VOP3b_F64_I1_F64_F64_F64 : VOP3b_Profile<f64>;
+def VOP3b_F32_VCC_F32_F32_F32 : VOP3b_Profile<f32>;
+def VOP3b_F64_VCC_F64_F64_F64 : VOP3b_Profile<f64>;
 
 def VOP3b_I64_I1_I32_I32_I64 : VOPProfile<[i64, i32, i32, i64]> {
   let HasClamp = 1;
@@ -220,13 +221,13 @@ let SchedRW = [WriteDoubleAdd], FPDPRounding = 1 in {
 } // End isReMaterializable = 1
 
 
-let mayRaiseFPException = 0 in { // Seems suspicious but manual doesn't say it does.
+let Defs = [VCC], mayRaiseFPException = 0 in { // Seems suspicious but manual doesn't say it does.
   let SchedRW = [WriteFloatFMA, WriteSALU] in
-  defm V_DIV_SCALE_F32 : VOP3Inst_Pseudo_Wrapper <"v_div_scale_f32", VOP3b_F32_I1_F32_F32_F32> ;
+  defm V_DIV_SCALE_F32 : VOP3Inst_Pseudo_Wrapper <"v_div_scale_f32", VOP3b_F32_VCC_F32_F32_F32> ;
 
   // Double precision division pre-scale.
   let SchedRW = [WriteDouble, WriteSALU], FPDPRounding = 1 in
-  defm V_DIV_SCALE_F64 : VOP3Inst_Pseudo_Wrapper <"v_div_scale_f64", VOP3b_F64_I1_F64_F64_F64>;
+  defm V_DIV_SCALE_F64 : VOP3Inst_Pseudo_Wrapper <"v_div_scale_f64", VOP3b_F64_VCC_F64_F64_F64>;
 } // End mayRaiseFPException = 0
 
 let isReMaterializable = 1 in
@@ -842,6 +843,32 @@ def : IntClampPat<V_MQSAD_U32_U8_e64, int_amdgcn_mqsad_u32_u8>;
 // GFX11.
 //===----------------------------------------------------------------------===//
 
+let AssemblerPredicate = isGFX11Only in
+multiclass VOP3be_VCCSDST_Real_gfx11<bits<10> op, string asmName> {
+  defvar ps = !cast<VOP3_Pseudo>(NAME #"_e64");
+
+  def _e64_gfx11 : VOP3_Real<ps, SIEncodingFamily.GFX11, asmName>,
+                   VOP3be_gfx11<op, ps.Pfl> {
+    let IsSingle = ps.Pfl.IsSingle;
+    let sdst = !cast<int>(VCC.HWEncoding);
+    let AsmString = asmName # !subst(", vcc", "", ps.AsmOperands);
+  }
+
+  let isAsmParserOnly = 1 in {
+    def _e64_w32_gfx11 : VOP3_Base<ps, asmName>, VOP3be_gfx11<op, ps.Pfl> {
+      let sdst = !cast<int>(VCC_LO.HWEncoding);
+      let WaveSizePredicate = isWave32;
+      let AsmString = asmName # !subst("vcc", "vcc_lo", ps.AsmOperands);
+    }
+
+    def _e64_w64_gfx11 : VOP3_Base<ps, asmName>, VOP3be_gfx11<op, ps.Pfl> {
+      let sdst = !cast<int>(VCC.HWEncoding);
+      let WaveSizePredicate = isWave64;
+      let AsmString = asmName # ps.AsmOperands;
+    }
+  }
+}
+
 defm V_FMA_DX9_ZERO_F32    : VOP3_Real_with_name_gfx11<0x209, "V_FMA_LEGACY_F32", "v_fma_dx9_zero_f32">;
 defm V_MAD_I32_I24         : VOP3_Realtriple_gfx11<0x20a>;
 defm V_MAD_U32_U24         : VOP3_Realtriple_gfx11<0x20b>;
@@ -916,8 +943,8 @@ defm V_MAXMIN_I32          : VOP3_Realtriple_gfx11<0x264>;
 defm V_MINMAX_I32          : VOP3_Realtriple_gfx11<0x265>;
 defm V_DOT2_F16_F16        : VOP3Dot_Realtriple_gfx11<0x266>;
 defm V_DOT2_BF16_BF16      : VOP3Dot_Realtriple_gfx11<0x267>;
-defm V_DIV_SCALE_F32       : VOP3be_Real_gfx11<0x2fc, "V_DIV_SCALE_F32", "v_div_scale_f32">;
-defm V_DIV_SCALE_F64       : VOP3be_Real_gfx11<0x2fd, "V_DIV_SCALE_F64", "v_div_scale_f64">;
+defm V_DIV_SCALE_F32       : VOP3be_VCCSDST_Real_gfx11<0x2fc, "v_div_scale_f32">;
+defm V_DIV_SCALE_F64       : VOP3be_VCCSDST_Real_gfx11<0x2fd, "v_div_scale_f64">;
 defm V_MAD_U64_U32_gfx11   : VOP3be_Real_gfx11<0x2fe, "V_MAD_U64_U32_gfx11", "v_mad_u64_u32">;
 defm V_MAD_I64_I32_gfx11   : VOP3be_Real_gfx11<0x2ff, "V_MAD_I64_I32_gfx11", "v_mad_i64_i32">;
 defm V_ADD_NC_U16          : VOP3Only_Realtriple_gfx11<0x303>;
@@ -988,6 +1015,30 @@ let AssemblerPredicate = isGFX10Only, DecoderNamespace = "GFX10" in {
     def _gfx10 :
       VOP3_Real<!cast<VOP3_Pseudo>(NAME#"_e64"), SIEncodingFamily.GFX10>,
       VOP3be_gfx10<op, !cast<VOP3_Pseudo>(NAME#"_e64").Pfl>;
+  }
+  multiclass VOP3be_VCCSDST_Real_gfx10<bits<10> op, string asmName> {
+    defvar ps = !cast<VOP3_Pseudo>(NAME #"_e64");
+
+    def _gfx10 : VOP3_Real<ps, SIEncodingFamily.GFX10>,
+                 VOP3be_gfx10<op, ps.Pfl> {
+      let IsSingle = ps.Pfl.IsSingle;
+      let sdst = !cast<int>(VCC_LO.HWEncoding);
+      let AsmString = asmName # !subst(", vcc", "", ps.AsmOperands);
+    }
+
+    let isAsmParserOnly = 1 in {
+      def _w32_gfx10 : VOP3_Base<ps>, VOP3be_gfx10<op, ps.Pfl> {
+        let sdst = !cast<int>(VCC_LO.HWEncoding);
+        let WaveSizePredicate = isWave32;
+        let AsmString = asmName # !subst("vcc", "vcc_lo", ps.AsmOperands);
+      }
+
+      def _w64_gfx10 : VOP3_Base<ps>, VOP3be_gfx10<op, ps.Pfl> {
+        let sdst = !cast<int>(VCC.HWEncoding);
+        let WaveSizePredicate = isWave64;
+        let AsmString = asmName # ps.AsmOperands;
+      }
+    }
   }
   multiclass VOP3Interp_Real_gfx10<bits<10> op> {
     def _gfx10 :
@@ -1135,6 +1186,13 @@ let AssemblerPredicate = isGFX6GFX7, DecoderNamespace = "GFX6GFX7" in {
       VOP3_Real<!cast<VOP3_Pseudo>(NAME#"_e64"), SIEncodingFamily.SI>,
       VOP3be_gfx6_gfx7<op{8-0}, !cast<VOP3_Pseudo>(NAME#"_e64").Pfl>;
   }
+  multiclass VOP3be_VCCSDST_Real_gfx6_gfx7<bits<10> op> {
+    def _gfx6_gfx7 :
+      VOP3_Real<!cast<VOP3_Pseudo>(NAME#"_e64"), SIEncodingFamily.SI>,
+      VOP3be_gfx6_gfx7<op{8-0}, !cast<VOP3_Pseudo>(NAME#"_e64").Pfl> {
+      let sdst = !cast<int>(VCC.HWEncoding);
+    }
+  }
 } // End AssemblerPredicate = isGFX6GFX7, DecoderNamespace = "GFX6GFX7"
 
 multiclass VOP3_Real_gfx6_gfx7_gfx10<bits<10> op> :
@@ -1142,6 +1200,9 @@ multiclass VOP3_Real_gfx6_gfx7_gfx10<bits<10> op> :
 
 multiclass VOP3be_Real_gfx6_gfx7_gfx10<bits<10> op> :
   VOP3be_Real_gfx6_gfx7<op>, VOP3be_Real_gfx10<op>;
+
+multiclass VOP3be_VCCSDST_Real_gfx6_gfx7_gfx10<bits<10> op, string asmName> :
+  VOP3be_VCCSDST_Real_gfx6_gfx7<op>, VOP3be_VCCSDST_Real_gfx10<op, asmName>;
 
 defm V_LSHL_B64        : VOP3_Real_gfx6_gfx7<0x161>;
 defm V_LSHR_B64        : VOP3_Real_gfx6_gfx7<0x162>;
@@ -1194,8 +1255,8 @@ defm V_DIV_FMAS_F64    : VOP3_Real_gfx6_gfx7_gfx10<0x170>;
 defm V_MSAD_U8         : VOP3_Real_gfx6_gfx7_gfx10<0x171>;
 defm V_MQSAD_PK_U16_U8 : VOP3_Real_gfx6_gfx7_gfx10<0x173>;
 defm V_TRIG_PREOP_F64  : VOP3_Real_gfx6_gfx7_gfx10<0x174>;
-defm V_DIV_SCALE_F32   : VOP3be_Real_gfx6_gfx7_gfx10<0x16d>;
-defm V_DIV_SCALE_F64   : VOP3be_Real_gfx6_gfx7_gfx10<0x16e>;
+defm V_DIV_SCALE_F32   : VOP3be_VCCSDST_Real_gfx6_gfx7_gfx10<0x16d, "v_div_scale_f32">;
+defm V_DIV_SCALE_F64   : VOP3be_VCCSDST_Real_gfx6_gfx7_gfx10<0x16e, "v_div_scale_f64">;
 
 // NB: Same opcode as v_mad_legacy_f32
 let DecoderNamespace = "GFX10_B" in
@@ -1219,6 +1280,13 @@ multiclass VOP3_Real_No_Suffix_vi<bits<10> op> {
 multiclass VOP3be_Real_vi<bits<10> op> {
   def _vi : VOP3_Real<!cast<VOP_Pseudo>(NAME#"_e64"), SIEncodingFamily.VI>,
             VOP3be_vi <op, !cast<VOP_Pseudo>(NAME#"_e64").Pfl>;
+}
+
+multiclass VOP3be_VCCSDST_Real_vi<bits<10> op> {
+  def _vi : VOP3_Real<!cast<VOP_Pseudo>(NAME#"_e64"), SIEncodingFamily.VI>,
+            VOP3be_vi <op, !cast<VOP_Pseudo>(NAME#"_e64").Pfl> {
+    let sdst = !cast<int>(VCC.HWEncoding);
+  }
 }
 
 multiclass VOP3OpSel_Real_gfx9<bits<10> op> {
@@ -1325,8 +1393,8 @@ defm V_SAD_U32          : VOP3_Real_vi <0x1dc>;
 defm V_CVT_PK_U8_F32    : VOP3_Real_vi <0x1dd>;
 defm V_DIV_FIXUP_F32    : VOP3_Real_vi <0x1de>;
 defm V_DIV_FIXUP_F64    : VOP3_Real_vi <0x1df>;
-defm V_DIV_SCALE_F32    : VOP3be_Real_vi <0x1e0>;
-defm V_DIV_SCALE_F64    : VOP3be_Real_vi <0x1e1>;
+defm V_DIV_SCALE_F32    : VOP3be_VCCSDST_Real_vi <0x1e0>;
+defm V_DIV_SCALE_F64    : VOP3be_VCCSDST_Real_vi <0x1e1>;
 defm V_DIV_FMAS_F32     : VOP3_Real_vi <0x1e2>;
 defm V_DIV_FMAS_F64     : VOP3_Real_vi <0x1e3>;
 defm V_MSAD_U8          : VOP3_Real_vi <0x1e4>;

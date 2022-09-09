@@ -4060,219 +4060,219 @@ v_div_fmas_f64 v[254:255], 0xaf123456, null, -1 clamp div:2
 
 v_div_scale_f32 v5, vcc_lo, v1, v2, s3
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x01,0x05,0x0e,0x00]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, v255, s2, s105
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0xff,0x05,0xa4,0x01]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, s1, v255, exec_hi
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x01,0xfe,0xff,0x01]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, s105, s105, exec_lo
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x69,0xd2,0xf8,0x01]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, vcc_lo, ttmp15, v3
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x6a,0xf6,0x0c,0x04]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, vcc_hi, 0xaf123456, v255
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x6b,0xfe,0xfd,0x07,0x56,0x34,0x12,0xaf]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, -ttmp15, -src_scc, -ttmp15
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x7b,0xfa,0xed,0xe1]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, m0, 0.5, m0
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x7d,0xe0,0xf5,0x01]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, exec_lo, -1, vcc_hi
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x7e,0x82,0xad,0x01]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, -exec_hi, null, -vcc_lo
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x7f,0xf8,0xa8,0xa1]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, null, exec_lo, neg(0xaf123456)
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0x7c,0xfc,0xfc,0x83,0x56,0x34,0x12,0xaf]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, -1, -exec_hi, -src_scc
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0xc1,0xfe,0xf4,0xc3]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, 0.5, -m0, 0.5 mul:2
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0xf0,0xfa,0xc0,0x4b]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc_lo, -src_scc, vcc_lo, -1 mul:4
 // W32: encoding: [0x05,0x6a,0xfc,0xd6,0xfd,0xd4,0x04,0x33]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v255, vcc_lo, neg(0xaf123456), -vcc_hi, null clamp div:2
 // W32: encoding: [0xff,0xea,0xfc,0xd6,0xff,0xd6,0xf0,0x79,0x56,0x34,0x12,0xaf]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, v1, v2, s3
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x01,0x05,0x0e,0x00]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, v255, s2, s105
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0xff,0x05,0xa4,0x01]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, s1, v255, exec_hi
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x01,0xfe,0xff,0x01]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, s105, s105, exec_lo
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x69,0xd2,0xf8,0x01]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, vcc_lo, ttmp15, v3
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x6a,0xf6,0x0c,0x04]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, vcc_hi, 0xaf123456, v255
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x6b,0xfe,0xfd,0x07,0x56,0x34,0x12,0xaf]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, -ttmp15, -src_scc, -ttmp15
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x7b,0xfa,0xed,0xe1]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, m0, 0.5, m0
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x7d,0xe0,0xf5,0x01]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, exec_lo, -1, vcc_hi
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x7e,0x82,0xad,0x01]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, -exec_hi, null, -vcc_lo
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x7f,0xf8,0xa8,0xa1]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, null, exec_lo, neg(0xaf123456)
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0x7c,0xfc,0xfc,0x83,0x56,0x34,0x12,0xaf]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, -1, -exec_hi, -src_scc
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0xc1,0xfe,0xf4,0xc3]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, 0.5, -m0, 0.5 mul:2
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0xf0,0xfa,0xc0,0x4b]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v5, vcc, -src_scc, vcc_lo, -1 mul:4
 // W64: encoding: [0x05,0x6a,0xfc,0xd6,0xfd,0xd4,0x04,0x33]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f32 v255, vcc, neg(0xaf123456), -vcc_hi, null clamp div:2
 // W64: encoding: [0xff,0xea,0xfc,0xd6,0xff,0xd6,0xf0,0x79,0x56,0x34,0x12,0xaf]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, v[1:2], v[2:3], v[3:4]
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x01,0x05,0x0e,0x04]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, v[254:255], v[254:255], s[6:7]
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0xfe,0xfd,0x1b,0x00]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, s[2:3], s[4:5], v[254:255]
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x02,0x08,0xf8,0x07]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, -s[104:105], s[104:105], -s[104:105]
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x68,0xd0,0xa0,0xa1]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, vcc, -ttmp[14:15], -ttmp[14:15]
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x6a,0xf4,0xe8,0xc1]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, -ttmp[14:15], 0xaf123456, null
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x7a,0xfe,0xf1,0x21,0x56,0x34,0x12,0xaf]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, -exec, -src_scc, -exec
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x7e,0xfa,0xf9,0xe1]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, null, 0.5, vcc
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0x7c,0xe0,0xa9,0x01]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, -1, -1, 0xaf123456
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0xc1,0x82,0xfd,0x03,0x56,0x34,0x12,0xaf]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, 0.5, null, -src_scc mul:2
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0xf0,0xf8,0xf4,0x8b]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc_lo, -src_scc, -exec, 0.5 mul:4
 // W32: encoding: [0x05,0x6a,0xfd,0xd6,0xfd,0xfc,0xc0,0x73]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[254:255], vcc_lo, 0xaf123456, -vcc, -1 clamp div:2
 // W32: encoding: [0xfe,0xea,0xfd,0xd6,0xff,0xd4,0x04,0x5b,0x56,0x34,0x12,0xaf]
-// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W64-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, v[1:2], v[2:3], v[3:4]
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x01,0x05,0x0e,0x04]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, v[254:255], v[254:255], s[6:7]
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0xfe,0xfd,0x1b,0x00]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, s[2:3], s[4:5], v[254:255]
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x02,0x08,0xf8,0x07]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, -s[104:105], s[104:105], -s[104:105]
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x68,0xd0,0xa0,0xa1]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, vcc, -ttmp[14:15], -ttmp[14:15]
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x6a,0xf4,0xe8,0xc1]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, -ttmp[14:15], 0xaf123456, null
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x7a,0xfe,0xf1,0x21,0x56,0x34,0x12,0xaf]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, -exec, -src_scc, -exec
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x7e,0xfa,0xf9,0xe1]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, null, 0.5, vcc
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0x7c,0xe0,0xa9,0x01]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, -1, -1, 0xaf123456
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0xc1,0x82,0xfd,0x03,0x56,0x34,0x12,0xaf]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, 0.5, null, -src_scc mul:2
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0xf0,0xf8,0xf4,0x8b]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[5:6], vcc, -src_scc, -exec, 0.5 mul:4
 // W64: encoding: [0x05,0x6a,0xfd,0xd6,0xfd,0xfc,0xc0,0x73]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_div_scale_f64 v[254:255], vcc, 0xaf123456, -vcc, -1 clamp div:2
 // W64: encoding: [0xfe,0xea,0xfd,0xd6,0xff,0xd4,0x04,0x5b,0x56,0x34,0x12,0xaf]
-// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: invalid operand for instruction
+// W32-ERR: :[[@LINE-2]]:{{[0-9]+}}: error: operands are not valid for this GPU or mode
 
 v_dot2_bf16_bf16 v5, v1, v2, s3
 // GFX11: encoding: [0x05,0x00,0x67,0xd6,0x01,0x05,0x0e,0x00]

@@ -172,7 +172,7 @@
 ---
 
 # CHECK: name: sched_dbg_value_crash
-# CHECK: DBG_VALUE %99, $noreg, !5, !DIExpression(DW_OP_constu, 1, DW_OP_swap, DW_OP_xderef), debug-location !8
+# CHECK: DBG_VALUE %97, $noreg, !5, !DIExpression(DW_OP_constu, 1, DW_OP_swap, DW_OP_xderef), debug-location !8
 
 name:            sched_dbg_value_crash
 alignment:       1
@@ -291,9 +291,9 @@ body:             |
     %87:vgpr_32 = IMPLICIT_DEF
     %88:vgpr_32 = IMPLICIT_DEF
     %90:vgpr_32 = IMPLICIT_DEF
-    %91:vgpr_32, dead %92:sreg_64 = nofpexcept V_DIV_SCALE_F32_e64 0, %90, 0, %90, 0, 1065353216, 0, 0, implicit $mode, implicit $exec
+    %91:vgpr_32 = nofpexcept V_DIV_SCALE_F32_e64 0, %90, 0, %90, 0, 1065353216, 0, 0, implicit $mode, implicit $exec, implicit-def $vcc
     %95:vgpr_32 = nofpexcept V_FMA_F32_e64 0, 0, 0, 0, 0, undef %93:vgpr_32, 0, 0, implicit $mode, implicit $exec
-    %96:vgpr_32, %97:sreg_64 = nofpexcept V_DIV_SCALE_F32_e64 0, 1065353216, 0, %90, 0, 1065353216, 0, 0, implicit $mode, implicit $exec
+    %96:vgpr_32 = nofpexcept V_DIV_SCALE_F32_e64 0, 1065353216, 0, %90, 0, 1065353216, 0, 0, implicit $mode, implicit $exec, implicit-def $vcc
     %98:vgpr_32 = IMPLICIT_DEF
     %99:vgpr_32 = IMPLICIT_DEF
     %100:vgpr_32 = IMPLICIT_DEF
@@ -302,11 +302,11 @@ body:             |
     %103:vgpr_32 = IMPLICIT_DEF
     %104:vgpr_32 = IMPLICIT_DEF
     %105:vgpr_32 = IMPLICIT_DEF
-    %106:vgpr_32, dead %107:sreg_64 = nofpexcept V_DIV_SCALE_F32_e64 0, %90, 0, %90, 0, %105, 0, 0, implicit $mode, implicit $exec
+    %106:vgpr_32 = nofpexcept V_DIV_SCALE_F32_e64 0, %90, 0, %90, 0, %105, 0, 0, implicit $mode, implicit $exec, implicit-def $vcc
     %108:vgpr_32 = nofpexcept V_RCP_F32_e32 0, implicit $mode, implicit $exec
     %109:vgpr_32 = IMPLICIT_DEF
     %110:vgpr_32 = nofpexcept V_FMA_F32_e64 0, 0, 0, 0, 0, 0, 0, 0, implicit $mode, implicit $exec
-    %111:vgpr_32, %112:sreg_64 = nofpexcept V_DIV_SCALE_F32_e64 0, 0, 0, 0, 0, 0, 0, 0, implicit $mode, implicit $exec
+    %111:vgpr_32 = nofpexcept V_DIV_SCALE_F32_e64 0, 0, 0, 0, 0, 0, 0, 0, implicit $mode, implicit $exec, implicit-def $vcc
     %113:vgpr_32 = nofpexcept V_MUL_F32_e32 0, %110, implicit $mode, implicit $exec
     %114:vgpr_32 = IMPLICIT_DEF
     %115:vgpr_32 = IMPLICIT_DEF

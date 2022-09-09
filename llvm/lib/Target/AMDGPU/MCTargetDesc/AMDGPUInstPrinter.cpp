@@ -761,10 +761,22 @@ void AMDGPUInstPrinter::printRegularOperand(const MCInst *MI, unsigned OpNo,
     O << "/*INV_OP*/";
   }
 
-  // Print default vcc/vcc_lo operand of v_cndmask_b32_e32.
+  // Print default vcc/vcc_lo operand for specific instructions.
   switch (MI->getOpcode()) {
   default: break;
-
+  case AMDGPU::V_DIV_SCALE_F32_e64_gfx11:
+  case AMDGPU::V_DIV_SCALE_F64_e64_gfx11:
+  case AMDGPU::V_DIV_SCALE_F32_gfx10:
+  case AMDGPU::V_DIV_SCALE_F64_gfx10: {
+    // Print vcc(_lo) after the vdst for V_DIV_SCALE on gfx10+.
+    int VDstIdx =
+        AMDGPU::getNamedOperandIdx(MI->getOpcode(), AMDGPU::OpName::vdst);
+    assert(VDstIdx != -1);
+    if ((int)OpNo == VDstIdx) {
+      printDefaultVccOperand(false, STI, O);
+    }
+    break;
+  }
   case AMDGPU::V_CNDMASK_B32_e32_gfx10:
   case AMDGPU::V_ADD_CO_CI_U32_e32_gfx10:
   case AMDGPU::V_SUB_CO_CI_U32_e32_gfx10:

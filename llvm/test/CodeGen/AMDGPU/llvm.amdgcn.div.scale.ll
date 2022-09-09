@@ -8,7 +8,7 @@ declare float @llvm.fabs.f32(float) #1
 ; SI-LABEL: {{^}}test_div_scale_f32_1:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:4
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[B]], [[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_1(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -28,7 +28,7 @@ define amdgpu_kernel void @test_div_scale_f32_1(float addrspace(1)* %out, float 
 ; SI-LABEL: {{^}}test_div_scale_f32_2:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:4
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[A]], [[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_2(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -48,7 +48,7 @@ define amdgpu_kernel void @test_div_scale_f32_2(float addrspace(1)* %out, float 
 ; SI-LABEL: {{^}}test_div_scale_f64_1:
 ; SI-DAG: buffer_load_dwordx2 [[A:v\[[0-9]+:[0-9]+\]]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dwordx2 [[B:v\[[0-9]+:[0-9]+\]]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:8
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[B]], [[B]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_1(double addrspace(1)* %out, double addrspace(1)* %aptr, double addrspace(1)* %in) nounwind {
@@ -68,7 +68,7 @@ define amdgpu_kernel void @test_div_scale_f64_1(double addrspace(1)* %out, doubl
 ; SI-LABEL: {{^}}test_div_scale_f64_2:
 ; SI-DAG: buffer_load_dwordx2 [[A:v\[[0-9]+:[0-9]+\]]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dwordx2 [[B:v\[[0-9]+:[0-9]+\]]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:8
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[B]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[A]], [[B]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_2(double addrspace(1)* %out, double addrspace(1)* %aptr, double addrspace(1)* %in) nounwind {
@@ -88,7 +88,7 @@ define amdgpu_kernel void @test_div_scale_f64_2(double addrspace(1)* %out, doubl
 ; SI-LABEL: {{^}}test_div_scale_f32_scalar_num_1:
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]]
 ; SI-DAG: s_load_dword [[A:s[0-9]+]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[B]], [[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_scalar_num_1(float addrspace(1)* %out, float addrspace(1)* %in, float %a) nounwind {
@@ -106,7 +106,7 @@ define amdgpu_kernel void @test_div_scale_f32_scalar_num_1(float addrspace(1)* %
 ; SI-LABEL: {{^}}test_div_scale_f32_scalar_num_2:
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]]
 ; SI-DAG: s_load_dword [[A:s[0-9]+]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[A]], [[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_scalar_num_2(float addrspace(1)* %out, float addrspace(1)* %in, float %a) nounwind {
@@ -124,7 +124,7 @@ define amdgpu_kernel void @test_div_scale_f32_scalar_num_2(float addrspace(1)* %
 ; SI-LABEL: {{^}}test_div_scale_f32_scalar_den_1:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]]
 ; SI-DAG: s_load_dword [[B:s[0-9]+]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[B]], [[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_scalar_den_1(float addrspace(1)* %out, float addrspace(1)* %in, float %b) nounwind {
@@ -142,7 +142,7 @@ define amdgpu_kernel void @test_div_scale_f32_scalar_den_1(float addrspace(1)* %
 ; SI-LABEL: {{^}}test_div_scale_f32_scalar_den_2:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]]
 ; SI-DAG: s_load_dword [[B:s[0-9]+]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[A]], [[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_scalar_den_2(float addrspace(1)* %out, float addrspace(1)* %in, float %b) nounwind {
@@ -160,7 +160,7 @@ define amdgpu_kernel void @test_div_scale_f32_scalar_den_2(float addrspace(1)* %
 ; SI-LABEL: {{^}}test_div_scale_f64_scalar_num_1:
 ; SI-DAG: buffer_load_dwordx2 [[B:v\[[0-9]+:[0-9]+\]]]
 ; SI-DAG: s_load_dwordx2 [[A:s\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, 0xd
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[B]], [[B]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_scalar_num_1(double addrspace(1)* %out, double addrspace(1)* %in, double %a) nounwind {
@@ -178,7 +178,7 @@ define amdgpu_kernel void @test_div_scale_f64_scalar_num_1(double addrspace(1)* 
 ; SI-LABEL: {{^}}test_div_scale_f64_scalar_num_2:
 ; SI-DAG: s_load_dwordx2 [[A:s\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, 0xd
 ; SI-DAG: buffer_load_dwordx2 [[B:v\[[0-9]+:[0-9]+\]]]
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[B]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[A]], [[B]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_scalar_num_2(double addrspace(1)* %out, double addrspace(1)* %in, double %a) nounwind {
@@ -196,7 +196,7 @@ define amdgpu_kernel void @test_div_scale_f64_scalar_num_2(double addrspace(1)* 
 ; SI-LABEL: {{^}}test_div_scale_f64_scalar_den_1:
 ; SI-DAG: buffer_load_dwordx2 [[A:v\[[0-9]+:[0-9]+\]]]
 ; SI-DAG: s_load_dwordx2 [[B:s\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, 0xd
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[B]], [[B]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_scalar_den_1(double addrspace(1)* %out, double addrspace(1)* %in, double %b) nounwind {
@@ -214,7 +214,7 @@ define amdgpu_kernel void @test_div_scale_f64_scalar_den_1(double addrspace(1)* 
 ; SI-LABEL: {{^}}test_div_scale_f64_scalar_den_2:
 ; SI-DAG: buffer_load_dwordx2 [[A:v\[[0-9]+:[0-9]+\]]]
 ; SI-DAG: s_load_dwordx2 [[B:s\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, 0xd
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[B]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[A]], [[B]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_scalar_den_2(double addrspace(1)* %out, double addrspace(1)* %in, double %b) nounwind {
@@ -233,7 +233,7 @@ define amdgpu_kernel void @test_div_scale_f64_scalar_den_2(double addrspace(1)* 
 ; SI-DAG: s_load_dword [[A:s[0-9]+]], {{s\[[0-9]+:[0-9]+\]}}, 0x13
 ; SI-DAG: s_load_dword [[B:s[0-9]+]], {{s\[[0-9]+:[0-9]+\]}}, 0x1c
 ; SI: v_mov_b32_e32 [[VA:v[0-9]+]], [[A]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[VA]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[B]], [[B]], [[VA]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_all_scalar_1(float addrspace(1)* %out, [8 x i32], float %a, [8 x i32], float %b) nounwind {
@@ -247,7 +247,7 @@ define amdgpu_kernel void @test_div_scale_f32_all_scalar_1(float addrspace(1)* %
 ; SI-DAG: s_load_dword [[A:s[0-9]+]], {{s\[[0-9]+:[0-9]+\]}}, 0x13
 ; SI-DAG: s_load_dword [[B:s[0-9]+]], {{s\[[0-9]+:[0-9]+\]}}, 0x1c
 ; SI: v_mov_b32_e32 [[VB:v[0-9]+]], [[B]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[VB]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[A]], [[VB]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_all_scalar_2(float addrspace(1)* %out, [8 x i32], float %a, [8 x i32], float %b) nounwind {
@@ -262,7 +262,7 @@ define amdgpu_kernel void @test_div_scale_f32_all_scalar_2(float addrspace(1)* %
 ; SI-DAG: s_load_dwordx2 [[B:s\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, 0x1d
 ; SI-DAG: v_mov_b32_e32 v[[VA_LO:[0-9]+]], s[[A_LO]]
 ; SI-DAG: v_mov_b32_e32 v[[VA_HI:[0-9]+]], s[[A_HI]]
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], v[[[VA_LO]]:[[VA_HI]]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[B]], [[B]], v[[[VA_LO]]:[[VA_HI]]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_all_scalar_1(double addrspace(1)* %out, [8 x i32], double %a, [8 x i32], double %b) nounwind {
@@ -277,7 +277,7 @@ define amdgpu_kernel void @test_div_scale_f64_all_scalar_1(double addrspace(1)* 
 ; SI-DAG: s_load_dwordx2 s[[[B_LO:[0-9]+]]:[[B_HI:[0-9]+]]], {{s\[[0-9]+:[0-9]+\]}}, 0x1d
 ; SI-DAG: v_mov_b32_e32 v[[VB_LO:[0-9]+]], s[[B_LO]]
 ; SI-DAG: v_mov_b32_e32 v[[VB_HI:[0-9]+]], s[[B_HI]]
-; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], v[[[VB_LO]]:[[VB_HI]]], [[A]]
+; SI: v_div_scale_f64 [[RESULT0:v\[[0-9]+:[0-9]+\]]], vcc, [[A]], v[[[VB_LO]]:[[VB_HI]]], [[A]]
 ; SI: buffer_store_dwordx2 [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f64_all_scalar_2(double addrspace(1)* %out, [8 x i32], double %a, [8 x i32], double %b) nounwind {
@@ -289,7 +289,7 @@ define amdgpu_kernel void @test_div_scale_f64_all_scalar_2(double addrspace(1)* 
 
 ; SI-LABEL: {{^}}test_div_scale_f32_inline_imm_num:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64{{$}}
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[A]], [[A]], 1.0
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[A]], [[A]], 1.0
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_inline_imm_num(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -305,7 +305,7 @@ define amdgpu_kernel void @test_div_scale_f32_inline_imm_num(float addrspace(1)*
 
 ; SI-LABEL: {{^}}test_div_scale_f32_inline_imm_den:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64{{$}}
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], 2.0, 2.0, [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, 2.0, 2.0, [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_inline_imm_den(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -322,7 +322,7 @@ define amdgpu_kernel void @test_div_scale_f32_inline_imm_den(float addrspace(1)*
 ; SI-LABEL: {{^}}test_div_scale_f32_fneg_num:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:4
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], -[[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[B]], [[B]], -[[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_fneg_num(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -345,7 +345,7 @@ define amdgpu_kernel void @test_div_scale_f32_fneg_num(float addrspace(1)* %out,
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:4
 ; SI: v_and_b32_e32 [[ABS_A:v[0-9]+]], 0x7fffffff, [[A]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[B]], [[B]], [[ABS_A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[B]], [[B]], [[ABS_A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_fabs_num(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -367,7 +367,7 @@ define amdgpu_kernel void @test_div_scale_f32_fabs_num(float addrspace(1)* %out,
 ; SI-LABEL: {{^}}test_div_scale_f32_fneg_den:
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:4
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], -[[B]], -[[B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, -[[B]], -[[B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_fneg_den(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -390,7 +390,7 @@ define amdgpu_kernel void @test_div_scale_f32_fneg_den(float addrspace(1)* %out,
 ; SI-DAG: buffer_load_dword [[A:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64
 ; SI-DAG: buffer_load_dword [[B:v[0-9]+]], {{v\[[0-9]+:[0-9]+\]}}, {{s\[[0-9]+:[0-9]+\]}}, 0 addr64 offset:4
 ; SI: v_and_b32_e32 [[ABS_B:v[0-9]+]], 0x7fffffff, [[B]]
-; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], [[RESULT1:s\[[0-9]+:[0-9]+\]]], [[ABS_B]], [[ABS_B]], [[A]]
+; SI: v_div_scale_f32 [[RESULT0:v[0-9]+]], vcc, [[ABS_B]], [[ABS_B]], [[A]]
 ; SI: buffer_store_dword [[RESULT0]]
 ; SI: s_endpgm
 define amdgpu_kernel void @test_div_scale_f32_fabs_den(float addrspace(1)* %out, float addrspace(1)* %in) nounwind {
@@ -411,7 +411,7 @@ define amdgpu_kernel void @test_div_scale_f32_fabs_den(float addrspace(1)* %out,
 
 ; SI-LABEL: {{^}}test_div_scale_f32_val_undef_val:
 ; SI: s_mov_b32 [[K:s[0-9]+]], 0x41000000
-; SI: v_div_scale_f32 v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}}, [[K]], v{{[0-9]+}}, [[K]]
+; SI: v_div_scale_f32 v{{[0-9]+}}, vcc, [[K]], v{{[0-9]+}}, [[K]]
 define amdgpu_kernel void @test_div_scale_f32_val_undef_val(float addrspace(1)* %out) #0 {
   %result = call { float, i1 } @llvm.amdgcn.div.scale.f32(float 8.0, float undef, i1 false)
   %result0 = extractvalue { float, i1 } %result, 0
@@ -421,7 +421,7 @@ define amdgpu_kernel void @test_div_scale_f32_val_undef_val(float addrspace(1)* 
 
 ; SI-LABEL: {{^}}test_div_scale_f32_undef_val_val:
 ; SI: s_mov_b32 [[K:s[0-9]+]], 0x41000000
-; SI: v_div_scale_f32 v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}}, [[K]], [[K]], v{{[0-9]+}}
+; SI: v_div_scale_f32 v{{[0-9]+}}, vcc, [[K]], [[K]], v{{[0-9]+}}
 define amdgpu_kernel void @test_div_scale_f32_undef_val_val(float addrspace(1)* %out) #0 {
   %result = call { float, i1 } @llvm.amdgcn.div.scale.f32(float undef, float 8.0, i1 false)
   %result0 = extractvalue { float, i1 } %result, 0
@@ -431,7 +431,7 @@ define amdgpu_kernel void @test_div_scale_f32_undef_val_val(float addrspace(1)* 
 
 ; SI-LABEL: {{^}}test_div_scale_f32_undef_undef_val:
 ; SI-NOT: v0
-; SI: v_div_scale_f32 v{{[0-9]+}}, s{{\[[0-9]+:[0-9]+\]}}, s0, s0, v0
+; SI: v_div_scale_f32 v{{[0-9]+}}, vcc, s0, s0, v0
 define amdgpu_kernel void @test_div_scale_f32_undef_undef_val(float addrspace(1)* %out) #0 {
   %result = call { float, i1 } @llvm.amdgcn.div.scale.f32(float undef, float undef, i1 false)
   %result0 = extractvalue { float, i1 } %result, 0
@@ -442,7 +442,7 @@ define amdgpu_kernel void @test_div_scale_f32_undef_undef_val(float addrspace(1)
 ; SI-LABEL: {{^}}test_div_scale_f64_val_undef_val:
 ; SI-DAG: s_mov_b32 s[[K_LO:[0-9]+]], 0{{$}}
 ; SI-DAG: s_mov_b32 s[[K_HI:[0-9]+]], 0x40200000
-; SI: v_div_scale_f64 v{{\[[0-9]+:[0-9]+\]}}, s{{\[[0-9]+:[0-9]+\]}}, s[[[K_LO]]:[[K_HI]]], v[0:1], s[[[K_LO]]:[[K_HI]]]
+; SI: v_div_scale_f64 v{{\[[0-9]+:[0-9]+\]}}, vcc, s[[[K_LO]]:[[K_HI]]], v[0:1], s[[[K_LO]]:[[K_HI]]]
 define amdgpu_kernel void @test_div_scale_f64_val_undef_val(double addrspace(1)* %out) #0 {
   %result = call { double, i1 } @llvm.amdgcn.div.scale.f64(double 8.0, double undef, i1 false)
   %result0 = extractvalue { double, i1 } %result, 0

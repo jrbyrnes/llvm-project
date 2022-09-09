@@ -12423,8 +12423,19 @@ void SITargetLowering::finalizeLowering(MachineFunction &MF) const {
 
   if (ST.isWave32() && !MF.empty()) {
     for (auto &MBB : MF) {
-      for (auto &MI : MBB) {
+      for (auto I = MBB.begin(); I != MBB.end(); ++I) {
+        auto &MI = *I;
         TII->fixImplicitOperands(MI);
+
+        if (MI.getOpcode() == AMDGPU::V_DIV_SCALE_F32_e64 ||
+            MI.getOpcode() == AMDGPU::V_DIV_SCALE_F64_e64) {
+          // Fixup adjacent copy of the VCC impdef so it's also VCC_LO.
+          auto NextI = std::next(I);
+          if (NextI != MBB.end() && NextI->getOpcode() == AMDGPU::COPY &&
+              NextI->getOperand(1).getReg() == AMDGPU::VCC) {
+            NextI->getOperand(1).setReg(AMDGPU::VCC_LO);
+          }
+        }
       }
     }
   }

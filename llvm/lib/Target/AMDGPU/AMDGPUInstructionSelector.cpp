@@ -927,28 +927,31 @@ bool AMDGPUInstructionSelector::selectDivScale(MachineInstr &MI) const {
 
   // TODO: Match source modifiers.
 
-  const DebugLoc &DL = MI.getDebugLoc();
-  MachineBasicBlock *MBB = MI.getParent();
-
   Register Numer = MI.getOperand(3).getReg();
   Register Denom = MI.getOperand(4).getReg();
   unsigned ChooseDenom = MI.getOperand(5).getImm();
 
   Register Src0 = ChooseDenom != 0 ? Numer : Denom;
 
-  auto MIB = BuildMI(*MBB, &MI, DL, TII.get(Opc), Dst0)
-    .addDef(Dst1)
-    .addImm(0)     // $src0_modifiers
-    .addUse(Src0)  // $src0
-    .addImm(0)     // $src1_modifiers
-    .addUse(Denom) // $src1
-    .addImm(0)     // $src2_modifiers
-    .addUse(Numer) // $src2
-    .addImm(0)     // $clamp
-    .addImm(0);    // $omod
+  MachineIRBuilder Builder(MI);
+  auto MIB = Builder.buildInstr(Opc)
+                 .addDef(Dst0)
+                 .addImm(0)     // $src0_modifiers
+                 .addUse(Src0)  // $src0
+                 .addImm(0)     // $src1_modifiers
+                 .addUse(Denom) // $src1
+                 .addImm(0)     // $src2_modifiers
+                 .addUse(Numer) // $src2
+                 .addImm(0)     // $clamp
+                 .addImm(0);    // $omod
 
+  if (!constrainSelectedInstRegOperands(*MIB, TII, TRI, RBI)) {
+    return false;
+  }
+
+  MRI->replaceRegWith(Dst1, TRI.getVCC());
   MI.eraseFromParent();
-  return constrainSelectedInstRegOperands(*MIB, TII, TRI, RBI);
+  return true;
 }
 
 bool AMDGPUInstructionSelector::selectG_INTRINSIC(MachineInstr &I) const {

@@ -709,6 +709,11 @@ bool SILowerI1Copies::lowerCopiesToI1() {
       Register SrcReg = MI.getOperand(1).getReg();
       assert(!MI.getOperand(1).getSubReg());
 
+      // VCC already represents a lane mask and doesn't need special lowering.
+      if (SrcReg == AMDGPU::VCC_LO || SrcReg == AMDGPU::VCC) {
+        continue;
+      }
+
       if (!SrcReg.isVirtual() || (!isLaneMaskReg(SrcReg) && !isVreg1(SrcReg))) {
         assert(TII->getRegisterInfo().getRegSizeInBits(SrcReg, *MRI) == 32);
         unsigned TmpReg = createLaneMaskReg(*MF);

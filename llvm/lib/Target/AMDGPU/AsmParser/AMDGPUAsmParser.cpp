@@ -8192,6 +8192,30 @@ void AMDGPUAsmParser::cvtVINTERP(MCInst &Inst, const OperandVector &Operands)
   }
 }
 
+static bool HasImplicitSDSTVCC(unsigned Opcode) {
+  switch (Opcode) {
+  default:
+    return false;
+  case AMDGPU::V_DIV_SCALE_F32_e64_gfx11:
+  case AMDGPU::V_DIV_SCALE_F32_e64_w32_gfx11:
+  case AMDGPU::V_DIV_SCALE_F32_e64_w64_gfx11:
+  case AMDGPU::V_DIV_SCALE_F64_e64_gfx11:
+  case AMDGPU::V_DIV_SCALE_F64_e64_w32_gfx11:
+  case AMDGPU::V_DIV_SCALE_F64_e64_w64_gfx11:
+  case AMDGPU::V_DIV_SCALE_F32_gfx10:
+  case AMDGPU::V_DIV_SCALE_F32_w32_gfx10:
+  case AMDGPU::V_DIV_SCALE_F32_w64_gfx10:
+  case AMDGPU::V_DIV_SCALE_F64_gfx10:
+  case AMDGPU::V_DIV_SCALE_F64_w32_gfx10:
+  case AMDGPU::V_DIV_SCALE_F64_w64_gfx10:
+  case AMDGPU::V_DIV_SCALE_F32_gfx6_gfx7:
+  case AMDGPU::V_DIV_SCALE_F64_gfx6_gfx7:
+  case AMDGPU::V_DIV_SCALE_F32_vi:
+  case AMDGPU::V_DIV_SCALE_F64_vi:
+    return true;
+  }
+}
+
 void AMDGPUAsmParser::cvtVOP3(MCInst &Inst, const OperandVector &Operands,
                               OptionalImmIndexMap &OptionalIdx) {
   unsigned Opc = Inst.getOpcode();
@@ -8203,9 +8227,16 @@ void AMDGPUAsmParser::cvtVOP3(MCInst &Inst, const OperandVector &Operands,
   }
 
   if (AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src0_modifiers) != -1) {
+    const bool UsesImplicitSDSTVCC = HasImplicitSDSTVCC(Inst.getOpcode());
     // This instruction has src modifiers
     for (unsigned E = Operands.size(); I != E; ++I) {
       AMDGPUOperand &Op = ((AMDGPUOperand &)*Operands[I]);
+
+      if (UsesImplicitSDSTVCC && Op.isReg() && I == 2 &&
+          (Op.getReg() == AMDGPU::VCC || Op.getReg() == AMDGPU::VCC_LO)) {
+        continue;
+      }
+
       if (isRegOrImmWithInputMods(Desc, Inst.getNumOperands())) {
         Op.addRegOrImmWithFPInputModsOperands(Inst, 2);
       } else if (Op.isImmModifier()) {
@@ -8260,6 +8291,28 @@ void AMDGPUAsmParser::cvtVOP3(MCInst &Inst, const OperandVector &Operands,
     ++it;
     // Copy the operand to ensure it's not invalidated when Inst grows.
     Inst.insert(it, MCOperand(Inst.getOperand(0))); // src2 = dst
+  }
+
+  // Fix AsmParserOnly Opcodes to canonical opcodes.
+  switch (Inst.getOpcode()) {
+  default:
+    break;
+  case AMDGPU::V_DIV_SCALE_F32_e64_w32_gfx11:
+  case AMDGPU::V_DIV_SCALE_F32_e64_w64_gfx11:
+    Inst.setOpcode(AMDGPU::V_DIV_SCALE_F32_e64_gfx11);
+    break;
+  case AMDGPU::V_DIV_SCALE_F64_e64_w32_gfx11:
+  case AMDGPU::V_DIV_SCALE_F64_e64_w64_gfx11:
+    Inst.setOpcode(AMDGPU::V_DIV_SCALE_F64_e64_gfx11);
+    break;
+  case AMDGPU::V_DIV_SCALE_F32_w32_gfx10:
+  case AMDGPU::V_DIV_SCALE_F32_w64_gfx10:
+    Inst.setOpcode(AMDGPU::V_DIV_SCALE_F32_gfx10);
+    break;
+  case AMDGPU::V_DIV_SCALE_F64_w32_gfx10:
+  case AMDGPU::V_DIV_SCALE_F64_w64_gfx10:
+    Inst.setOpcode(AMDGPU::V_DIV_SCALE_F64_gfx10);
+    break;
   }
 }
 

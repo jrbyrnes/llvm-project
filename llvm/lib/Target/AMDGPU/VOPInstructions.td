@@ -155,10 +155,8 @@ class VOP_Real<VOP_Pseudo ps> {
   bit IsSingle = ps.Pfl.IsSingle;
 }
 
-class VOP3_Real <VOP_Pseudo ps, int EncodingFamily, string asm_name = ps.Mnemonic> :
-  VOP_Real <ps>,
-  InstSI <ps.OutOperandList, ps.InOperandList, asm_name # ps.AsmOperands, []>,
-  SIMCInstr <ps.PseudoInstr, EncodingFamily> {
+class VOP3_Base <VOP_Pseudo ps, string asm_name = ps.Mnemonic> :
+  InstSI <ps.OutOperandList, ps.InOperandList, asm_name # ps.AsmOperands, []> {
 
   let VALU = 1;
   let VOP3 = 1;
@@ -184,6 +182,11 @@ class VOP3_Real <VOP_Pseudo ps, int EncodingFamily, string asm_name = ps.Mnemoni
 
   VOPProfile Pfl = ps.Pfl;
 }
+
+class VOP3_Real <VOP_Pseudo ps, int EncodingFamily, string asm_name = ps.Mnemonic> :
+  VOP3_Base <ps, asm_name>,
+  VOP_Real <ps>,
+  SIMCInstr <ps.PseudoInstr, EncodingFamily>;
 
 // XXX - Is there any reason to distinguish this from regular VOP3
 // here?

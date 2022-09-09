@@ -6,12 +6,12 @@
 ; GCN-LABEL: {{^}}fdiv_f64:
 ; GCN-DAG: buffer_load_dwordx2 [[NUM:v\[[0-9]+:[0-9]+\]]], off, {{s\[[0-9]+:[0-9]+\]}}, 0
 ; GCN-DAG: buffer_load_dwordx2 [[DEN:v\[[0-9]+:[0-9]+\]]], off, {{s\[[0-9]+:[0-9]+\]}}, 0 offset:8
-; CI-DAG: v_div_scale_f64 [[SCALE0:v\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, [[DEN]], [[DEN]], [[NUM]]
+; CI-DAG: v_div_scale_f64 [[SCALE0:v\[[0-9]+:[0-9]+\]]], vcc, [[DEN]], [[DEN]], [[NUM]]
 ; CI-DAG: v_div_scale_f64 [[SCALE1:v\[[0-9]+:[0-9]+\]]], vcc, [[NUM]], [[DEN]], [[NUM]]
 
 ; Check for div_scale bug workaround on SI
-; SI-DAG: v_div_scale_f64 [[SCALE0:v\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, [[DEN]], [[DEN]], [[NUM]]
-; SI-DAG: v_div_scale_f64 [[SCALE1:v\[[0-9]+:[0-9]+\]]], {{s\[[0-9]+:[0-9]+\]}}, [[NUM]], [[DEN]], [[NUM]]
+; SI-DAG: v_div_scale_f64 [[SCALE0:v\[[0-9]+:[0-9]+\]]], vcc, [[DEN]], [[DEN]], [[NUM]]
+; SI-DAG: v_div_scale_f64 [[SCALE1:v\[[0-9]+:[0-9]+\]]], vcc, [[NUM]], [[DEN]], [[NUM]]
 
 ; GCN-DAG: v_rcp_f64_e32 [[RCP_SCALE0:v\[[0-9]+:[0-9]+\]]], [[SCALE0]]
 
