@@ -85,6 +85,9 @@ void InstrEmitter::
 EmitCopyFromReg(SDNode *Node, unsigned ResNo, bool IsClone, bool IsCloned,
                 Register SrcReg, DenseMap<SDValue, Register> &VRBaseMap) {
   Register VRBase;
+  errs() << "in emit copy from reg, node:\n";
+  Node->dump();
+  errs() << "\n";
   if (SrcReg.isVirtual()) {
     // Just use the input register directly!
     SDValue Op(Node, ResNo);
@@ -105,6 +108,8 @@ EmitCopyFromReg(SDNode *Node, unsigned ResNo, bool IsClone, bool IsCloned,
   // Stick to the preferred register classes for legal types.
   if (TLI->isTypeLegal(VT))
     UseRC = TLI->getRegClassFor(VT, Node->isDivergent());
+
+  errs() << "IsClone, IsCloned: " << IsClone << " " << IsCloned << "\n";
 
   if (!IsClone && !IsCloned)
     for (SDNode *User : Node->uses()) {
@@ -165,9 +170,12 @@ EmitCopyFromReg(SDNode *Node, unsigned ResNo, bool IsClone, bool IsCloned,
   } else
     DstRC = SrcRC;
 
+
+
+  errs() << "SrcRC->getCopyCost() " << SrcRC->getCopyCost() << "\n";
   // If all uses are reading from the src physical register and copying the
   // register is either impossible or very expensive, then don't create a copy.
-  if (MatchReg && SrcRC->getCopyCost() < 0) {
+  if (MatchReg && SrcRC->getCopyCost() > 0) {
     VRBase = SrcReg;
   } else {
     // Create the reg, emit the copy.
@@ -1167,10 +1175,12 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
   case ISD::TokenFactor: // fall thru
     break;
   case ISD::CopyToReg: {
+    errs() << "in emit CopyToReg\n";
     Register DestReg = cast<RegisterSDNode>(Node->getOperand(1))->getReg();
     SDValue SrcVal = Node->getOperand(2);
     if (Register::isVirtualRegister(DestReg) && SrcVal.isMachineOpcode() &&
         SrcVal.getMachineOpcode() == TargetOpcode::IMPLICIT_DEF) {
+      errs() << "Building an implicit def\n";
       // Instead building a COPY to that vreg destination, build an
       // IMPLICIT_DEF instruction instead.
       BuildMI(*MBB, InsertPos, Node->getDebugLoc(),
@@ -1186,8 +1196,9 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
     if (SrcReg == DestReg) // Coalesced away the copy? Ignore.
       break;
 
+    errs() << "Emitting COPY\n";
     BuildMI(*MBB, InsertPos, Node->getDebugLoc(), TII->get(TargetOpcode::COPY),
-            DestReg).addReg(SrcReg);
+              DestReg).addReg(SrcReg);
     break;
   }
   case ISD::CopyFromReg: {

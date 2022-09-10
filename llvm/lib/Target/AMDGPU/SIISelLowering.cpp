@@ -13013,5 +13013,16 @@ bool SITargetLowering::checkForPhysRegDependency(SDNode *Def, SDNode *User, unsi
     Cost = RC->getCopyCost();
     return true;
   }
+
+  if (II.hasImplicitDefOfPhysReg(AMDGPU::VCC)) {
+    PhysReg = AMDGPU::VCC;
+    const TargetRegisterClass *RC =
+        TRI->getMinimalPhysRegClass(PhysReg, Def->getSimpleValueType(ResNo));
+    Cost = RC->getCopyCost();
+    errs() << "Found a VCC implicit Def\n";
+    return true;
+
+  }
+
   return false;
 }

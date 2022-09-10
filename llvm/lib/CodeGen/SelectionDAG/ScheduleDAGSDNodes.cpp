@@ -112,12 +112,24 @@ static void CheckForPhysRegDependency(SDNode *Def, SDNode *User, unsigned Op,
                                       const TargetInstrInfo *TII,
                                       const TargetLowering &TLI,
                                       unsigned &PhysReg, int &Cost) {
+  errs() << "In check for PR Dep\n";
+
   if (Op != 2 || User->getOpcode() != ISD::CopyToReg)
     return;
 
   unsigned Reg = cast<RegisterSDNode>(User->getOperand(1))->getReg();
-  if (TLI.checkForPhysRegDependency(Def, User, Op, TRI, TII, PhysReg, Cost))
+  errs() << "Calling TLI check for PRDep\n";
+  errs() << "User: \n";
+  User->print(errs());
+  errs() << "\nDef : \n";
+  Def->print(errs());
+  errs() << "\n";
+  if (TLI.checkForPhysRegDependency(Def, User, Op, TRI, TII, PhysReg, Cost)) {
+    errs() << "Found PRDep, with Cost: " << Cost << " and PhysReg " << PhysReg << "\n";
     return;
+  }
+
+  errs() << "Made it past\n";
 
   if (Register::isVirtualRegister(Reg))
     return;
@@ -498,18 +510,25 @@ void ScheduleDAGSDNodes::AddSchedEdges() {
         // it requires a cross class copy (cost < 0). That means we are only
         // treating "expensive to copy" register dependency as physical register
         // dependency. This may change in the future though.
-        if (Cost >= 0 && !StressSched)
+        if (Cost >= 0 && !StressSched) {
+          errs() << "Setting PhysReg to zero, hit cost condition\n";
           PhysReg = 0;
-
+        }
         // If this is a ctrl dep, latency is 1.
         unsigned OpLatency = isChain ? 1 : OpSU->Latency;
         // Special-case TokenFactor chains as zero-latency.
         if(isChain && OpN->getOpcode() == ISD::TokenFactor)
           OpLatency = 0;
 
+
         SDep Dep = isChain ? SDep(OpSU, SDep::Barrier)
           : SDep(OpSU, SDep::Data, PhysReg);
         Dep.setLatency(OpLatency);
+
+        errs() << "created dep on SU " << OpSU->NodeNum << "\n";
+        errs() << "For SU " << SU.NodeNum << "\n";
+
+
         if (!isChain && !UnitLatencies) {
           computeOperandLatency(OpN, N, i, Dep);
           ST.adjustSchedDependency(OpSU, DefIdx, &SU, i, Dep);
