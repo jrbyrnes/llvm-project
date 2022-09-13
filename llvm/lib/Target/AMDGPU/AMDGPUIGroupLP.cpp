@@ -53,7 +53,7 @@ static cl::opt<uint64_t> MaxBranchesExplored(
              "the exact algorithm before giving up."));
 
 static cl::opt<bool> UseCostHeur(
-    "amdgpu-igrouplp-exact-solver-cost-heur", cl::init(true), cl::Hidden,
+    "amdgpu-igrouplp-exact-solver-cost-heur", cl::init(false), cl::Hidden,
     cl::desc("Whether to use the cost heuristic to make choices as we "
              "traverse the search space using the exact solver. Defaulted "
              "to on, and if turned off, we will use the node order -- "
@@ -99,7 +99,9 @@ private:
   // SyncID.
   int SyncID = 0;
 
-  // SGID is used to map instructions to candidate SchedGroups
+  // SGID is used to map instructions to candidate SchedGroups. SGID also represents
+  // the bottom up order of SchedGroups in a given synchronized pipeline -- the
+  // minimum SGID is the last SG in the synchronized pipeline
   unsigned SGID;
 
   // Count of the number of created SchedGroups, used to initialize SGID.
@@ -208,6 +210,8 @@ static void resetEdges(SUnit &SU, ScheduleDAGInstrs *DAG) {
 typedef std::pair<SUnit *, SmallVector<int, 4>> SUToCandSGsPair;
 typedef SmallVector<SUToCandSGsPair, 4> SUsToCandSGsVec;
 
+typedef DenseMap<SUnit *, SmallVector<SUnit *, 4>> SUnitToSUnitMap;
+typedef DenseMap<SUnit *, SmallVector<std::pair<SUnit *, int>, 4>> SUnitToAssignedSUnitMap;
 // The PipelineSolver is used to assign SUnits to SchedGroups in a pipeline
 // in non-trivial cases. For example, if the requested pipeline is
 // {VMEM_READ, VALU, MFMA, VMEM_READ} and we encounter a VMEM_READ instruction
@@ -229,12 +233,21 @@ class PipelineSolver {
   // The pipeline that has the best solution found so far
   SmallVector<SmallVector<SchedGroup, 4>, 4> BestPipeline;
 
+  // Map of SU -> Pipeline Recursive Preds for each Sync stage
+  SmallVector<SUnitToSUnitMap, 4> PipelinePreds;
+  // Map of SU -> Pipeline Recursive Succs for each Sync stage
+  SmallVector<SUnitToSUnitMap, 4> PipelineSuccs;
+  // The SchedGroup Assignments of recursive Recursive Preds for a given SU
+  SmallVector<SUnitToAssignedSUnitMap, 4> PipelineAssignments;
+
   // Whether or not we actually have any SyncedInstrs to try to solve.
   bool NeedsSolver = false;
 
   // Compute an estimate of the size of search tree -- the true size is
   // the product of each conflictedInst.Matches.size() across all SyncPipelines
   unsigned computeProblemSize();
+
+  void mapDependencies();
 
   // The cost penalty of not assigning a SU to a SchedGroup
   int MissPenalty = 0;
@@ -255,10 +268,10 @@ class PipelineSolver {
   uint64_t BranchesExplored = 0;
 
   // Update indices to fit next conflicting instruction
-  void advancePosition();
+  void advancePosition(SUnit *SU = nullptr, int SGID = -1);
   // Recede indices to attempt to find better fit for previous conflicting
   // instruction
-  void retreatPosition();
+  void retreatPosition(SUnit *);
 
   // The exponential time algorithm which finds the provably best fit
   bool solveExact();
@@ -436,7 +449,13 @@ void PipelineSolver::removeEdges(
   }
 }
 
-void PipelineSolver::advancePosition() {
+void PipelineSolver::advancePosition(SUnit *SU, int CandSGID) {
+  // Assume topdown
+  if (SU) {
+    for (auto &SuccSU : PipelineSuccs[CurrSyncGroupIdx][SU])
+      PipelineAssignments[CurrSyncGroupIdx][SuccSU].push_back(std::make_pair(SU, CandSGID));
+  }
+
   ++CurrConflInstNo;
 
   if (static_cast<size_t>(CurrConflInstNo) >=
@@ -450,7 +469,17 @@ void PipelineSolver::advancePosition() {
   }
 }
 
-void PipelineSolver::retreatPosition() {
+void PipelineSolver::retreatPosition(SUnit *SU) {
+  // Assume topdown
+  int TempSyncGroupIdx = CurrConflInstNo == 0 ? CurrSyncGroupIdx - 1 : CurrSyncGroupIdx;
+  if (SU && TempSyncGroupIdx >= 0) {
+    for (auto &SuccSU : PipelineSuccs[TempSyncGroupIdx][SU]) {
+      auto &Assignments = PipelineAssignments[TempSyncGroupIdx][SuccSU];
+      // The assignment we are trying to remove will always be the most recent one push_back()ed
+      Assignments.pop_back();
+    }
+  }
+
   assert(CurrConflInstNo >= 0);
   assert(CurrSyncGroupIdx >= 0);
 
@@ -462,8 +491,10 @@ void PipelineSolver::retreatPosition() {
   if (CurrConflInstNo == 0) {
     // If we return to the starting position, we have explored
     // the entire tree
-    if (CurrSyncGroupIdx == BeginSyncGroupIdx)
+    if (CurrSyncGroupIdx == BeginSyncGroupIdx) {
+      errs() << "Completed search\n";
       return;
+    }
 
     --CurrSyncGroupIdx;
     // Go to previous non-trivial pipeline
@@ -480,13 +511,16 @@ bool PipelineSolver::checkOptimal() {
       BestPipeline = CurrPipeline;
       BestCost = CurrCost;
       LLVM_DEBUG(dbgs() << "Found Fit with cost " << BestCost << "\n");
+      errs() << "Found fit with cost " << BestCost << "\n";
     }
     assert(BestCost >= 0);
   }
 
   bool DoneExploring = false;
-  if (MaxBranchesExplored > 0 && BranchesExplored >= MaxBranchesExplored)
+  if (MaxBranchesExplored > 0 && BranchesExplored >= MaxBranchesExplored) {
+    errs() << "Timed out\n";
     DoneExploring = true;
+  }
 
   return (DoneExploring || BestCost == 0);
 }
@@ -495,8 +529,121 @@ void PipelineSolver::populateReadyList(
     SUToCandSGsPair &CurrSU, SmallVectorImpl<std::pair<int, int>> &ReadyList,
     SmallVectorImpl<SchedGroup> &SyncPipeline) {
   assert(CurrSU.second.size() >= 1);
+
+  if (/*useDepHeur*/true) {
+    SmallVector<int, 4> DepGroups;
+    // Sort the dependent SG in bottom-up order
+    //errs() << "Sorting DepGroups\n";
+    for (auto &Assignment : PipelineAssignments[CurrSyncGroupIdx][CurrSU.first]) {
+      if (Assignment.second == -1) continue;
+      if (DepGroups.size() == 0) {
+        DepGroups.push_back(Assignment.second);
+        continue;
+      }
+
+      auto I = DepGroups.begin();
+      while (Assignment.second > *I && I != DepGroups.end())
+        ++I;
+
+      DepGroups.insert(I, Assignment.second);
+    }
+    //errs() << "Sorted DepGroups:\n";
+    //auto print = [](int SGID) {errs() << SGID << "\n";};
+    //std::for_each(DepGroups.begin(), DepGroups.end(), print);
+    //errs() << "Sorting Cand SGs\n";
+    // Sort the Candidate SG in top-down order. The candidate SG should already be
+    // in bottom up order due to the way that they are collected in InitSchedGroupBarrier,
+    // however, it is prefered to not create coupling based on that assumption, and 
+    // insertion sort is O(n) if the vector is in backwards order.
+    SmallVector<int, 4> CandSGs;
+    for (auto &CandSG : CurrSU.second) {
+      if (CandSGs.size() == 0) {
+        CandSGs.push_back(CandSG);
+        continue;
+      }
+
+      auto J = CandSGs.begin();
+      while (CandSG < *J && J != CandSGs.end())
+        ++J;
+
+      CandSGs.insert(J, CandSG);
+    }
+
+
+    //errs() << "Sorted CandSGS\n";
+    //std::for_each(CandSGs.begin(), CandSGs.end(), print);
+
+    if (!DepGroups.size()) {
+     auto InsertPair = [&ReadyList](int CandSGID) {
+        ReadyList.insert(ReadyList.end(), std::make_pair(CandSGID, -1));
+      };
+      std::for_each(CandSGs.begin(), CandSGs.end(), InsertPair);
+      return;
+    }
+
+    //errs() << "Creating readylist\n";
+    auto InsertPair = [&ReadyList](int CandSGID) {
+      //errs() << "Trying to insert to ready list\n";
+      ReadyList.insert(ReadyList.end(), std::make_pair(CandSGID, -1));
+      //errs() << "inserted into ready list\n";
+    };
+
+    for (auto &Dep : DepGroups) {
+      if (!CandSGs.size())
+        break;
+      auto I = CandSGs.begin();
+      // a larger SGID implies earlier in pipeline
+      while (*I > Dep && I != CandSGs.end())
+        ++I;
+
+      if (I == CandSGs.end()) continue;
+      auto InsertPair = [&ReadyList](int CandSGID) {
+        //errs() << "Trying to insert to ready list\n";
+        ReadyList.insert(ReadyList.end(), std::make_pair(CandSGID, -1));
+        //errs() << "inserted into ready list\n";
+      };
+      //errs() << "Inserting for each\n";
+      std::for_each(I, CandSGs.end(), InsertPair);
+      //errs() << "finished inserting, eraing\n";
+      CandSGs.erase(I, CandSGs.end());
+      //errs() << "Finished erasing\n";
+    }
+
+    std::for_each(CandSGs.begin(), CandSGs.end(), InsertPair);
+    //errs() << "Finished creating ready list:\n";
+    //auto print2 = [](std::pair<int, int> RLEle) {errs() << RLEle.first << "\n";};
+    //std::for_each(ReadyList.begin(), ReadyList.end(), print2);
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  if (/*NotDepHeur*/false) {
   auto I = CurrSU.second.rbegin();
   auto E = CurrSU.second.rend();
+
+
   for (; I != E; ++I) {
     std::vector<std::pair<SUnit *, SUnit *>> AddedEdges;
     int CandSGID = *I;
@@ -524,6 +671,7 @@ void PipelineSolver::populateReadyList(
               [](std::pair<int, int> A, std::pair<int, int> B) {
                 return A.second < B.second;
               });
+  }
   }
 
   assert(ReadyList.size() == CurrSU.second.size());
@@ -577,7 +725,7 @@ bool PipelineSolver::solveExact() {
     AddedCost = addEdges(SyncPipeline, CurrSU.first, CandSGID, AddedEdges);
     LLVM_DEBUG(dbgs() << "Cost of Assignment: " << AddedCost << "\n");
     CurrCost += AddedCost;
-    advancePosition();
+    advancePosition(CurrSU.first, CandSGID);
     ++BranchesExplored;
     bool FinishedExploring = false;
     // If the Cost after adding edges is greater than a known solution,
@@ -590,7 +738,7 @@ bool PipelineSolver::solveExact() {
       }
     }
 
-    retreatPosition();
+    retreatPosition(CurrSU.first);
     CurrCost -= AddedCost;
     removeEdges(AddedEdges);
     Match->pop();
@@ -603,7 +751,7 @@ bool PipelineSolver::solveExact() {
   // Potentially if we omit a problematic instruction from the pipeline,
   // all the other instructions can nicely fit.
   CurrCost += MissPenalty;
-  advancePosition();
+  advancePosition(CurrSU.first, -1);
 
   LLVM_DEBUG(dbgs() << "NOT Assigned (" << CurrSU.first->NodeNum << ")\n");
 
@@ -616,7 +764,7 @@ bool PipelineSolver::solveExact() {
     }
   }
 
-  retreatPosition();
+  retreatPosition(CurrSU.first);
   CurrCost -= MissPenalty;
   return FinishedExploring;
 }
@@ -695,6 +843,37 @@ unsigned PipelineSolver::computeProblemSize() {
   return ProblemSize;
 }
 
+void PipelineSolver::mapDependencies() {
+  PipelineSuccs.resize(PipelineInstrs.size());
+  PipelinePreds.resize(PipelineInstrs.size());
+  PipelineAssignments.resize(PipelineInstrs.size());
+
+  int SyncStage = 0;
+  for (auto &SyncPipe : PipelineInstrs) {
+    auto I = SyncPipe.begin();
+    auto E = SyncPipe.end();
+    for (; I != E; I++) {
+      auto PipeSUA = *I;
+      for (auto J = std::next(I); J != E; J++) {
+        auto PipeSUB = *J;
+        SUnit *PotentialPred = PipeSUA.first;
+        SUnit *PotentialSucc = PipeSUB.first;
+        // If SUnitB occurs before SUnitA in the DAG, then we 
+        // should look for SUnitA in the predecessors of SUnitB
+        if (PipeSUB.first->NodeNum < PipeSUA.first->NodeNum) {
+          PotentialPred = PipeSUB.first;
+          PotentialSucc = PipeSUA.first;
+        }
+        if (DAG->IsReachable(PotentialSucc, PotentialPred)) {
+          PipelinePreds[SyncStage][PotentialSucc].push_back(PotentialPred);
+          PipelineSuccs[SyncStage][PotentialPred].push_back(PotentialSucc);
+        }
+      }
+    }
+  ++SyncStage;
+  }
+}
+
 void PipelineSolver::solve() {
   if (!NeedsSolver)
     return;
@@ -705,6 +884,8 @@ void PipelineSolver::solve() {
   bool BelowCutoff = (CutoffForExact > 0) && ProblemSize <= CutoffForExact;
   MissPenalty = (ProblemSize / 2) + 1;
 
+  mapDependencies();
+
   LLVM_DEBUG(DAG->dump());
   if (EnableExactSolver || BelowCutoff) {
     LLVM_DEBUG(dbgs() << "Starting Greedy pipeline solver\n");
@@ -713,6 +894,7 @@ void PipelineSolver::solve() {
     LLVM_DEBUG(dbgs() << "Greedy produced best cost of " << BestCost << "\n");
     if (BestCost > 0) {
       LLVM_DEBUG(dbgs() << "Starting EXACT pipeline solver\n");
+      errs() << "starting exact\n";
       solveExact();
       LLVM_DEBUG(dbgs() << "Exact produced best cost of " << BestCost << "\n");
     }
