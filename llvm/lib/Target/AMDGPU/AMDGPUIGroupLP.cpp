@@ -210,7 +210,7 @@ static void resetEdges(SUnit &SU, ScheduleDAGInstrs *DAG) {
 typedef std::pair<SUnit *, SmallVector<int, 4>> SUToCandSGsPair;
 typedef SmallVector<SUToCandSGsPair, 4> SUsToCandSGsVec;
 
-typedef DenseMap<SUnit *, SmallVector<SUnit *, 4>> SUnitToSUnitMap;
+typedef DenseMap<SUnit *, SmallVector<SUToCandSGsPair, 4>> SUnitToSUnitMap;
 typedef DenseMap<SUnit *, SmallVector<std::pair<SUnit *, int>, 4>> SUnitToAssignedSUnitMap;
 // The PipelineSolver is used to assign SUnits to SchedGroups in a pipeline
 // in non-trivial cases. For example, if the requested pipeline is
@@ -240,6 +240,8 @@ class PipelineSolver {
   // The SchedGroup Assignments of recursive Recursive Preds for a given SU
   SmallVector<SUnitToAssignedSUnitMap, 4> PipelineAssignments;
 
+  SmallVector<SUsToCandSGsVec, 4> ReadyInstrs;
+
   // Whether or not we actually have any SyncedInstrs to try to solve.
   bool NeedsSolver = false;
 
@@ -268,10 +270,10 @@ class PipelineSolver {
   uint64_t BranchesExplored = 0;
 
   // Update indices to fit next conflicting instruction
-  void advancePosition(SUnit *SU = nullptr, int SGID = -1);
+  void advancePosition(SUToCandSGsPair *SUG = nullptr, int SGID = -1);
   // Recede indices to attempt to find better fit for previous conflicting
   // instruction
-  void retreatPosition(SUnit *);
+  void retreatPosition(SUToCandSGsPair *SUG = nullptr);
 
   // The exponential time algorithm which finds the provably best fit
   bool solveExact();
@@ -449,11 +451,29 @@ void PipelineSolver::removeEdges(
   }
 }
 
-void PipelineSolver::advancePosition(SUnit *SU, int CandSGID) {
+void PipelineSolver::advancePosition(SUToCandSGsPair *SUG, int CandSGID) {
   // Assume topdown
-  if (SU) {
-    for (auto &SuccSU : PipelineSuccs[CurrSyncGroupIdx][SU])
-      PipelineAssignments[CurrSyncGroupIdx][SuccSU].push_back(std::make_pair(SU, CandSGID));
+  if (SUG) {
+    SUnit *SU = SUG->first;
+    for (auto &SuccSU : PipelineSuccs[CurrSyncGroupIdx][SU]) {
+      // Inform the Succ where we have assigned its Pred
+      PipelineAssignments[CurrSyncGroupIdx][SuccSU.first].push_back(std::make_pair(SU, CandSGID));
+      // Remove the SU from each of the Succs list of Preds
+      auto &SuccPreds = PipelinePreds[CurrSyncGroupIdx][SuccSU.first];
+
+      auto I = SuccPreds.begin();
+      auto E = SuccPreds.end();
+      for (; I != E; I++) {
+        if (I->first->NodeNum == SU->NodeNum) {
+	  SuccPreds.erase(I);
+	  break;
+        }
+      }
+      assert(I != E);
+      // If the SuccSU has no more pipeline predecessors, add it to the readyInstructions
+      if (SuccPreds.size() == 0)
+        ReadyInstrs[CurrSyncGroupIdx].push_back(SuccSU);
+    }
   }
 
   ++CurrConflInstNo;
@@ -469,14 +489,25 @@ void PipelineSolver::advancePosition(SUnit *SU, int CandSGID) {
   }
 }
 
-void PipelineSolver::retreatPosition(SUnit *SU) {
+void PipelineSolver::retreatPosition(SUToCandSGsPair *SUG) {
   // Assume topdown
   int TempSyncGroupIdx = CurrConflInstNo == 0 ? CurrSyncGroupIdx - 1 : CurrSyncGroupIdx;
-  if (SU && TempSyncGroupIdx >= 0) {
+  if (SUG && TempSyncGroupIdx >= 0) {
+    SUnit *SU = SUG->first;
     for (auto &SuccSU : PipelineSuccs[TempSyncGroupIdx][SU]) {
-      auto &Assignments = PipelineAssignments[TempSyncGroupIdx][SuccSU];
+      auto &Assignments = PipelineAssignments[TempSyncGroupIdx][SuccSU.first];
       // The assignment we are trying to remove will always be the most recent one push_back()ed
       Assignments.pop_back();
+
+      // Add the SU back to its Succs list of Preds
+      auto &Preds = PipelinePreds[TempSyncGroupIdx][SuccSU.first];
+      Preds.push_back(*SUG);
+      auto Match = std::find_if(ReadyInstrs[TempSyncGroupIdx].begin(), ReadyInstrs[TempSyncGroupIdx].end(), [SUG](SUToCandSGsPair ReadySUG) {
+        return ReadySUG.first->NodeNum == SUG->first->NodeNum;
+      });
+      assert(Match != ReadyInstrs[TempSyncGroupIdx].end() || Preds.size() > 1);
+      if (Match != ReadyInstrs[TempSyncGroupIdx].end())
+        ReadyInstrs[TempSyncGroupIdx].erase(Match);
     }
   }
 
@@ -687,7 +718,14 @@ bool PipelineSolver::solveExact() {
   assert(static_cast<size_t>(CurrSyncGroupIdx) < PipelineInstrs.size());
   assert(static_cast<size_t>(CurrConflInstNo) <
          PipelineInstrs[CurrSyncGroupIdx].size());
-  SUToCandSGsPair CurrSU = PipelineInstrs[CurrSyncGroupIdx][CurrConflInstNo];
+  SUToCandSGsPair CurrSU;
+  if (false) {
+    CurrSU = PipelineInstrs[CurrSyncGroupIdx][CurrConflInstNo];
+  }
+  if (true) {
+    CurrSU = ReadyInstrs[CurrSyncGroupIdx].front();
+    ReadyInstrs[CurrSyncGroupIdx].erase(ReadyInstrs[CurrSyncGroupIdx].begin());
+  }
   LLVM_DEBUG(dbgs() << "Fitting SU(" << CurrSU.first->NodeNum
                     << ") in Pipeline # " << CurrSyncGroupIdx << "\n");
 
@@ -725,7 +763,7 @@ bool PipelineSolver::solveExact() {
     AddedCost = addEdges(SyncPipeline, CurrSU.first, CandSGID, AddedEdges);
     LLVM_DEBUG(dbgs() << "Cost of Assignment: " << AddedCost << "\n");
     CurrCost += AddedCost;
-    advancePosition(CurrSU.first, CandSGID);
+    advancePosition(&CurrSU, CandSGID);
     ++BranchesExplored;
     bool FinishedExploring = false;
     // If the Cost after adding edges is greater than a known solution,
@@ -738,7 +776,7 @@ bool PipelineSolver::solveExact() {
       }
     }
 
-    retreatPosition(CurrSU.first);
+    retreatPosition(&CurrSU);
     CurrCost -= AddedCost;
     removeEdges(AddedEdges);
     Match->pop();
@@ -751,7 +789,7 @@ bool PipelineSolver::solveExact() {
   // Potentially if we omit a problematic instruction from the pipeline,
   // all the other instructions can nicely fit.
   CurrCost += MissPenalty;
-  advancePosition(CurrSU.first, -1);
+  advancePosition(&CurrSU, -1);
 
   LLVM_DEBUG(dbgs() << "NOT Assigned (" << CurrSU.first->NodeNum << ")\n");
 
@@ -764,7 +802,11 @@ bool PipelineSolver::solveExact() {
     }
   }
 
-  retreatPosition(CurrSU.first);
+  if (true) {
+    ReadyInstrs[CurrSyncGroupIdx].insert(ReadyInstrs[CurrSyncGroupIdx].begin() + 1, CurrSU);
+  }
+
+  retreatPosition(&CurrSU);
   CurrCost -= MissPenalty;
   return FinishedExploring;
 }
@@ -856,21 +898,33 @@ void PipelineSolver::mapDependencies() {
       auto PipeSUA = *I;
       for (auto J = std::next(I); J != E; J++) {
         auto PipeSUB = *J;
-        SUnit *PotentialPred = PipeSUA.first;
-        SUnit *PotentialSucc = PipeSUB.first;
+        auto PotentialPred = PipeSUA;
+        auto PotentialSucc = PipeSUB;
         // If SUnitB occurs before SUnitA in the DAG, then we 
         // should look for SUnitA in the predecessors of SUnitB
         if (PipeSUB.first->NodeNum < PipeSUA.first->NodeNum) {
-          PotentialPred = PipeSUB.first;
-          PotentialSucc = PipeSUA.first;
+          PotentialPred = PipeSUB;
+          PotentialSucc = PipeSUA;
         }
-        if (DAG->IsReachable(PotentialSucc, PotentialPred)) {
-          PipelinePreds[SyncStage][PotentialSucc].push_back(PotentialPred);
-          PipelineSuccs[SyncStage][PotentialPred].push_back(PotentialSucc);
+        if (DAG->IsReachable(PotentialSucc.first, PotentialPred.first)) {
+          PipelinePreds[SyncStage][PotentialSucc.first].push_back(PotentialPred);
+          PipelineSuccs[SyncStage][PotentialPred.first].push_back(PotentialSucc);
         }
       }
     }
   ++SyncStage;
+  }
+
+  SyncStage = 0;
+  for (; static_cast<size_t>(SyncStage) < PipelineInstrs.size(); SyncStage++) {
+    auto SyncPipe = PipelineInstrs[SyncStage];
+    for (auto &SUG : SyncPipe) {
+      auto PipePreds = PipelinePreds[SyncStage];
+      for (auto &Entry : PipePreds) {
+	if (Entry.first->NodeNum == SUG.first->NodeNum)
+	  ReadyInstrs[SyncStage].push_back(SUG);
+      }
+    }
   }
 }
 
