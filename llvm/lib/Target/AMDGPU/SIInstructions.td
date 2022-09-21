@@ -2791,18 +2791,68 @@ def : GCNPat <
   (v2f16 (UniformBinFrag<build_vector> (f16 SReg_32:$src0), (f16 SReg_32:$src1))),
   (S_PACK_LL_B32_B16 SReg_32:$src0, SReg_32:$src1)
 >;
-
+/*
 def : GCNPat <
   (v2f16 (DivergentBinFrag<build_vector> (f16 SReg_32:$src0), (f16 SReg_32:$src1))),
   (v2f16 (V_LSHL_OR_B32_e64 SReg_32:$src1, (i32 16), (i32 (V_AND_B32_e64 (i32 (V_MOV_B32_e32 (i32 0xffff))), SReg_32:$src0))))
 >;
+*/
+
+// Take the lower 16 bits from each VGPR_32 and concat them
+def : GCNPat <
+  (v2f16 (DivergentBinFrag<build_vector> (f16 VGPR_32:$a), (f16 VGPR_32:$b))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x05040100)))
+>;
+
+// Take the lower 16 bits from each VGPR_32 and concat them
+def : GCNPat <
+  (v2i16 (DivergentBinFrag<build_vector> (i16 VGPR_32:$a), (i16 VGPR_32:$b))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x05040100)))
+>;
+
+// Take the upper 16 bits from each VGPR_32 and concat them
+def : GCNPat <
+  (v2f16 (DivergentBinFrag<build_vector> (f16 (bitconvert (i16 (trunc (srl VGPR_32:$a, (i32 16)))))), (f16 (bitconvert (i16 (trunc (srl VGPR_32:$b, (i32 16)))))))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x07060302)))
+>;
+
+def : GCNPat < 
+  (v2f16 (DivergentBinFrag<build_vector> (f16 VGPR_32:$a), (f16 (bitconvert (i16 (trunc (srl VGPR_32:$b, (i32 16)))))))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x07060100)))
+>;
+
+def : GCNPat <
+  (v2i16 (DivergentBinFrag<build_vector> (i16 VGPR_32:$a), (i16 (trunc (srl VGPR_32:$b, (i32 16)))))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x07060100)))
+>;
+
+// Lower 16 from $a and upper 16 from $b
+def : GCNPat <
+  (v2f16 (DivergentBinFrag<build_vector> (f16 (bitconvert (i16 (trunc (srl VGPR_32:$a, (i32 16)))))), (f16 VGPR_32:$b))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x05040302)))
+>;
+
+// Lower 16 from $a and upper 16 from $b
+def : GCNPat <
+  (v2i16 (DivergentBinFrag<build_vector> (i16 (trunc (srl VGPR_32:$a, (i32 16)))), (i16 VGPR_32:$b))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x05040302)))
+>;
 
 
+// Take the upper 16 bits from each VGPR_32 and concat them
+def : GCNPat <
+  (v2i16 (DivergentBinFrag<build_vector> (i16 (trunc (srl VGPR_32:$a, (i32 16)))), (i16 (trunc (srl VGPR_32:$b, (i32 16)))))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x07060302)))
+>;
+
+
+let AddedComplexity = 5 in {
 def : GCNPat <
   (v2f16 (is_canonicalized<build_vector> (f16 (VOP3Mods (f16 VGPR_32:$src0), i32:$src0_mods)),
                                          (f16 (VOP3Mods (f16 VGPR_32:$src1), i32:$src1_mods)))),
   (V_PACK_B32_F16_e64 $src0_mods, VGPR_32:$src0, $src1_mods, VGPR_32:$src1)
 >;
+}
 } // End SubtargetPredicate = HasVOP3PInsts
 
 // With multiple uses of the shift, this will duplicate the shift and
