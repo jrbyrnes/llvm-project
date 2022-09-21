@@ -184,10 +184,10 @@ define i32 @global_load_2xi16_align1(i16 addrspace(1)* %p) #0 {
 ; GFX9:       ; %bb.0:
 ; GFX9-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    global_load_dword v0, v[0:1], off
-; GFX9-NEXT:    v_mov_b32_e32 v1, 0xffff
+; GFX9-NEXT:    v_mov_b32_e32 v1, 0x7060100
 ; GFX9-NEXT:    s_mov_b32 s4, 0xffff
 ; GFX9-NEXT:    s_waitcnt vmcnt(0)
-; GFX9-NEXT:    v_bfi_b32 v1, v1, 0, v0
+; GFX9-NEXT:    v_perm_b32 v1, v0, 0, v1
 ; GFX9-NEXT:    v_and_or_b32 v0, v0, s4, v1
 ; GFX9-NEXT:    s_setpc_b64 s[30:31]
 ;
@@ -197,7 +197,7 @@ define i32 @global_load_2xi16_align1(i16 addrspace(1)* %p) #0 {
 ; GFX10-NEXT:    s_waitcnt_vscnt null, 0x0
 ; GFX10-NEXT:    global_load_dword v0, v[0:1], off
 ; GFX10-NEXT:    s_waitcnt vmcnt(0)
-; GFX10-NEXT:    v_bfi_b32 v1, 0xffff, 0, v0
+; GFX10-NEXT:    v_perm_b32 v1, v0, 0, 0x7060100
 ; GFX10-NEXT:    v_and_or_b32 v0, 0xffff, v0, v1
 ; GFX10-NEXT:    s_setpc_b64 s[30:31]
 ;
@@ -207,7 +207,7 @@ define i32 @global_load_2xi16_align1(i16 addrspace(1)* %p) #0 {
 ; GFX11-NEXT:    s_waitcnt_vscnt null, 0x0
 ; GFX11-NEXT:    global_load_b32 v0, v[0:1], off
 ; GFX11-NEXT:    s_waitcnt vmcnt(0)
-; GFX11-NEXT:    v_bfi_b32 v1, 0xffff, 0, v0
+; GFX11-NEXT:    v_perm_b32 v1, v0, 0, 0x7060100
 ; GFX11-NEXT:    s_delay_alu instid0(VALU_DEP_1)
 ; GFX11-NEXT:    v_and_or_b32 v0, 0xffff, v0, v1
 ; GFX11-NEXT:    s_setpc_b64 s[30:31]
@@ -319,10 +319,10 @@ define i32 @global_load_2xi16_align4(i16 addrspace(1)* %p) #0 {
 ; GFX9:       ; %bb.0:
 ; GFX9-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    global_load_dword v0, v[0:1], off
-; GFX9-NEXT:    v_mov_b32_e32 v1, 0xffff
+; GFX9-NEXT:    v_mov_b32_e32 v1, 0x7060100
 ; GFX9-NEXT:    s_mov_b32 s4, 0xffff
 ; GFX9-NEXT:    s_waitcnt vmcnt(0)
-; GFX9-NEXT:    v_bfi_b32 v1, v1, 0, v0
+; GFX9-NEXT:    v_perm_b32 v1, v0, 0, v1
 ; GFX9-NEXT:    v_and_or_b32 v0, v0, s4, v1
 ; GFX9-NEXT:    s_setpc_b64 s[30:31]
 ;
@@ -332,7 +332,7 @@ define i32 @global_load_2xi16_align4(i16 addrspace(1)* %p) #0 {
 ; GFX10-NEXT:    s_waitcnt_vscnt null, 0x0
 ; GFX10-NEXT:    global_load_dword v0, v[0:1], off
 ; GFX10-NEXT:    s_waitcnt vmcnt(0)
-; GFX10-NEXT:    v_bfi_b32 v1, 0xffff, 0, v0
+; GFX10-NEXT:    v_perm_b32 v1, v0, 0, 0x7060100
 ; GFX10-NEXT:    v_and_or_b32 v0, 0xffff, v0, v1
 ; GFX10-NEXT:    s_setpc_b64 s[30:31]
 ;
@@ -342,7 +342,7 @@ define i32 @global_load_2xi16_align4(i16 addrspace(1)* %p) #0 {
 ; GFX11-NEXT:    s_waitcnt_vscnt null, 0x0
 ; GFX11-NEXT:    global_load_b32 v0, v[0:1], off
 ; GFX11-NEXT:    s_waitcnt vmcnt(0)
-; GFX11-NEXT:    v_bfi_b32 v1, 0xffff, 0, v0
+; GFX11-NEXT:    v_perm_b32 v1, v0, 0, 0x7060100
 ; GFX11-NEXT:    s_delay_alu instid0(VALU_DEP_1)
 ; GFX11-NEXT:    v_and_or_b32 v0, 0xffff, v0, v1
 ; GFX11-NEXT:    s_setpc_b64 s[30:31]
