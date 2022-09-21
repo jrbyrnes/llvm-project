@@ -401,9 +401,9 @@ define <4 x half> @extract_4xf16(<8 x half> addrspace(1) * %p0, <8 x half> addrs
 ; GFX9-NEXT:    global_load_dwordx4 v[2:5], v[0:1], off glc
 ; GFX9-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-NEXT:  .LBB2_4: ; %exit
+; GFX9-NEXT:    s_mov_b32 s4, 0x5040100
 ; GFX9-NEXT:    s_waitcnt vmcnt(0)
-; GFX9-NEXT:    v_and_b32_e32 v0, 0xffff, v3
-; GFX9-NEXT:    v_lshl_or_b32 v0, v3, 16, v0
+; GFX9-NEXT:    v_perm_b32 v0, v3, v3, s4
 ; GFX9-NEXT:    v_mov_b32_e32 v1, 0x3800
 ; GFX9-NEXT:    v_mov_b32_e32 v3, 0x3900
 ; GFX9-NEXT:    v_mov_b32_e32 v4, 0x3d00

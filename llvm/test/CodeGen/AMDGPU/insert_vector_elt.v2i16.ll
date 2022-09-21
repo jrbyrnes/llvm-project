@@ -1758,10 +1758,9 @@ define amdgpu_kernel void @v_insertelement_v8f16_3(<8 x half> addrspace(1)* %out
 ; GFX9-NEXT:    v_mov_b32_e32 v5, s6
 ; GFX9-NEXT:    buffer_store_short v5, off, s[0:3], 0 offset:16
 ; GFX9-NEXT:    buffer_load_dword v5, off, s[0:3], 0 offset:16
-; GFX9-NEXT:    s_waitcnt vmcnt(2)
-; GFX9-NEXT:    v_and_b32_e32 v1, 0xffff, v1
+; GFX9-NEXT:    s_mov_b32 s4, 0x5040100
 ; GFX9-NEXT:    s_waitcnt vmcnt(0)
-; GFX9-NEXT:    v_lshl_or_b32 v1, v5, 16, v1
+; GFX9-NEXT:    v_perm_b32 v1, v5, v1, s4
 ; GFX9-NEXT:    global_store_dwordx4 v4, v[0:3], s[8:9]
 ; GFX9-NEXT:    s_endpgm
 ;
