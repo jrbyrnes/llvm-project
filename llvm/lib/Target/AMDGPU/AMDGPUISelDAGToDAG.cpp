@@ -267,7 +267,8 @@ bool AMDGPUDAGToDAGISel::matchLoadD16FromBuildVector(SDNode *N) const {
       LoadOp = LdLo->getExtensionType() == ISD::SEXTLOAD ?
         AMDGPUISD::LOAD_D16_LO_I8 : AMDGPUISD::LOAD_D16_LO_U8;
     } else {
-      assert(LdLo->getMemoryVT() == MVT::i16);
+      errs() << "We have a: " << LdLo->getMemoryVT().getEVTString() << "\n";
+      assert(LdLo->getMemoryVT() == MVT::i16 || LdLo->getMemoryVT() == MVT::v2i8);
     }
 
     TiedIn = CurDAG->getNode(ISD::BITCAST, SDLoc(N), VT, TiedIn);

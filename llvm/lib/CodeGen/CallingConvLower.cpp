@@ -42,6 +42,7 @@ CCState::CCState(CallingConv::ID CC, bool isVarArg, MachineFunction &mf,
 void CCState::HandleByVal(unsigned ValNo, MVT ValVT, MVT LocVT,
                           CCValAssign::LocInfo LocInfo, int MinSize,
                           Align MinAlign, ISD::ArgFlagsTy ArgFlags) {
+  errs() << "In CCState::HandleByVal\n";
   Align Alignment = ArgFlags.getNonZeroByValAlign();
   unsigned Size  = ArgFlags.getByValSize();
   if (MinSize > (int)Size)
@@ -81,6 +82,7 @@ bool CCState::IsShadowAllocatedReg(MCRegister Reg) const {
 void
 CCState::AnalyzeFormalArguments(const SmallVectorImpl<ISD::InputArg> &Ins,
                                 CCAssignFn Fn) {
+  errs() << "in analyzeformalags\n";
   unsigned NumArgs = Ins.size();
 
   for (unsigned i = 0; i != NumArgs; ++i) {

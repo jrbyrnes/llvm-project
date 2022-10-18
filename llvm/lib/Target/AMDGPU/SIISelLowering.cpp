@@ -465,6 +465,9 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                        MVT::i16, Legal);
 
     AddPromotedToType(ISD::SIGN_EXTEND, MVT::i16, MVT::i32);
+    AddPromotedToType(ISD::SIGN_EXTEND, MVT::i8, MVT::i16);
+
+    setOperationAction(ISD::SIGN_EXTEND, MVT::i8, Promote);
 
     setOperationAction({ISD::ROTR, ISD::ROTL, ISD::SELECT_CC, ISD::BR_CC},
                        MVT::i16, Expand);
@@ -2470,6 +2473,7 @@ SDValue SITargetLowering::LowerFormalArguments(
     Splits.append(Ins.begin(), Ins.end());
   }
 
+  errs() << "ps1\n";
   if (IsEntryFunc) {
     allocateSpecialEntryInputVGPRs(CCInfo, MF, *TRI, *Info);
     allocateHSAUserSGPRs(CCInfo, MF, *TRI, *Info);
@@ -2477,14 +2481,16 @@ SDValue SITargetLowering::LowerFormalArguments(
     // For the fixed ABI, pass workitem IDs in the last argument register.
     allocateSpecialInputVGPRsFixed(CCInfo, MF, *TRI, *Info);
   }
-
+  errs() << "ps2\n";
   if (IsKernel) {
+    errs() << "ps2.a\n";
     analyzeFormalArgumentsCompute(CCInfo, Ins);
   } else {
+    errs() << "ps2.b\n";
     CCAssignFn *AssignFn = CCAssignFnForCall(CallConv, isVarArg);
     CCInfo.AnalyzeFormalArguments(Splits, AssignFn);
   }
-
+  errs() << "ps3\n";
   SmallVector<SDValue, 16> Chains;
 
   // FIXME: This is the minimum kernel argument alignment. We should improve
@@ -2493,6 +2499,8 @@ SDValue SITargetLowering::LowerFormalArguments(
   // FIXME: Alignment of explicit arguments totally broken with non-0 explicit
   // kern arg offset.
   const Align KernelArgBaseAlign = Align(16);
+
+
 
   for (unsigned i = 0, e = Ins.size(), ArgIdx = 0; i != e; ++i) {
     const ISD::InputArg &Arg = Ins[i];
@@ -2607,7 +2615,7 @@ SDValue SITargetLowering::LowerFormalArguments(
 
     InVals.push_back(Val);
   }
-
+    errs() << "ps4\n";
   // Start adding system SGPRs.
   if (IsEntryFunc) {
     allocateSystemSGPRs(CCInfo, MF, *Info, CallConv, IsGraphics);
@@ -5698,6 +5706,7 @@ SDValue SITargetLowering::lowerADDRSPACECAST(SDValue Op,
 // remains.
 SDValue SITargetLowering::lowerINSERT_SUBVECTOR(SDValue Op,
                                                 SelectionDAG &DAG) const {
+  errs() << "LOWER INSERT_SUB\n";
   SDValue Vec = Op.getOperand(0);
   SDValue Ins = Op.getOperand(1);
   SDValue Idx = Op.getOperand(2);
@@ -5984,6 +5993,7 @@ SDValue SITargetLowering::lowerVECTOR_SHUFFLE(SDValue Op,
 
   // Avoid scalarizing when both halves are reading from consecutive elements.
   SmallVector<SDValue, 4> Pieces;
+  errs() << "Looking into producing e_subvec, resultVT has # elements: " << ResultVT.getVectorNumElements() << "\n";
   for (int I = 0, N = ResultVT.getVectorNumElements(); I != N; I += 2) {
     if (elementPairIsContiguous(SVN->getMask(), I)) {
       const int Idx = SVN->getMaskElt(I);
@@ -5992,8 +6002,13 @@ SDValue SITargetLowering::lowerVECTOR_SHUFFLE(SDValue Op,
       SDValue SubVec = DAG.getNode(ISD::EXTRACT_SUBVECTOR, SL,
                                     PackVT, SVN->getOperand(VecIdx),
                                     DAG.getConstant(EltIdx, SL, MVT::i32));
+
+      errs() << "Created: \n";
+      SubVec.dump();
+      errs() << "\n";
       Pieces.push_back(SubVec);
     } else {
+      errs() << "Not contigusous\n";
       const int Idx0 = SVN->getMaskElt(I);
       const int Idx1 = SVN->getMaskElt(I + 1);
       int VecIdx0 = Idx0 < SrcNumElts ? 0 : 1;
@@ -6023,19 +6038,14 @@ SDValue SITargetLowering::lowerSCALAR_TO_VECTOR(SDValue Op,
   SDValue UndefVal = DAG.getUNDEF(SValVT);
   SDLoc SL(Op);
 
-  errs() << "lowering s2v\n";
-
   SmallVector<SDValue, 8> VElts;
   VElts.push_back(SVal);
   for (int I = 1, E = ResultVT.getVectorNumElements(); I < E; ++I)
     VElts.push_back(UndefVal);
 
 
-  errs() << "s2v produced: \n";
-  auto temp = DAG.getBuildVector(ResultVT, SL, VElts);
-  temp.dump();
-  errs() << "\n";
-  return temp;
+  return DAG.getBuildVector(ResultVT, SL, VElts);
+
 }
 
 SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
@@ -6127,9 +6137,11 @@ SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
     return DAG.getNode(ISD::BITCAST, SL, VT, ExtLo);
   }
 
-  Hi.dump(); errs() << "\n";
+
   Hi = DAG.getNode(ISD::BITCAST, SL, BCVT, Hi);
+  Hi.dump(); errs() << "\n";
   Hi = DAG.getNode(ISD::ZERO_EXTEND, SL, IntVT, Hi);
+  Hi.dump(); errs() << "\n";
 
   SDValue ShlHi = DAG.getNode(ISD::SHL, SL, IntVT, Hi, ScaledShift);
   if (Lo.isUndef())

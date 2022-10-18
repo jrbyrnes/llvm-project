@@ -854,12 +854,15 @@ CCAssignFn *AMDGPUCallLowering::CCAssignFnForCall(CallingConv::ID CC,
   case CallingConv::AMDGPU_HS:
   case CallingConv::AMDGPU_ES:
   case CallingConv::AMDGPU_LS:
+    errs() << "CC_AMDGPU\n";
     return CC_AMDGPU;
   case CallingConv::C:
   case CallingConv::Fast:
   case CallingConv::Cold:
+    errs() << "CC_AMDGPU_Func\n";
     return CC_AMDGPU_Func;
   case CallingConv::AMDGPU_Gfx:
+    errs() << "CC_SI_Gfx\n";
     return CC_SI_Gfx;
   case CallingConv::AMDGPU_KERNEL:
   case CallingConv::SPIR_KERNEL:
@@ -1141,7 +1144,9 @@ SDValue AMDGPUTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
 
 SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op,
                                              SelectionDAG &DAG) const {
-  errs() << "AMDGPUTL::LowerOp\n";
+  errs() << "AMDGPUTL::LowerOp on\n";
+  Op.dump();
+  errs() << "\n";
   switch (Op.getOpcode()) {
   default:
     Op->print(errs(), &DAG);
