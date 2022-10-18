@@ -1416,6 +1416,11 @@ def : GCNPat <
   (S_MOV_B32 imm:$imm)
 >;
 
+def : GCNPat <
+  (i8 imm:$imm),
+  (S_MOV_B32 imm:$imm)
+>;
+
 // Same as a 32-bit inreg
 def : GCNPat<
   (i32 (UniformUnaryFrag<sext> i16:$src)),

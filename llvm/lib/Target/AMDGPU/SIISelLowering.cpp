@@ -644,6 +644,13 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
           Vec16, Custom);
       setOperationAction(ISD::INSERT_VECTOR_ELT, Vec16, Expand);
     }
+
+    for (MVT Vec8 : {MVT::v4i8, MVT::v2i8}) {
+      setOperationAction(
+          {ISD::BUILD_VECTOR, ISD::EXTRACT_VECTOR_ELT, ISD::SCALAR_TO_VECTOR},
+          Vec8, Custom);
+      setOperationAction(ISD::INSERT_VECTOR_ELT, Vec8, Expand);
+    }
   }
 
   if (Subtarget->hasVOP3PInsts()) {
@@ -6016,12 +6023,19 @@ SDValue SITargetLowering::lowerSCALAR_TO_VECTOR(SDValue Op,
   SDValue UndefVal = DAG.getUNDEF(SValVT);
   SDLoc SL(Op);
 
+  errs() << "lowering s2v\n";
+
   SmallVector<SDValue, 8> VElts;
   VElts.push_back(SVal);
   for (int I = 1, E = ResultVT.getVectorNumElements(); I < E; ++I)
     VElts.push_back(UndefVal);
 
-  return DAG.getBuildVector(ResultVT, SL, VElts);
+
+  errs() << "s2v produced: \n";
+  auto temp = DAG.getBuildVector(ResultVT, SL, VElts);
+  temp.dump();
+  errs() << "\n";
+  return temp;
 }
 
 SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
@@ -6030,6 +6044,7 @@ SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
   EVT VT = Op.getValueType();
 
   errs() << "in lowerBuild_Vector with VT: " << VT.getEVTString() << "\n";
+  errs() << "it produced: \n";
 
   if (VT == MVT::v4i16 || VT == MVT::v4f16 ||
       VT == MVT::v8i16 || VT == MVT::v8f16) {
@@ -6076,7 +6091,7 @@ SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
     return DAG.getNode(ISD::BITCAST, SL, VT, Blend);
   }
 
-  if (VT != MVT::v2i8) {
+  if (VT != MVT::v2i8 && VT != MVT::v4i8) {
     assert(VT == MVT::v2f16 || VT == MVT::v2i16);
     assert(!Subtarget->hasVOP3PInsts() && "this should be legal");
   }
@@ -6106,11 +6121,13 @@ SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
 
   // Avoid adding defined bits with the zero_extend.
   if (Hi.isUndef()) {
+    errs() << "HiIsUndef\n";
     Lo = DAG.getNode(ISD::BITCAST, SL, BCVT, Lo);
     SDValue ExtLo = DAG.getNode(ISD::ANY_EXTEND, SL, IntVT, Lo);
     return DAG.getNode(ISD::BITCAST, SL, VT, ExtLo);
   }
 
+  Hi.dump(); errs() << "\n";
   Hi = DAG.getNode(ISD::BITCAST, SL, BCVT, Hi);
   Hi = DAG.getNode(ISD::ZERO_EXTEND, SL, IntVT, Hi);
 
@@ -6119,10 +6136,15 @@ SDValue SITargetLowering::lowerBUILD_VECTOR(SDValue Op,
     return DAG.getNode(ISD::BITCAST, SL, VT, ShlHi);
 
   Lo = DAG.getNode(ISD::BITCAST, SL, BCVT, Lo);
+  Lo.dump(); errs() << "\n";
   Lo = DAG.getNode(ISD::ZERO_EXTEND, SL, IntVT, Lo);
+  Lo.dump(); errs() << "\n";
 
   SDValue Or = DAG.getNode(ISD::OR, SL, IntVT, Lo, ShlHi);
-  return DAG.getNode(ISD::BITCAST, SL, VT, Or);
+  Or.dump(); errs() << "\n";
+  SDValue temp =  DAG.getNode(ISD::BITCAST, SL, VT, Or);
+  temp.dump(); errs() << "\n";
+  return temp;
   //errs() << "Build Final node : \n";
   //temp->dump();
   //errs() << "\n";

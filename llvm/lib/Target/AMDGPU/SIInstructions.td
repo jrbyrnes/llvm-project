@@ -1335,6 +1335,8 @@ def : BitConvert <f32, v2i16, SReg_32>;
 
 def : BitConvert <v4i8, i32, SReg_32>;
 def : BitConvert <v4i8, v2i16, SReg_32>;
+def : BitConvert <v2i16, v4i8, SReg_32>;
+def : BitConvert <i32, v4i8, SReg_32>;
 
 // 64-bit bitcast
 def : BitConvert <i64, f64, VReg_64>;
@@ -2796,7 +2798,7 @@ def : GCNPat <
   (v2i8 (V_LSHLREV_B32_e64 (i8 8), SReg_32:$src1))
 >;
 
-/*
+
 def : GCNPat <
   (v4i8 (build_vector (i8 SReg_32:$src0), (i8 SReg_32:$src1), (i8 SReg_32:$src2), (i8 SReg_32:$src3))),  
 
@@ -2835,7 +2837,17 @@ def : GCNPat <
 	
 )
 >;
-*/
+
+def : GCNPat <
+  (i8 (trunc (i32 SReg_32:$src1))),
+  (V_AND_B32_e64 (S_MOV_B32 (i32 0x000000ff)), SReg_32:$src1)
+>;
+
+def : GCNPat <
+  (i8 (trunc (i16 SReg_32:$src1))),
+  (V_AND_B32_e64 (S_MOV_B32 (i32 0x000000ff)), SReg_32:$src1)
+>;
+
 
 foreach Ty = [i16, f16] in {
 
