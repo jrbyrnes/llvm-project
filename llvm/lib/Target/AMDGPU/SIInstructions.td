@@ -2798,6 +2798,16 @@ def : GCNPat <
   (v2i8 (V_LSHLREV_B32_e64 (i8 8), SReg_32:$src1))
 >;
 
+/*
+def : GCNPat <
+  (v2i8 (build_vector
+      (i8 (trunc (srl VGPR_32:$a, (i32 0)))),
+      (i8 (trunc (srl VGPR_32:$b, (i32 16)))),
+      (Ty (bitconvert (i16 (trunc (srl VGPR_32:$b, (i32 16)))))))))),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x07060302)))
+>;
+*/
+
 
 def : GCNPat <
   (v4i8 (build_vector (i8 SReg_32:$src0), (i8 SReg_32:$src1), (i8 SReg_32:$src2), (i8 SReg_32:$src3))),  
@@ -2842,6 +2852,17 @@ def : GCNPat <
   (i8 (trunc (i32 SReg_32:$src1))),
   (V_AND_B32_e64 (S_MOV_B32 (i32 0x000000ff)), SReg_32:$src1)
 >;
+
+def : GCNPat <
+  (i16 (anyext (i8 SReg_32:$src1))),
+  (V_OR_B32_e64 (S_MOV_B32 (i32 0x00000000)), SReg_32:$src1)
+>;
+
+def : GCNPat <
+  (i16 (zext (i8 SReg_32:$src1))),
+  (V_OR_B32_e64 (S_MOV_B32 (i32 0x00000000)), SReg_32:$src1)
+>;
+
 
 def : GCNPat <
   (i8 (trunc (i16 SReg_32:$src1))),
