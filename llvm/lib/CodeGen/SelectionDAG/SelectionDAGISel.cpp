@@ -671,6 +671,12 @@ void SelectionDAGISel::SelectBasicBlock(BasicBlock::const_iterator Begin,
   // Allow creating illegal types during DAG building for the basic block.
   CurDAG->NewNodesMustHaveLegalTypes = false;
 
+  for (BasicBlock::const_iterator I = Begin; I != End && !SDB->HasTailCall; ++I) {
+    I->dump();
+    errs() << "\n";
+  }
+
+
   // Lower the instructions. If a call is emitted as a tail call, cease emitting
   // nodes for this block.
   for (BasicBlock::const_iterator I = Begin; I != End && !SDB->HasTailCall; ++I) {
@@ -679,6 +685,12 @@ void SelectionDAGISel::SelectBasicBlock(BasicBlock::const_iterator Begin,
       I->dump();
       errs() << "\n";
       SDB->visit(*I);
+    }
+
+    else {
+      errs() << "ElidedCopyInst\n";
+      I->dump();
+      errs() << "\n";
     }
   }
 
