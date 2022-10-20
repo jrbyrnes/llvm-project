@@ -277,9 +277,11 @@ multiclass VOPC_Pseudos <string opName,
                          VOPC_Profile P,
                          SDPatternOperator cond = COND_NULL,
                          string revOp = opName,
-                         bit DefExec = 0> {
+                         bit DefExec = 0,
+                         bit IsDup = 0> {
 
-  def _e32 : VOPC_Pseudo <opName, P>,
+  if IsDup then
+  def : VOPC_Pseudo <opName, P>,
              Commutable_REV<revOp#"_e32", !eq(revOp, opName)>,
              VCMPXNoSDstTable<1, opName#"_e32">,
              VCMPVCMPXTable<opName#"_e32"> {
@@ -290,6 +292,19 @@ multiclass VOPC_Pseudos <string opName,
     let isCommutable = 1;
   }
 
+  if !not(IsDup) then
+  def _e32 : VOPC_Pseudo <opName, P>,
+             Commutable_REV<revOp#"_e32", !eq(revOp, opName)>,
+             VCMPXNoSDstTable<1, opName#"_e32">,
+             VCMPVCMPXTable<opName#"_e32"> {
+    let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
+    let SchedRW = P.Schedule;
+    let isConvergent = DefExec;
+    let isCompare = 1;
+    let isCommutable = 1;
+  }
+  
+  if !not(IsDup) then
   def _e64 : VOP3_Pseudo<opName, P, getVOPCPat64<cond, P>.ret>,
     Commutable_REV<revOp#"_e64", !eq(revOp, opName)>,
     VCMPXNoSDstTable<1, opName#"_e64">,
@@ -300,6 +315,7 @@ multiclass VOPC_Pseudos <string opName,
     let isCommutable = 1;
   }
 
+  if !not(IsDup) then
   foreach _ = BoolToList<P.HasExtSDWA>.ret in
   def _sdwa : VOPC_SDWA_Pseudo <opName, P> {
     let Defs = !if(DefExec, [EXEC], []);
@@ -309,6 +325,7 @@ multiclass VOPC_Pseudos <string opName,
   }
 
   let SubtargetPredicate = isGFX11Plus in {
+  if !not(IsDup) then
   if P.HasExtDPP then
       def _e32_dpp : VOP_DPP_Pseudo<opName, P> {
         let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
@@ -318,6 +335,7 @@ multiclass VOPC_Pseudos <string opName,
         let VOPC = 1;
         let Constraints = "";
       }
+  if !not(IsDup) then
   if P.HasExtVOP3DPP then
       def _e64_dpp : VOP3_DPP_Pseudo<opName, P> {
         let Defs = !if(DefExec, [EXEC], []);
@@ -328,6 +346,7 @@ multiclass VOPC_Pseudos <string opName,
   } // end SubtargetPredicate = isGFX11Plus
 
 }
+
 
 let SubtargetPredicate = HasSdstCMPX in {
 multiclass VOPCX_Pseudos <string opName,
@@ -395,6 +414,7 @@ defm VOPC_I1_F16_F16 : VOPC_Profile_t16<[Write32Bit], f16>;
 def VOPC_I1_F32_F32 : VOPC_Profile<[Write32Bit], f32>;
 def VOPC_I1_F64_F64 : VOPC_Profile<[WriteDoubleAdd], f64>;
 defm VOPC_I1_I16_I16 : VOPC_Profile_t16<[Write32Bit], i16>;
+defm VOPC_I1_I8_I8 : VOPC_Profile_t16<[Write32Bit], i8>;
 def VOPC_I1_I32_I32 : VOPC_Profile<[Write32Bit], i32>;
 def VOPC_I1_I64_I64 : VOPC_Profile<[Write64Bit], i64>;
 
@@ -402,6 +422,7 @@ defm VOPC_F16_F16 : VOPC_NoSdst_Profile_t16<[Write32Bit], f16>;
 def VOPC_F32_F32 : VOPC_NoSdst_Profile<[Write32Bit], f32>;
 def VOPC_F64_F64 : VOPC_NoSdst_Profile<[Write64Bit], f64>;
 defm VOPC_I16_I16 : VOPC_NoSdst_Profile_t16<[Write32Bit], i16>;
+defm VOPC_I8_I8 : VOPC_NoSdst_Profile_t16<[Write32Bit], i8>;
 def VOPC_I32_I32 : VOPC_NoSdst_Profile<[Write32Bit], i32>;
 def VOPC_I64_I64 : VOPC_NoSdst_Profile<[Write64Bit], i64>;
 
@@ -430,6 +451,13 @@ multiclass VOPC_I16 <string opName, SDPatternOperator cond = COND_NULL,
     defm _t16 : VOPC_Pseudos <opName#"_t16", VOPC_I1_I16_I16_t16, cond, revOp#"_t16", 0>;
   }
 }
+
+/*
+multiclass VOPC_I8 <string opName, SDPatternOperator cond = COND_NULL,
+                     string revOp = opName> {
+  defm NAME : VOPC_Pseudos <opName#"_s8", VOPC_I1_I8_I8, cond, revOp#"_s8", 0, 1>;
+}
+*/
 
 multiclass VOPC_I32 <string opName, SDPatternOperator cond = COND_NULL, string revOp = opName> :
   VOPC_Pseudos <opName, VOPC_I1_I32_I32, cond, revOp, 0>;
@@ -460,7 +488,10 @@ multiclass VOPCX_I16<string opName, string revOp = opName> {
     defm _t16 : VOPCX_Pseudos <opName#"_t16", VOPC_I1_I16_I16_t16, VOPC_I16_I16_t16, COND_NULL, revOp#"_t16">;
   }
 }
-
+/*
+multiclass VOPCX_I8 <string opName, string revOp = opName> :
+  VOPCX_Pseudos <opName, VOPC_I1_I32_I32, VOPC_I8_I8, COND_NULL, revOp>;
+*/
 multiclass VOPCX_I32 <string opName, string revOp = opName> :
   VOPCX_Pseudos <opName, VOPC_I1_I32_I32, VOPC_I32_I32, COND_NULL, revOp>;
 
@@ -665,6 +696,9 @@ defm V_CMP_GT_U16 : VOPC_I16 <"v_cmp_gt_u16", COND_UGT>;
 defm V_CMP_NE_U16 : VOPC_I16 <"v_cmp_ne_u16", COND_NE>;
 defm V_CMP_GE_U16 : VOPC_I16 <"v_cmp_ge_u16", COND_UGE>;
 defm V_CMP_T_U16 : VOPC_I16 <"v_cmp_t_u16">;
+
+//defm V_CMP_GE_U16 : VOPC_I8 <"v_cmp_ge_u16", COND_UGE>;
+//defm V_CMP_GE_I16 : VOPC_I8 <"v_cmp_ge_i16", COND_SGE>;
 
 defm V_CMPX_F_I16 : VOPCX_I16 <"v_cmpx_f_i16">;
 defm V_CMPX_LT_I16 : VOPCX_I16 <"v_cmpx_lt_i16", "v_cmpx_gt_i16">;
@@ -991,16 +1025,32 @@ defm V_CMPX_CLASS_F16 : VOPCX_CLASS_F16 <"v_cmpx_class_f16">;
 multiclass ICMP_Pattern <PatFrags cond, Instruction inst, ValueType vt> {
   let WaveSizePredicate = isWave64 in
   def : GCNPat <
-    (i64 (AMDGPUsetcc vt:$src0, vt:$src1, cond)),
+    (i64 (PrintNode3<AMDGPUsetcc> vt:$src0, vt:$src1, cond)),
     (i64 (COPY_TO_REGCLASS (inst $src0, $src1), SReg_64))
   >;
 
   let WaveSizePredicate = isWave32 in
   def : GCNPat <
-    (i32 (AMDGPUsetcc vt:$src0, vt:$src1, cond)),
+    (i32 (PrintNode3<AMDGPUsetcc> vt:$src0, vt:$src1, cond)),
     (i32 (COPY_TO_REGCLASS (inst $src0, $src1), SReg_32))
   >;
 }
+
+/*
+multiclass ICMP_Pattern2 <PatFrags cond, Instruction inst> {
+  let WaveSizePredicate = isWave64 in
+  def : GCNPat <
+    (i64 (AMDGPUsetcc i8:$src0, i8:$src1, cond)),
+    (i64 (COPY_TO_REGCLASS (inst $src0, $src1), SReg_64))
+  >;
+
+  let WaveSizePredicate = isWave32 in
+  def : GCNPat <
+    (i32 (AMDGPUsetcc i8:$src0, i8:$src1, cond)),
+    (i32 (COPY_TO_REGCLASS (inst $src0, $src1), SReg_32))
+  >;
+}
+*/
 
 defm : ICMP_Pattern <COND_EQ, V_CMP_EQ_U32_e64, i32>;
 defm : ICMP_Pattern <COND_NE, V_CMP_NE_U32_e64, i32>;
@@ -1024,21 +1074,35 @@ defm : ICMP_Pattern <COND_SGE, V_CMP_GE_I64_e64, i64>;
 defm : ICMP_Pattern <COND_SLT, V_CMP_LT_I64_e64, i64>;
 defm : ICMP_Pattern <COND_SLE, V_CMP_LE_I64_e64, i64>;
 
+
 defm : ICMP_Pattern <COND_EQ, V_CMP_EQ_U16_e64, i16>;
 defm : ICMP_Pattern <COND_NE, V_CMP_NE_U16_e64, i16>;
 defm : ICMP_Pattern <COND_UGT, V_CMP_GT_U16_e64, i16>;
-defm : ICMP_Pattern <COND_UGE, V_CMP_GE_U16_e64, i16>;
+//defm : ICMP_Pattern <COND_UGE, V_CMP_GE_U16_e64, i16>;
 defm : ICMP_Pattern <COND_ULT, V_CMP_LT_U16_e64, i16>;
 defm : ICMP_Pattern <COND_ULE, V_CMP_LE_U16_e64, i16>;
 defm : ICMP_Pattern <COND_SGT, V_CMP_GT_I16_e64, i16>;
-defm : ICMP_Pattern <COND_SGE, V_CMP_GE_I16_e64, i16>;
+//defm : ICMP_Pattern <COND_SGE, V_CMP_GE_I16_e64, i16>;
 defm : ICMP_Pattern <COND_SLT, V_CMP_LT_I16_e64, i16>;
 defm : ICMP_Pattern <COND_SLE, V_CMP_LE_I16_e64, i16>;
+
+/*
+defm : ICMP_Pattern2 <COND_EQ, V_CMP_EQ_U16_e64>;
+defm : ICMP_Pattern2 <COND_NE, V_CMP_NE_U16_e64>;
+defm : ICMP_Pattern2 <COND_UGT, V_CMP_GT_U16_e64>;
+defm : ICMP_Pattern2 <COND_UGE, V_CMP_GE_U16_e64>;
+defm : ICMP_Pattern2 <COND_ULT, V_CMP_LT_U16_e64>;
+defm : ICMP_Pattern2 <COND_ULE, V_CMP_LE_U16_e64>;
+defm : ICMP_Pattern2 <COND_SGT, V_CMP_GT_I16_e64>;
+defm : ICMP_Pattern2 <COND_SGE, V_CMP_GE_I16_e64>;
+defm : ICMP_Pattern2 <COND_SLT, V_CMP_LT_I16_e64>;
+defm : ICMP_Pattern2 <COND_SLE, V_CMP_LE_I16_e64>;
+*/
 
 multiclass FCMP_Pattern <PatFrags cond, Instruction inst, ValueType vt> {
   let WaveSizePredicate = isWave64 in
   def : GCNPat <
-    (i64 (AMDGPUsetcc (vt (VOP3Mods vt:$src0, i32:$src0_modifiers)),
+    (i64 (PrintNode3<AMDGPUsetcc> (vt (VOP3Mods vt:$src0, i32:$src0_modifiers)),
                  (vt (VOP3Mods vt:$src1, i32:$src1_modifiers)), cond)),
     (i64 (COPY_TO_REGCLASS (inst $src0_modifiers, $src0, $src1_modifiers, $src1,
                            DSTCLAMP.NONE), SReg_64))
@@ -1046,12 +1110,13 @@ multiclass FCMP_Pattern <PatFrags cond, Instruction inst, ValueType vt> {
 
   let WaveSizePredicate = isWave32 in
   def : GCNPat <
-    (i32 (AMDGPUsetcc (vt (VOP3Mods vt:$src0, i32:$src0_modifiers)),
+    (i32 (PrintNode3<AMDGPUsetcc> (vt (VOP3Mods vt:$src0, i32:$src0_modifiers)),
                  (vt (VOP3Mods vt:$src1, i32:$src1_modifiers)), cond)),
     (i32 (COPY_TO_REGCLASS (inst $src0_modifiers, $src0, $src1_modifiers, $src1,
                            DSTCLAMP.NONE), SReg_32))
   >;
 }
+
 
 defm : FCMP_Pattern <COND_OEQ, V_CMP_EQ_F32_e64, f32>;
 defm : FCMP_Pattern <COND_ONE, V_CMP_NEQ_F32_e64, f32>;
@@ -1628,13 +1693,13 @@ defm V_CMP_EQ_I16_t16     : VOPC_Real_t16_gfx11<0x032, "v_cmp_eq_i16">;
 defm V_CMP_LE_I16_t16     : VOPC_Real_t16_gfx11<0x033, "v_cmp_le_i16">;
 defm V_CMP_GT_I16_t16     : VOPC_Real_t16_gfx11<0x034, "v_cmp_gt_i16">;
 defm V_CMP_NE_I16_t16     : VOPC_Real_t16_gfx11<0x035, "v_cmp_ne_i16">;
-defm V_CMP_GE_I16_t16     : VOPC_Real_t16_gfx11<0x036, "v_cmp_ge_i16">;
+//defm V_CMP_GE_I16_t16     : VOPC_Real_t16_gfx11<0x036, "v_cmp_ge_i16">;
 defm V_CMP_LT_U16_t16     : VOPC_Real_t16_gfx11<0x039, "v_cmp_lt_u16">;
 defm V_CMP_EQ_U16_t16     : VOPC_Real_t16_gfx11<0x03a, "v_cmp_eq_u16">;
 defm V_CMP_LE_U16_t16     : VOPC_Real_t16_gfx11<0x03b, "v_cmp_le_u16">;
 defm V_CMP_GT_U16_t16     : VOPC_Real_t16_gfx11<0x03c, "v_cmp_gt_u16">;
 defm V_CMP_NE_U16_t16     : VOPC_Real_t16_gfx11<0x03d, "v_cmp_ne_u16">;
-defm V_CMP_GE_U16_t16     : VOPC_Real_t16_gfx11<0x03e, "v_cmp_ge_u16">;
+//defm V_CMP_GE_U16_t16     : VOPC_Real_t16_gfx11<0x03e, "v_cmp_ge_u16">;
 defm V_CMP_F_I32      : VOPC_Real_gfx11<0x040>;
 defm V_CMP_LT_I32     : VOPC_Real_gfx11<0x041>;
 defm V_CMP_EQ_I32     : VOPC_Real_gfx11<0x042>;
@@ -1835,7 +1900,7 @@ defm V_CMP_EQ_I16     : VOPC_Real_gfx10<0x08a>;
 defm V_CMP_LE_I16     : VOPC_Real_gfx10<0x08b>;
 defm V_CMP_GT_I16     : VOPC_Real_gfx10<0x08c>;
 defm V_CMP_NE_I16     : VOPC_Real_gfx10<0x08d>;
-defm V_CMP_GE_I16     : VOPC_Real_gfx10<0x08e>;
+//defm V_CMP_GE_I16     : VOPC_Real_gfx10<0x08e>;
 defm V_CMP_CLASS_F16  : VOPC_Real_gfx10<0x08f>;
 defm V_CMPX_LT_I16    : VOPCX_Real_gfx10<0x099>;
 defm V_CMPX_EQ_I16    : VOPCX_Real_gfx10<0x09a>;
@@ -1849,7 +1914,7 @@ defm V_CMP_EQ_U16     : VOPC_Real_gfx10<0x0aa>;
 defm V_CMP_LE_U16     : VOPC_Real_gfx10<0x0ab>;
 defm V_CMP_GT_U16     : VOPC_Real_gfx10<0x0ac>;
 defm V_CMP_NE_U16     : VOPC_Real_gfx10<0x0ad>;
-defm V_CMP_GE_U16     : VOPC_Real_gfx10<0x0ae>;
+//defm V_CMP_GE_U16     : VOPC_Real_gfx10<0x0ae>;
 defm V_CMPX_LT_U16    : VOPCX_Real_gfx10<0x0b9>;
 defm V_CMPX_EQ_U16    : VOPCX_Real_gfx10<0x0ba>;
 defm V_CMPX_LE_U16    : VOPCX_Real_gfx10<0x0bb>;
@@ -2287,6 +2352,9 @@ defm V_CMP_NE_U16     : VOPC_Real_vi <0xad>;
 defm V_CMP_GE_U16     : VOPC_Real_vi <0xae>;
 defm V_CMP_T_U16      : VOPC_Real_vi <0xaf>;
 
+
+//defm V_CMP_GE_U16_s8  : VOPC_Real_vi <0xae>;
+
 defm V_CMPX_F_I16 : VOPC_Real_vi <0xb0>;
 defm V_CMPX_LT_I16 : VOPC_Real_vi <0xb1>;
 defm V_CMPX_EQ_I16 : VOPC_Real_vi <0xb2>;
@@ -2376,3 +2444,9 @@ defm V_CMPX_GT_U64    : VOPC_Real_vi <0xfc>;
 defm V_CMPX_NE_U64    : VOPC_Real_vi <0xfd>;
 defm V_CMPX_GE_U64    : VOPC_Real_vi <0xfe>;
 defm V_CMPX_T_U64     : VOPC_Real_vi <0xff>;
+
+
+
+
+//defm :  VOPC_Pseudo <"v_cmp_ge_u16", VOPC_I1_I8_I8, COND_UGE>;
+

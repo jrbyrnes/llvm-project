@@ -86,7 +86,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   addRegisterClass(MVT::v4i8, &AMDGPU::SReg_32RegClass);
   addRegisterClass(MVT::v2i8, &AMDGPU::SReg_32RegClass);
   addRegisterClass(MVT::i8, &AMDGPU::SReg_32RegClass);
-  //addRegisterClass(MVT::i8, &AMDGPU::VReg_32RegClass);
+  addRegisterClass(MVT::i8, &AMDGPU::VGPR_32RegClass);
 
   addRegisterClass(MVT::v2i32, &AMDGPU::SReg_64RegClass);
 
@@ -172,7 +172,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                       MVT::v32i32},
                      Custom);
                      
-  //setTruncStoreAction(MVT::i8, MVT::i32, Expand);
+  setTruncStoreAction(MVT::i8, MVT::i32, Expand);
+  setTruncStoreAction(MVT::i8, MVT::i16, Expand);
   setTruncStoreAction(MVT::v2i32, MVT::v2i16, Expand);
   setTruncStoreAction(MVT::v3i32, MVT::v3i16, Expand);
   setTruncStoreAction(MVT::v4i32, MVT::v4i16, Expand);
@@ -212,6 +213,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SETCC, {MVT::v2i1, MVT::v4i1}, Expand);
   AddPromotedToType(ISD::SETCC, MVT::i1, MVT::i32);
 
+  setOperationAction(ISD::SETCC, MVT::i8, Custom);
+
   setOperationAction(ISD::TRUNCATE,
                      {MVT::v2i32, MVT::v3i32, MVT::v4i32, MVT::v5i32,
                       MVT::v6i32, MVT::v7i32, MVT::v8i32, MVT::v16i32},
@@ -248,8 +251,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
         MVT::v2f64,  MVT::v4i16,  MVT::v4f16,  MVT::v3i64,  MVT::v3f64,
         MVT::v6i32,  MVT::v6f32,  MVT::v4i64,  MVT::v4f64,  MVT::v8i64,
         MVT::v8f64,  MVT::v8i16,  MVT::v8f16,  MVT::v16i16, MVT::v16f16,
-        MVT::v16i64, MVT::v16f64, MVT::v32i32, MVT::v32f32, MVT::v4i8,
-        MVT::v2i8}) {
+        MVT::v16i64, MVT::v16f64, MVT::v32i32, MVT::v32f32}) {
     for (unsigned Op = 0; Op < ISD::BUILTIN_OP_END; ++Op) {
       switch (Op) {
       case ISD::LOAD:
@@ -355,6 +357,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                      Expand);
 
   setOperationAction(ISD::BUILD_VECTOR, {MVT::v4f16, MVT::v4i16}, Custom);
+  setOperationAction(ISD::BUILD_VECTOR, MVT::v4i8, Custom);
 
   // Avoid stack access for these.
   // TODO: Generalize to more vector types.
@@ -465,8 +468,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                        MVT::i16, Legal);
 
     AddPromotedToType(ISD::SIGN_EXTEND, MVT::i16, MVT::i32);
-    AddPromotedToType(ISD::SIGN_EXTEND, MVT::i8, MVT::i16);
-
+    AddPromotedToType(ISD::SIGN_EXTEND, MVT::i8, MVT::i32);
     setOperationAction(ISD::SIGN_EXTEND, MVT::i8, Promote);
 
     setOperationAction({ISD::ROTR, ISD::ROTL, ISD::SELECT_CC, ISD::BR_CC},
@@ -479,6 +481,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                        MVT::i16, Promote);
 
     setOperationAction(ISD::LOAD, MVT::i16, Custom);
+    setOperationAction(ISD::LOAD, MVT::i8, Custom);
 
     setTruncStoreAction(MVT::i64, MVT::i16, Expand);
 
@@ -520,7 +523,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::FMAD, MVT::f16, Legal);
 
     for (MVT VT : {MVT::v2i16, MVT::v2f16, MVT::v4i16, MVT::v4f16, MVT::v8i16,
-                   MVT::v8f16, MVT::v16i16, MVT::v16f16}) {
+                   MVT::v8f16, MVT::v16i16, MVT::v16f16, MVT::v4i8, MVT::v2i8}) {
       for (unsigned Op = 0; Op < ISD::BUILTIN_OP_END; ++Op) {
         switch (Op) {
         case ISD::LOAD:
@@ -559,6 +562,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::Constant, {MVT::v2i16, MVT::v2f16}, Legal);
 
     setOperationAction(ISD::UNDEF, {MVT::v2i16, MVT::v2f16}, Legal);
+
+    setOperationAction(ISD::UNDEF, {MVT::v2i8, MVT::v4i8}, Legal);
 
     setOperationAction(ISD::STORE, MVT::v2i16, Promote);
     AddPromotedToType(ISD::STORE, MVT::v2i16, MVT::i32);
@@ -622,10 +627,10 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction({ISD::ANY_EXTEND, ISD::ZERO_EXTEND, ISD::SIGN_EXTEND},
                        MVT::v8i32, Expand);
 
-    if (!Subtarget->hasVOP3PInsts())
+    if (!Subtarget->hasVOP3PInsts()) {
       setOperationAction(ISD::BUILD_VECTOR, {MVT::v2i16, MVT::v2f16}, Custom);
-    
-    setOperationAction(ISD::BUILD_VECTOR, MVT::v2i8, Custom);
+      setOperationAction(ISD::BUILD_VECTOR, {MVT::v2i8, MVT::v4i8}, Custom);
+    }
     
     setOperationAction(ISD::FNEG, MVT::v2f16, Legal);
     // This isn't really legal, but this avoids the legalizer unrolling it (and
@@ -648,12 +653,14 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::INSERT_VECTOR_ELT, Vec16, Expand);
     }
 
+/*
     for (MVT Vec8 : {MVT::v4i8, MVT::v2i8}) {
       setOperationAction(
-          {ISD::BUILD_VECTOR, ISD::EXTRACT_VECTOR_ELT, ISD::SCALAR_TO_VECTOR},
+          {ISD::EXTRACT_VECTOR_ELT, ISD::SCALAR_TO_VECTOR},
           Vec8, Custom);
-      setOperationAction(ISD::INSERT_VECTOR_ELT, Vec8, Expand);
+      setOperationAction(ISD::INSERT_VECTOR_ELT, Vec8, Custom);
     }
+*/
   }
 
   if (Subtarget->hasVOP3PInsts()) {
@@ -674,7 +681,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                         MVT::v16f16, MVT::v16i16, MVT::v4i8, MVT::v2i8},
                        Custom);
 
-    for (MVT VT : {MVT::v4i16, MVT::v8i16, MVT::v16i16})
+    for (MVT VT : {MVT::v4i8, MVT::v4i16, MVT::v8i16, MVT::v16i16})
       // Split vector operations.
       setOperationAction({ISD::SHL, ISD::SRA, ISD::SRL, ISD::ADD, ISD::SUB,
                           ISD::MUL, ISD::SMIN, ISD::SMAX, ISD::UMIN, ISD::UMAX,
@@ -707,6 +714,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   if (Subtarget->has16BitInsts()) {
     setOperationAction(ISD::SELECT, MVT::v2i16, Promote);
     AddPromotedToType(ISD::SELECT, MVT::v2i16, MVT::i32);
+    setOperationAction(ISD::SELECT, MVT::v2i8, Promote);
+    AddPromotedToType(ISD::SELECT, MVT::v2i8, MVT::i16);
     setOperationAction(ISD::SELECT, MVT::v2f16, Promote);
     AddPromotedToType(ISD::SELECT, MVT::v2f16, MVT::i32);
   } else {
@@ -717,7 +726,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   }
 
   setOperationAction(ISD::SELECT,
-                     {MVT::v4i16, MVT::v4f16, MVT::v2i8, MVT::v4i8, MVT::v8i8,
+                     {MVT::v4i16, MVT::v4f16, MVT::v4i8, MVT::v8i8,
                       MVT::v8i16, MVT::v8f16, MVT::v16i16, MVT::v16f16},
                      Custom);
 
@@ -4715,6 +4724,7 @@ SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FCOS:
     return LowerTrig(Op, DAG);
   case ISD::SELECT: return LowerSELECT(Op, DAG);
+  case ISD::SETCC : return LowerSETCC(Op, DAG);
   case ISD::FDIV: return LowerFDIV(Op, DAG);
   case ISD::ATOMIC_CMP_SWAP: return LowerATOMIC_CMP_SWAP(Op, DAG);
   case ISD::STORE: return LowerSTORE(Op, DAG);
@@ -8969,6 +8979,34 @@ SDValue SITargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   return DAG.getNode(ISD::BITCAST, DL, VT, Res);
 }
 
+
+SDValue SITargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
+  errs() << "In lowerSETCC\n";
+  SDLoc DL(Op);
+
+  EVT VT= Op.getOperand(0).getValueType();
+
+ 
+
+  if (VT.getSizeInBits() == 8) {
+    errs() << "Trying to trasnform ops: \n";
+    Op.getOperand(0).dump();
+    errs() << "\nand \n";
+    Op.getOperand(1).dump();
+    errs() << "\n";
+
+
+    SDValue LHS = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i16, Op.getOperand(0));
+    SDValue RHS = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i16, Op.getOperand(1));
+    return DAG.getNode(ISD::SETCC, DL, MVT::i1, LHS, RHS, Op.getOperand(2));
+  }
+
+  return Op;
+
+}
+
+
+
 // Catch division cases where we can use shortcuts with rcp and rsq
 // instructions.
 SDValue SITargetLowering::lowerFastUnsafeFDIV(SDValue Op,
@@ -11508,6 +11546,7 @@ SDValue SITargetLowering::performFMACombine(SDNode *N,
 
 SDValue SITargetLowering::performSetCCCombine(SDNode *N,
                                               DAGCombinerInfo &DCI) const {
+  errs() << "in performSetCCCombine\n";
   SelectionDAG &DAG = DCI.DAG;
   SDLoc SL(N);
 
@@ -11716,6 +11755,7 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::XOR:
     return performXorCombine(N, DCI);
   case ISD::ZERO_EXTEND:
+    errs() << "Calling zext combine\n";
     return performZeroExtendCombine(N, DCI);
   case ISD::SIGN_EXTEND_INREG:
     return performSignExtendInRegCombine(N , DCI);

@@ -1054,6 +1054,10 @@ class SOPC_32<string opName, list<dag> pattern = []>
 class SOPC_64_32<string opName, list<dag> pattern = []>
   : SOPC_Base<SSrc_b64, SSrc_b32, opName, pattern>;
 
+
+
+
+
 def S_CMP_EQ_I32 : SOPC_CMP_32 <"s_cmp_eq_i32">;
 def S_CMP_LG_I32 : SOPC_CMP_32 <"s_cmp_lg_i32">;
 def S_CMP_GT_I32 : SOPC_CMP_32 <"s_cmp_gt_i32", COND_SGT>;
@@ -1077,6 +1081,21 @@ def S_SETVSKIP : SOPC_32 <"s_setvskip">;
 let SubtargetPredicate = isGFX8Plus in {
 def S_CMP_EQ_U64 : SOPC_CMP_64 <"s_cmp_eq_u64", COND_EQ>;
 def S_CMP_LG_U64 : SOPC_CMP_64 <"s_cmp_lg_u64", COND_NE>;
+
+
+
+
+  def : GCNPat <
+    (i1 (AMDGPUsetcc i8:$src0, i8:$src1, COND_UGE)),
+    (i1 (COPY_TO_REGCLASS (S_CMP_GE_U32 $src0, $src1), SReg_32))
+  >;
+
+
+
+
+
+
+
 } // End SubtargetPredicate = isGFX8Plus
 
 let SubtargetPredicate = HasVGPRIndexMode in {

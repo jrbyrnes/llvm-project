@@ -974,9 +974,6 @@ void SelectionDAGLegalize::LegalizeOp(SDNode *Node) {
   }
 
   for (const SDValue &Op : Node->op_values()) {
-    errs() << "Checking op: ";
-    Op.dump();
-    errs() << "\n";
     assert((TLI.getTypeAction(*DAG.getContext(), Op.getValueType()) ==
               TargetLowering::TypeLegal ||
             Op.getOpcode() == ISD::TargetConstant ||
@@ -1293,6 +1290,8 @@ void SelectionDAGLegalize::LegalizeOp(SDNode *Node) {
       return;
     case TargetLowering::Custom:
       LLVM_DEBUG(dbgs() << "Trying custom legalization\n");
+      errs() << "On Node: \n";
+      Node->dump(&DAG);
       // FIXME: The handling for custom lowering with multiple results is
       // a complete mess.
       if (SDValue Res = TLI.LowerOperation(SDValue(Node, 0), DAG)) {

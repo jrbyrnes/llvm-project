@@ -1077,6 +1077,10 @@ void SelectionDAGISel::DoInstructionSelection() {
 
   PreprocessISelDAG();
 
+  errs() << "After ISel Preprocessing\n";
+  CurDAG->dump();
+  errs() << "\n";
+
   // Select target instructions for the DAG.
   {
     // Number all nodes with a topological order and set DAGSize.

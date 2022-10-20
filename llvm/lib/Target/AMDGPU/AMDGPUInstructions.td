@@ -178,6 +178,27 @@ class HasOneUseUnaryOp<SDPatternOperator op> : PatFrag<
   }];
 }
 
+class PrintNode2<SDPatternOperator op> : PatFrag<
+  (ops node:$src0, node:$src1),
+  (op $src0, $src1),
+  [{ errs() << "Processing Node\n";
+      N->dump();
+      errs() << "\n";
+      return true;
+   }]>;
+
+class PrintNode3<SDPatternOperator op> : PatFrag<
+  (ops node:$src0, node:$src1, node:$src2),
+  (op $src0, $src1, $src2),
+  [{ errs() << "Processing Node\n";
+      N->dump();
+      errs() << "\n";
+      return true;
+   }]>;
+
+
+
+
 class HasOneUseBinOp<SDPatternOperator op> : PatFrag<
   (ops node:$src0, node:$src1),
   (op $src0, $src1),
@@ -352,6 +373,7 @@ def COND_ULE : PatFrag<(ops), (OtherVT SETULE)>;
 // XXX - For some reason R600 version is preferring to use unordered
 // for setne?
 def COND_UNE_NE  : PatFrags<(ops), [(OtherVT SETUNE), (OtherVT SETNE)]>;
+
 
 //===----------------------------------------------------------------------===//
 // PatLeafs for signed comparisons

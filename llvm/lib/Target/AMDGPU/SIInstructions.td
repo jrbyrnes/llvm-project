@@ -1057,6 +1057,7 @@ def : VOPSelectModsPat <i32>;
 def : VOPSelectModsPat <f32>;
 def : VOPSelectPat <f16>;
 def : VOPSelectPat <i16>;
+def : VOPSelectPat <i8>;
 
 let AddedComplexity = 1 in {
 def : GCNPat <
@@ -1226,6 +1227,15 @@ foreach Index = 0-15 in {
   >;
 }
 
+def : Pat <
+  (extract_subvector v4i8:$vec, (i32 0)),
+  (v2i8 (V_OR_B32_e64 $vec, (S_MOV_B32 (i32 0x000000FF))))
+>;
+
+def : Pat <
+  (extract_subvector v4i8:$vec, (i32 2)),
+  (v2i8 (V_OR_B32_e64 $vec, (S_MOV_B32 (i32 0x0000FF00))))
+>;
 
 def : Pat <
   (extract_subvector v4i16:$vec, (i32 0)),
@@ -1840,6 +1850,7 @@ def : GCNPat <
 // XXX - Should this use a s_cmp to set SCC?
 
 // Set to sign-extended 64-bit value (true = -1, false = 0)
+
 def : GCNPat <
   (i1 imm:$imm),
   (S_MOV_B64 (i64 (as_i64imm $imm)))
@@ -1874,6 +1885,7 @@ def : GCNPat <
                      /*src1mod*/(i32 0), /*src1*/(i32 -1), $src0)
 >;
 
+
 class Ext32Pat <SDNode ext> : GCNPat <
   (i32 (ext i1:$src0)),
   (V_CNDMASK_B32_e64 /*src0mod*/(i32 0), /*src0*/(i32 0),
@@ -1882,6 +1894,17 @@ class Ext32Pat <SDNode ext> : GCNPat <
 
 def : Ext32Pat <zext>;
 def : Ext32Pat <anyext>;
+
+
+class Ext8Pat <SDNode ext> : GCNPat <
+  (i8 (ext i1:$src0)),
+  (V_CNDMASK_B32_e64 /*src0mod*/(i32 0), /*src0*/(i32 0),
+                     /*src1mod*/(i32 0), /*src1*/(i32 1), $src0)
+>;
+
+def : Ext8Pat <zext>;
+def : Ext8Pat <anyext>;
+
 
 // The multiplication scales from [0,1) to the unsigned integer range,
 // rounding down a bit to avoid unwanted overflow.
@@ -2142,7 +2165,7 @@ def : GCNPat <
   (i64 (anyext i32:$src)),
   (REG_SEQUENCE SReg_64, $src, sub0, (i32 (IMPLICIT_DEF)), sub1)
 >;
-
+/*
 class ZExt_i64_i1_Pat <SDNode ext> : GCNPat <
   (i64 (ext i1:$src)),
     (REG_SEQUENCE VReg_64,
@@ -2154,7 +2177,7 @@ class ZExt_i64_i1_Pat <SDNode ext> : GCNPat <
 
 def : ZExt_i64_i1_Pat<zext>;
 def : ZExt_i64_i1_Pat<anyext>;
-
+*/
 // FIXME: We need to use COPY_TO_REGCLASS to work-around the fact that
 // REG_SEQUENCE patterns don't support instructions with multiple outputs.
 def : GCNPat <
@@ -2168,7 +2191,7 @@ def : GCNPat <
     (REG_SEQUENCE VReg_64, $src, sub0,
     (i32 (COPY_TO_REGCLASS (V_ASHRREV_I32_e64 (i32 31), $src), VGPR_32)), sub1)
 >;
-
+/*
 def : GCNPat <
   (i64 (sext i1:$src)),
   (REG_SEQUENCE VReg_64,
@@ -2177,7 +2200,7 @@ def : GCNPat <
     (V_CNDMASK_B32_e64 /*src0mod*/(i32 0), /*src0*/(i32 0),
                        /*src1mod*/(i32 0), /*src1*/(i32 -1), $src), sub1)
 >;
-
+*/
 class FPToI1Pat<Instruction Inst, int KOne, ValueType kone_type, ValueType vt, SDPatternOperator fp_to_int> : GCNPat <
   (i1 (fp_to_int (vt (VOP3Mods vt:$src0, i32:$src0_modifiers)))),
   (i1 (Inst 0, (kone_type KOne), $src0_modifiers, $src0, DSTCLAMP.NONE))
@@ -2287,6 +2310,7 @@ def : GCNPat <
       (V_NOT_B32_e32 (i32 (EXTRACT_SUBREG i64:$src0, sub1))), sub1
     )
 >;
+
 
 let SubtargetPredicate = NotHasTrue16BitInsts in
 def : GCNPat <
@@ -2764,6 +2788,27 @@ def : GCNPat <
 >;
 }
 
+/*
+def : GCNPat<
+  (i1 (setcc (i8 SReg_32:$src0), (i8 SReg_32:$src1), SETUGE)),
+  (S_CMP_GE_U32 SReg_32:$src0, SReg_32:$src1)
+>;*/
+
+/*
+def : GCNPat<
+(i1 (setcc (i8 VGPRSrc_32:$src0), (i8 VGPRSrc_32:$src1), SETUGE)),
+(V_CMP_GE_U16_e32 VGPRSrc_32:$src0, VGPRSrc_32:$src1)
+>;
+*/
+
+// V_CMP_GE_U16_e32
+/*
+def : GCNPat<
+  (i1 (setcc (i8 SReg_32:$src0), (i8 SReg_32:$src1), SETUGE)),
+  (V_CMP_GE_U16_e32 SReg_32:$src0, SReg_32:$src1)
+>;
+*/
+
 let SubtargetPredicate = HasVOP3PInsts in {
 def : GCNPat <
   (v2i16 (UniformBinFrag<build_vector> (i16 SReg_32:$src0), (i16 SReg_32:$src1))),
@@ -2807,6 +2852,24 @@ def : GCNPat <
   (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x07060302)))
 >;
 */
+
+def : GCNPat <
+  (v2i8 (build_vector (i8 SReg_32:$src0), (i8 undef))),
+  (COPY_TO_REGCLASS SReg_32:$src0, SReg_32)
+>;
+
+
+def : GCNPat <
+  (v2i8 (PrintNode2<build_vector> (i8 undef), (i8 SReg_32:$src1))),
+  (S_LSHL_B32 SReg_32:$src1, (i32 8))
+>;
+
+def : GCNPat <
+  (v2i8 (build_vector (i8 SReg_32:$src0), (i8 SReg_32:$src1))),
+  (V_OR_B32_e64 (V_LSHLREV_B32_e64 (i32 8), SReg_32:$src1), SReg_32:$src0)
+>;
+
+
 
 
 def : GCNPat <
@@ -2862,7 +2925,6 @@ def : GCNPat <
   (i16 (zext (i8 SReg_32:$src1))),
   (V_OR_B32_e64 (S_MOV_B32 (i32 0x00000000)), SReg_32:$src1)
 >;
-
 
 def : GCNPat <
   (i8 (trunc (i16 SReg_32:$src1))),

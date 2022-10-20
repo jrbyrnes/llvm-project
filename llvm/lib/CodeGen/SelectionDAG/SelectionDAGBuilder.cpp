@@ -616,8 +616,11 @@ static void getCopyToParts(SelectionDAG &DAG, const SDLoc &DL, SDValue Val,
 
 static SDValue widenVectorToPartType(SelectionDAG &DAG, SDValue Val,
                                      const SDLoc &DL, EVT PartVT) {
-  if (!PartVT.isVector())
+  errs() << "in widenVectorToPartType\n";
+  if (!PartVT.isVector()) {
+     errs() << "!PartVT.isVector returning\n";
     return SDValue();
+  }
 
   EVT ValueVT = Val.getValueType();
   ElementCount PartNumElts = PartVT.getVectorElementCount();
@@ -637,6 +640,7 @@ static SDValue widenVectorToPartType(SelectionDAG &DAG, SDValue Val,
     return DAG.getNode(ISD::INSERT_SUBVECTOR, DL, PartVT, DAG.getUNDEF(PartVT),
                        Val, DAG.getVectorIdxConstant(0, DL));
 
+  errs() << "!PartNumelts.isScalable()\n";
   EVT ElementVT = PartVT.getVectorElementType();
   // Vector widening case, e.g. <2 x float> -> <4 x float>.  Shuffle in
   // undef elements.
