@@ -172,8 +172,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                       MVT::v32i32},
                      Custom);
                      
-  setTruncStoreAction(MVT::i8, MVT::i32, Expand);
-  setTruncStoreAction(MVT::i8, MVT::i16, Expand);
+  setTruncStoreAction(MVT::i32, MVT::i8, Expand);
+  setTruncStoreAction(MVT::i16, MVT::i8, Expand);
   setTruncStoreAction(MVT::v2i32, MVT::v2i16, Expand);
   setTruncStoreAction(MVT::v3i32, MVT::v3i16, Expand);
   setTruncStoreAction(MVT::v4i32, MVT::v4i16, Expand);
@@ -681,7 +681,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                         MVT::v16f16, MVT::v16i16, MVT::v4i8, MVT::v2i8},
                        Custom);
 
-    for (MVT VT : {MVT::v4i8, MVT::v4i16, MVT::v8i16, MVT::v16i16})
+    for (MVT VT : {MVT::v2i8, MVT::v4i8, MVT::v4i16, MVT::v8i16, MVT::v16i16})
       // Split vector operations.
       setOperationAction({ISD::SHL, ISD::SRA, ISD::SRL, ISD::ADD, ISD::SUB,
                           ISD::MUL, ISD::SMIN, ISD::SMAX, ISD::UMIN, ISD::UMAX,
@@ -4655,7 +4655,7 @@ SDValue SITargetLowering::splitBinaryVectorOp(SDValue Op,
   assert(VT == MVT::v4i16 || VT == MVT::v4f16 || VT == MVT::v4f32 ||
          VT == MVT::v8i16 || VT == MVT::v8f16 || VT == MVT::v16i16 ||
          VT == MVT::v16f16 || VT == MVT::v8f32 || VT == MVT::v16f32 ||
-         VT == MVT::v32f32);
+         VT == MVT::v32f32 || VT == MVT::v2i8 || VT == MVT::v4i8);
 
   SDValue Lo0, Hi0;
   std::tie(Lo0, Hi0) = DAG.SplitVectorOperand(Op.getNode(), 0);

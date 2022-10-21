@@ -2788,6 +2788,22 @@ def : GCNPat <
 >;
 }
 
+
+def : GCNPat <
+  (i8 (add (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_ADD_U16_e32 SReg_32:$src1, SReg_32:$src2))
+>;
+
+def : GCNPat <
+  (i8 (sub (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_SUB_U16_e32 SReg_32:$src1, SReg_32:$src2))
+>;
+
+def : GCNPat <
+  (i8 (mul (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_MUL_U32_U24_e32 SReg_32:$src1, SReg_32:$src2))
+>;
+
 /*
 def : GCNPat<
   (i1 (setcc (i8 SReg_32:$src0), (i8 SReg_32:$src1), SETUGE)),
@@ -2917,6 +2933,11 @@ def : GCNPat <
 >;
 
 def : GCNPat <
+  (i8 (trunc (i16 SReg_32:$src1))),
+  (V_AND_B32_e64 (S_MOV_B32 (i32 0x000000ff)), SReg_32:$src1)
+>;
+
+def : GCNPat <
   (i16 (anyext (i8 SReg_32:$src1))),
   (V_OR_B32_e64 (S_MOV_B32 (i32 0x00000000)), SReg_32:$src1)
 >;
@@ -2927,9 +2948,16 @@ def : GCNPat <
 >;
 
 def : GCNPat <
-  (i8 (trunc (i16 SReg_32:$src1))),
-  (V_AND_B32_e64 (S_MOV_B32 (i32 0x000000ff)), SReg_32:$src1)
+  (i32 (anyext (i8 SReg_32:$src1))),
+  (V_OR_B32_e64 (S_MOV_B32 (i32 0x00000000)), SReg_32:$src1)
 >;
+
+def : GCNPat <
+  (i32 (zext (i8 SReg_32:$src1))),
+  (V_OR_B32_e64 (S_MOV_B32 (i32 0x00000000)), SReg_32:$src1)
+>;
+
+
 
 
 foreach Ty = [i16, f16] in {

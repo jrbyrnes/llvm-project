@@ -1157,11 +1157,6 @@ void SelectionDAGBuilder::visit(const Instruction &I) {
   errs() << "calling visit with opcode " << I.getOpcodeName() << "\n";
   visit(I.getOpcode(), I);
 
-  errs() << "Dag after visit\n";
-  DAG.dump();
-  errs() << "\n";
-
-
   if (!I.isTerminator() && !HasTailCall &&
       !isa<GCStatepointInst>(I)) // statepoints handle their exports internally
     CopyToExportRegsIfNeeded(&I);
