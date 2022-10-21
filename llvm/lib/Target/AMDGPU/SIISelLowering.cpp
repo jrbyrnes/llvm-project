@@ -172,8 +172,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                       MVT::v32i32},
                      Custom);
                      
-  setTruncStoreAction(MVT::i32, MVT::i8, Expand);
-  setTruncStoreAction(MVT::i16, MVT::i8, Expand);
+  //setTruncStoreAction(MVT::i32, MVT::i8, Expand);
+  //setTruncStoreAction(MVT::i16, MVT::i8, Expand);
   setTruncStoreAction(MVT::v2i32, MVT::v2i16, Expand);
   setTruncStoreAction(MVT::v3i32, MVT::v3i16, Expand);
   setTruncStoreAction(MVT::v4i32, MVT::v4i16, Expand);
@@ -465,7 +465,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   if (Subtarget->has16BitInsts()) {
     setOperationAction({ISD::Constant, ISD::SMIN, ISD::SMAX, ISD::UMIN,
                         ISD::UMAX, ISD::UADDSAT, ISD::USUBSAT},
-                       MVT::i16, Legal);
+                       {MVT::i8, MVT::i16}, Legal);
 
     AddPromotedToType(ISD::SIGN_EXTEND, MVT::i16, MVT::i32);
     AddPromotedToType(ISD::SIGN_EXTEND, MVT::i8, MVT::i32);
