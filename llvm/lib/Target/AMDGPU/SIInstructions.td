@@ -2805,6 +2805,48 @@ def : GCNPat <
 >;
 
 /*
+def : GCNPat <
+  (i8 (shl (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_LSHLREV_B32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+*/
+def : GCNPat <
+  (i8 (shl (i8 SReg_32:$src1), (i32 SReg_32:$src2))),
+  (i8 (V_LSHLREV_B32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+
+def : GCNPat <
+  (i8 (srl (i8 SReg_32:$src1), (i32 SReg_32:$src2))),
+  (i8 (V_LSHRREV_B32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+def : GCNPat <
+  (i8 (sra (i8 SReg_32:$src1), (i32 SReg_32:$src2))),
+  (i8 (V_ASHRREV_I32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+def : GCNPat <
+  (i8 (smin (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_MIN_I32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+def : GCNPat <
+  (i8 (smax (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_MAX_I32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+def : GCNPat <
+  (i8 (umin (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_MIN_U32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+def : GCNPat <
+  (i8 (umax (i8 SReg_32:$src1), (i8 SReg_32:$src2))),
+  (i8 (V_MAX_U32_e64 SReg_32:$src2, SReg_32:$src1))
+>;
+
+/*
 def : GCNPat<
   (i1 (setcc (i8 SReg_32:$src0), (i8 SReg_32:$src1), SETUGE)),
   (S_CMP_GE_U32 SReg_32:$src0, SReg_32:$src1)
