@@ -172,28 +172,28 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
                       MVT::v32i32},
                      Custom);
                      
-  //setTruncStoreAction(MVT::i32, MVT::i8, Expand);
-  //setTruncStoreAction(MVT::i16, MVT::i8, Expand);
+  setTruncStoreAction(MVT::i32, MVT::i8, Expand);
+  setTruncStoreAction(MVT::i16, MVT::i8, Expand);
   setTruncStoreAction(MVT::v2i32, MVT::v2i16, Expand);
   setTruncStoreAction(MVT::v3i32, MVT::v3i16, Expand);
   setTruncStoreAction(MVT::v4i32, MVT::v4i16, Expand);
   setTruncStoreAction(MVT::v8i32, MVT::v8i16, Expand);
   setTruncStoreAction(MVT::v16i32, MVT::v16i16, Expand);
   setTruncStoreAction(MVT::v32i32, MVT::v32i16, Expand);
-  //setTruncStoreAction(MVT::v2i32, MVT::v2i8, Expand);
-  //setTruncStoreAction(MVT::v4i32, MVT::v4i8, Expand);
+  setTruncStoreAction(MVT::v2i32, MVT::v2i8, Expand);
+  setTruncStoreAction(MVT::v4i32, MVT::v4i8, Expand);
   setTruncStoreAction(MVT::v8i32, MVT::v8i8, Expand);
   setTruncStoreAction(MVT::v16i32, MVT::v16i8, Expand);
   setTruncStoreAction(MVT::v32i32, MVT::v32i8, Expand);
-  //setTruncStoreAction(MVT::v2i16, MVT::v2i8, Expand);
-  //setTruncStoreAction(MVT::v4i16, MVT::v4i8, Expand);
+  setTruncStoreAction(MVT::v2i16, MVT::v2i8, Expand);
+  setTruncStoreAction(MVT::v4i16, MVT::v4i8, Expand);
   setTruncStoreAction(MVT::v8i16, MVT::v8i8, Expand);
   setTruncStoreAction(MVT::v16i16, MVT::v16i8, Expand);
   setTruncStoreAction(MVT::v32i16, MVT::v32i8, Expand);
 
   setTruncStoreAction(MVT::v3i64, MVT::v3i16, Expand);
   setTruncStoreAction(MVT::v3i64, MVT::v3i32, Expand);
-  //setTruncStoreAction(MVT::v4i64, MVT::v4i8, Expand);
+  setTruncStoreAction(MVT::v4i64, MVT::v4i8, Expand);
   setTruncStoreAction(MVT::v8i64, MVT::v8i8, Expand);
   setTruncStoreAction(MVT::v8i64, MVT::v8i16, Expand);
   setTruncStoreAction(MVT::v8i64, MVT::v8i32, Expand);
