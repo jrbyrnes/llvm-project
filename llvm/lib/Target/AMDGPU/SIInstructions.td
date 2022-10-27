@@ -2782,6 +2782,28 @@ def : GCNPat <
   (S_PACK_LL_B32_B16 SReg_32:$src0, SReg_32:$src1)
 >;
 
+/*
+de8f : GCNPat <
+  (v2f16 (UniformBinFrag<build_vector> (f16 SReg_32:$src0), (f16 SReg_32:$src1))),
+  (S_PACK_LL_B32_B16 SReg_32:$src0, SReg_32:$src1)
+>;
+
+def : GCNPat <
+  (v2f16 (UniformBinFrag<build_vector> (f16 SReg_32:$src0), (f16 SReg_32:$src1))),
+  (S_PACK_LL_B32_B16 SReg_32:$src0, SReg_32:$src1)
+>;
+*/
+
+
+def : GCNPat <
+  (i32 (or 
+    (i32 (zext (i16 VGPR_32:$a))),
+    (i32 (bitconvert (v2i16 (build_vector (i16 0), (i16 VGPR_32:$b)))))
+  )),
+  (V_PERM_B32_e64 VGPR_32:$b, VGPR_32:$a, (S_MOV_B32 (i32 0x05040100)))
+>;
+
+
 
 
 foreach Ty = [i16, f16] in {
