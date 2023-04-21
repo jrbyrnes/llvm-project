@@ -857,6 +857,7 @@ void DemoOpt::applyIGLPStrategy(
   unsigned MFMACount = 0;
   unsigned DSWCount = 0;
   unsigned DSRCount = 0;
+  unsigned VALUCount = 0;
   for (const MachineInstr &I : *DAG) {
     if (TII->isMFMA(I))
       ++MFMACount;
@@ -866,12 +867,43 @@ void DemoOpt::applyIGLPStrategy(
       else if (I.mayStore())
         ++DSWCount;
     }
+    else if (TII->isVALU(I)) {
+      ++VALUCount;
+    }
   }
 
 
   unsigned PipelineSyncID = 0;
   SchedGroup *SG;
 
+
+/*
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, VALUCount / 2, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::DS_READ, DSRCount, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, VALUCount / 2, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+*/
+
+  for (int I = 0; I < MFMACount; I++) {
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        ~SchedGroupMask::MFMA, 4, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+}
+
+
+
+  PipelineSyncID = 1;
 
     SmallVector<InstructionRuleType, 4> DSRules;
     InstructionRuleType Rule0 = [](const SUnit *SU, ArrayRef<SUnit *> Collection,
@@ -1163,6 +1195,25 @@ void DemoOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
   }
+/*
+  for (int I = 0; I < 4; I++) {
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VMEM_READ, 2, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 4, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+
+  }
+*/
 
 
 }
