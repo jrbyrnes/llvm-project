@@ -856,16 +856,25 @@ void DemoOpt::applyIGLPStrategy(
     DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups) {
   unsigned MFMACount = 0;
   unsigned DSWCount = 0;
+  unsigned DSWWithPermCount = 0;
   unsigned DSRCount = 0;
   unsigned VALUCount = 0;
-  for (const MachineInstr &I : *DAG) {
+  for (auto &SU : DAG->SUnits) {
+    auto I = SU.getInstr();
     if (TII->isMFMA(I))
       ++MFMACount;
     if (TII->isDS(I)) {
       if (I.mayLoad())
         ++DSRCount;
-      else if (I.mayStore())
+      else if (I.mayStore()) {
         ++DSWCount;
+        for (auto Pred : SU.Preds) {
+          if (Pred.getSUnit()->getInstr().getOpcode() == AMDGPUISD::PERM) {
+            errs() << "Found dsw with perm\n";
+            ++DSWWithPermCount;
+          }
+        }
+      }
     }
     else if (TII->isVALU(I)) {
       ++VALUCount;
@@ -875,6 +884,39 @@ void DemoOpt::applyIGLPStrategy(
 
   unsigned PipelineSyncID = 0;
   SchedGroup *SG;
+
+
+  InstructionRuleType VMEMSize =  [](const SUnit *SU, ArrayRef<SUnit *> Collection,
+                                   const SIInstrInfo *TII,  SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+
+   auto MI = SU->getInstr();
+   if (MI->getOpcode() == TargetOpcode::BUNDLE)
+     return false;
+   if (!Collection.size())
+     return true;
+
+    int NumBits = 0;
+
+    auto TRI = TII->getRegisterInfo();
+    for (auto &Elt : Collection) {
+      auto Op = Elt.getInstr().getOperand(0);
+      auto size = TRI->getRegSizeInBits(Op)
+      Elt.getInstr()->print(errs()); errs() << "has size " << size << "\n";
+      NumBits += size;
+
+    }
+
+    
+    if (NumBits < 128) {
+      if (TII->isVMEM(MI) && MI.mayLoad()) {
+        MI.print(errs()); errs() << "has size " << TRI->getRegSizeInBits(MI.getOperand(0) << "\n";
+        if (NumBits + TRI->getRegSizeInBits(MI.getOperand(0)) <= 128)
+          return true;
+      }
+    }
+
+    return false;
+  }
 
 
 /*
@@ -910,7 +952,9 @@ void DemoOpt::applyIGLPStrategy(
                                    const SIInstrInfo *TII,  SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
 
       errs() << "in rule0\n";
-
+      auto MI = SU->getInstr();
+      if (MI->getOpcode() == TargetOpcode::BUNDLE)
+        return false;
       if (!SyncPipe.size()) return false;
       int MFMAsFound = 0;
       for (auto &Elt : SyncPipe[0].DAG->SUnits) {
@@ -991,7 +1035,7 @@ void DemoOpt::applyIGLPStrategy(
 
 
 
-  for (unsigned I = 0; I < 2; ++I) {
+  for (unsigned I = 0; I < DSWWithPermCount; ++I) {
     SmallVector<InstructionRuleType, 4> VALURules;
     InstructionRuleType Rule4 = [](const SUnit *SU, ArrayRef<SUnit *> Collection, 
                                           const SIInstrInfo *TII,  SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
@@ -1114,6 +1158,7 @@ void DemoOpt::applyIGLPStrategy(
     };
 
     VMEMRules.push_back(Rule5);
+    VMEMRules.push_back(VMEMSize);
 
 
 
@@ -1169,6 +1214,7 @@ void DemoOpt::applyIGLPStrategy(
     };
 
     VMEMRules2.push_back(Rule6);
+    VMEMRules2.push_back(VMEMSize);
 
 
 
@@ -1178,15 +1224,18 @@ void DemoOpt::applyIGLPStrategy(
   }
 
 
-  for (int I = 0; I < 4; I++) {
+  for (int I = 0; I < DSWCount - DSWWithPermCount; I++) {
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::DS_WRITE, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
 
+    SmallVector<InstructionRuleType, 4> VMEMRules;
+    VMEMRules.push_back(VMEMSize);
+
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VMEM_READ, 4, std::nullopt, PipelineSyncID, DAG, TII);
+        SchedGroupMask::VMEM_READ, 4, VMEMRules, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
 
