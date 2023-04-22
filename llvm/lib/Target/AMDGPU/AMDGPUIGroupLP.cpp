@@ -861,22 +861,23 @@ void DemoOpt::applyIGLPStrategy(
   unsigned VALUCount = 0;
   for (auto &SU : DAG->SUnits) {
     auto I = SU.getInstr();
-    if (TII->isMFMA(I))
+    if (TII->isMFMA(*I))
       ++MFMACount;
-    if (TII->isDS(I)) {
-      if (I.mayLoad())
+    if (TII->isDS(*I)) {
+      if (I->mayLoad())
         ++DSRCount;
-      else if (I.mayStore()) {
+      else if (I->mayStore()) {
         ++DSWCount;
         for (auto Pred : SU.Preds) {
-          if (Pred.getSUnit()->getInstr().getOpcode() == AMDGPUISD::PERM) {
+          if (Pred.getSUnit()->getInstr()->getOpcode() == AMDGPU::V_PERM_B32_e64) {
             errs() << "Found dsw with perm\n";
             ++DSWWithPermCount;
+            break;
           }
         }
       }
     }
-    else if (TII->isVALU(I)) {
+    else if (TII->isVALU(*I)) {
       ++VALUCount;
     }
   }
@@ -898,25 +899,26 @@ void DemoOpt::applyIGLPStrategy(
     int NumBits = 0;
 
     auto TRI = TII->getRegisterInfo();
+    auto &MRI = MI->getParent()->getParent()->getRegInfo();
     for (auto &Elt : Collection) {
-      auto Op = Elt.getInstr().getOperand(0);
-      auto size = TRI->getRegSizeInBits(Op)
-      Elt.getInstr()->print(errs()); errs() << "has size " << size << "\n";
+      auto Op = Elt->getInstr()->getOperand(0);
+      auto size = TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI,Op));
+      Elt->getInstr()->print(errs()); errs() << "has size " << size << "\n";
       NumBits += size;
 
     }
 
     
     if (NumBits < 128) {
-      if (TII->isVMEM(MI) && MI.mayLoad()) {
-        MI.print(errs()); errs() << "has size " << TRI->getRegSizeInBits(MI.getOperand(0) << "\n";
-        if (NumBits + TRI->getRegSizeInBits(MI.getOperand(0)) <= 128)
+      if (TII->isVMEM(*MI) && MI->mayLoad()) {
+        MI->print(errs()); errs() << "has size " << TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI, MI->getOperand(0))) << "\n";
+        if (NumBits + TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI, MI->getOperand(0))) <= 128)
           return true;
       }
     }
 
     return false;
-  }
+  };
 
 
 /*
@@ -932,7 +934,7 @@ void DemoOpt::applyIGLPStrategy(
         SchedGroupMask::VALU, VALUCount / 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 */
-
+  errs() << "creating mfma pipeline\n";
   for (int I = 0; I < MFMACount; I++) {
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
@@ -944,7 +946,7 @@ void DemoOpt::applyIGLPStrategy(
 }
 
 
-
+   errs() << "Creating main pipe\n";
   PipelineSyncID = 1;
 
     SmallVector<InstructionRuleType, 4> DSRules;
@@ -1033,7 +1035,7 @@ void DemoOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-
+  errs() << "dswithperm portion\n";
 
   for (unsigned I = 0; I < DSWWithPermCount; ++I) {
     SmallVector<InstructionRuleType, 4> VALURules;
@@ -1222,7 +1224,7 @@ void DemoOpt::applyIGLPStrategy(
         SchedGroupMask::VMEM_READ, 4, VMEMRules2, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
-
+errs() << "remainder\n";
 
   for (int I = 0; I < DSWCount - DSWWithPermCount; I++) {
 
