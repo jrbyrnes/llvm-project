@@ -934,15 +934,18 @@ void DemoOpt::applyIGLPStrategy(
         SchedGroupMask::VALU, VALUCount / 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 */
+if (DSWWithPermCount) {
   errs() << "creating mfma pipeline\n";
   for (int I = 0; I < MFMACount; I++) {
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
+
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+  }
 }
 
 
@@ -1002,6 +1005,11 @@ void DemoOpt::applyIGLPStrategy(
       if (MI->getOpcode() == TargetOpcode::BUNDLE)
         return false;
 
+      if(!MI->getOperand(0).getReg().isVirtual()) {
+        errs() << "Post RA, early exit\n";
+        return true;
+      }
+
       errs() << "trying to find schedgroup with ID " << SGID - 1 << "\n";
       SchedGroup *OtherGroup = nullptr;
       for (auto &PipeSG : SyncPipe) {
@@ -1034,6 +1042,11 @@ void DemoOpt::applyIGLPStrategy(
         SchedGroupMask::DS_READ, 2, DSRRules, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
+
+    SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 2, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
 
   errs() << "dswithperm portion\n";
 
@@ -1180,7 +1193,7 @@ void DemoOpt::applyIGLPStrategy(
     InstructionRuleType Rule6 = [](const SUnit *SU, ArrayRef<SUnit *> Collection, 
                                           const SIInstrInfo *TII,  SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
 
-      errs() << "in rule5\n";
+      errs() << "in rule6\n";
     
       auto MI = SU->getInstr();
       if (MI->getOpcode() == TargetOpcode::BUNDLE)
