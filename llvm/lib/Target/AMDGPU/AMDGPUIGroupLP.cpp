@@ -941,7 +941,7 @@ void DemoOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        ~SchedGroupMask::MFMA, 4, std::nullopt, PipelineSyncID, DAG, TII);
+        SchedGroupMask::VALU, 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 }
 
