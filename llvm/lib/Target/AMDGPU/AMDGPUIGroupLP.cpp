@@ -1042,11 +1042,11 @@ if (DSWWithPermCount) {
         SchedGroupMask::DS_READ, 2, DSRRules, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
-
+if (!DSWWithPermCount) {
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-
+}
 
   errs() << "dswithperm portion\n";
 
