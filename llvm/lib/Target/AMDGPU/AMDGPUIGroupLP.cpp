@@ -989,9 +989,9 @@ if (DSWWithPermCount) {
 
 
 
-  for (unsigned I = 0; I < (DSRCount -4)/ 2; ++I) {
+  for (unsigned I = 0; I < (DSRCount -4)/ 1; ++I) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::MFMA, 2, std::nullopt, PipelineSyncID, DAG, TII);
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     errs() << "Created MFMA (DSR) group with ID " << SG->SGID << "\n";
@@ -1039,7 +1039,7 @@ if (DSWWithPermCount) {
     DSRRules.push_back(Rule1);
 
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::DS_READ, 2, DSRRules, PipelineSyncID, DAG, TII);
+        SchedGroupMask::DS_READ, 1, DSRRules, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 if (!DSWWithPermCount) {
