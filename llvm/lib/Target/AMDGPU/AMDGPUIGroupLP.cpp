@@ -967,13 +967,13 @@ if (DSWWithPermCount) {
           errs() <<  "MFMA #" << MFMAsFound << ", SU(" << Elt.NodeNum << ")\n";
           for (auto &Pred : Elt.Preds) {
             if (Pred.getSUnit() == SU) {
-              errs() << "SU(" << SU->NodeNum << ") is Pred\n";
+               errs() << "SU(" << SU->NodeNum << ") is Pred\n";
               return true;
             }
           }
         ++MFMAsFound;
         }
-       if (MFMAsFound >= 4) return false;
+       if (MFMAsFound >= SGID - SyncPipe[0].SGID + 4) return false;
       }
 
      return false;
@@ -987,13 +987,12 @@ if (DSWWithPermCount) {
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
 
-
-
-  for (unsigned I = 0; I < (DSRCount -4)/ 1; ++I) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
+
+  for (unsigned I = 0; I < (DSRCount - 4)/ 1; ++I) {
     errs() << "Created MFMA (DSR) group with ID " << SG->SGID << "\n";
     SmallVector<InstructionRuleType, 4> DSRRules;
     InstructionRuleType Rule1 = [](const SUnit *SU, ArrayRef<SUnit *> Collection,
@@ -1037,17 +1036,24 @@ if (DSWWithPermCount) {
     };
 
     DSRRules.push_back(Rule1);
+//    DSRRules.push_back(Rule0);
 
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::DS_READ, 1, DSRRules, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
   }
+/*
 if (!DSWWithPermCount) {
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 }
-
+*/
   errs() << "dswithperm portion\n";
 
   for (unsigned I = 0; I < DSWWithPermCount; ++I) {
@@ -1058,7 +1064,7 @@ if (!DSWWithPermCount) {
       errs() << "in rule4\n";
     
       auto MI = SU->getInstr();
-      if (MI->getOpcode() == TargetOpcode::BUNDLE)
+      if (MI->getOpcode() != AMDGPU::V_PERM_B32_e64)
         return false;
 
       if (!Collection.size()) {
@@ -1156,13 +1162,14 @@ if (!DSWWithPermCount) {
 
       auto Elt = OtherGroup->Collection[0];
 
+
+      auto DAG = SyncPipe[0].DAG;
+
       for (auto &Elt : OtherGroup->Collection) {
         for (auto &Pred : Elt->Preds) {
-          if (TII->isVALU(*Pred.getSUnit()->getInstr())) {
-            for (auto &ThisPred : SU->Preds) {
-              if (ThisPred.getSUnit() == Pred.getSUnit()) {
+          if (Pred.getSUnit()->getInstr()->getOpcode() == AMDGPU::V_PERM_B32_e64) {
+            if (DAG->IsReachable(const_cast<SUnit *>(SU), Pred.getSUnit())) {
                 return true;
-              }
             }
           }
         }
@@ -1210,15 +1217,13 @@ if (!DSWWithPermCount) {
       errs() << "found other group\n";
       if (!OtherGroup->Collection.size()) return true;
 
-      auto Elt = OtherGroup->Collection[0];
+      auto DAG = SyncPipe[0].DAG;
 
       for (auto &Elt : OtherGroup->Collection) {
         for (auto &Pred : Elt->Preds) {
-          if (TII->isVALU(*Pred.getSUnit()->getInstr())) {
-            for (auto &ThisPred : SU->Preds) {
-              if (ThisPred.getSUnit() == Pred.getSUnit()) {
+          if (Pred.getSUnit()->getInstr()->getOpcode() == AMDGPU::V_PERM_B32_e64) {
+            if (DAG->IsReachable(const_cast<SUnit*>(SU), Pred.getSUnit())) {
                 return true;
-              }
             }
           }
         }
@@ -1236,8 +1241,43 @@ if (!DSWWithPermCount) {
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VMEM_READ, 4, VMEMRules2, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
   }
 errs() << "remainder\n";
+
+
+  InstructionRuleType VMEMSize2 =  [](const SUnit *SU, ArrayRef<SUnit *> Collection,
+                                   const SIInstrInfo *TII,  SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+
+   auto MI = SU->getInstr();
+   if (MI->getOpcode() == TargetOpcode::BUNDLE)
+     return false;
+   if (!Collection.size())
+     return true;
+
+    int NumBits = 0;
+
+    auto TRI = TII->getRegisterInfo();
+    auto &MRI = MI->getParent()->getParent()->getRegInfo();
+    for (auto &Elt : Collection) {
+      auto Op = Elt->getInstr()->getOperand(0);
+      auto size = TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI,Op));
+      Elt->getInstr()->print(errs()); errs() << "has size " << size << "\n";
+      NumBits += size;
+
+    }
+
+    
+    if (NumBits < 128) {
+      if (TII->isVMEM(*MI) && MI->mayLoad()) {
+        MI->print(errs()); errs() << "has size " << TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI, MI->getOperand(0))) << "\n";
+        if (NumBits + TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI, MI->getOperand(0))) <= 128)
+          return true;
+      }
+    }
+
+    return false;
+  };
 
   for (int I = 0; I < DSWCount - DSWWithPermCount; I++) {
 
@@ -1247,7 +1287,7 @@ errs() << "remainder\n";
 
 
     SmallVector<InstructionRuleType, 4> VMEMRules;
-    VMEMRules.push_back(VMEMSize);
+    VMEMRules.push_back(VMEMSize2);
 
     SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VMEM_READ, 4, VMEMRules, PipelineSyncID, DAG, TII);
