@@ -1242,6 +1242,11 @@ if (!DSWWithPermCount) {
         SchedGroupMask::VMEM_READ, 4, VMEMRules2, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
+   SG  = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+
   }
 errs() << "remainder\n";
 
