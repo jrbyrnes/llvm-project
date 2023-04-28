@@ -421,9 +421,10 @@ template <typename T> void PipelineSolver::linkSchedGroups(T I, T E) {
 void PipelineSolver::makePipeline() {
   // Preserve the order of barrier for subsequent SchedGroupBarrier mutations
   for (auto &SyncPipeline : BestPipeline) {
+    LLVM_DEBUG(dbgs() << "Printing SchedGroups\n");
     for (auto &SG : SyncPipeline) {
-      LLVM_DEBUG(dbgs() << "Printing SchedGroups\nSchedGroup with SGID "
-                        << SG.getSGID() << " has: \n");
+      LLVM_DEBUG(dbgs() << "SchedGroup with SGID " << SG.getSGID()
+                        << " has: \n");
       SUnit *SGBarr = nullptr;
       for (auto &SU : SG.Collection) {
         if (SU->getInstr()->getOpcode() == AMDGPU::SCHED_GROUP_BARRIER)
@@ -805,7 +806,10 @@ void PipelineSolver::solve() {
   LLVM_DEBUG(DAG->dump());
 }
 
-enum IGLPStrategyID : int { MFMASmallGemmOptID = 0, DemoOptID = 1 };
+enum IGLPStrategyID : int {
+  MFMASmallGemmOptID = 0,
+  MFMASmallGemmSingleWaveOptID = 1,
+};
 
 // Implement a IGLP scheduling strategy.
 class IGLPStrategy {
@@ -868,7 +872,7 @@ void MFMASmallGemmOpt::applyIGLPStrategy(
   }
 }
 
-class DemoOpt final : public IGLPStrategy {
+class MFMASmallGemmSingleWaveOpt final : public IGLPStrategy {
 private:
 public:
   void applyIGLPStrategy(
@@ -877,42 +881,214 @@ public:
 
   bool shouldApplyStrategy(ScheduleDAGInstrs *DAG) override { return true; }
 
-  DemoOpt(ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
+  MFMASmallGemmSingleWaveOpt(ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
       : IGLPStrategy(DAG, TII) {
     IsBottomUp = 0;
   }
 };
 
-void DemoOpt::applyIGLPStrategy(
+void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
     DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
     DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups) {
-  // Count the number of MFMA instructions.
   unsigned MFMACount = 0;
-  for (const MachineInstr &I : *DAG)
-    if (TII->isMFMAorWMMA(I))
+  unsigned DSWCount = 0;
+  unsigned DSWWithPermCount = 0;
+  unsigned DSWWithSharedVMEMCount = 0;
+  unsigned DSRCount = 0;
+  SmallVector<std::pair<SUnit *, bool>, 6> DSWithPerms;
+  for (auto &SU : DAG->SUnits) {
+    auto I = SU.getInstr();
+    if (TII->isMFMAorWMMA(*I))
       ++MFMACount;
+    else if (TII->isDS(*I)) {
+      if (I->mayLoad())
+        ++DSRCount;
+      else if (I->mayStore()) {
+        ++DSWCount;
+        for (auto Pred : SU.Preds) {
+          if (Pred.getSUnit()->getInstr()->getOpcode() ==
+              AMDGPU::V_PERM_B32_e64) {
+            DSWithPerms.push_back({&SU, false});
+            break;
+          }
+        }
+      }
+    }
+  }
+  DSWWithPermCount = DSWithPerms.size();
+  auto I = DSWithPerms.begin();
+  auto E = DSWithPerms.end();
 
-  const unsigned PipelineSyncID = 0;
-  SchedGroup *SG = nullptr;
+  // Get the count of DS_WRITE couples that use the same VMEM_READ data. Both
+  // DS_WRITES will both have distinct V_PERM predecessors, which, in turn, will
+  // have a loop carried dependency (WAR) on the same VMEM_READ. If we find such
+  // a couple, mark them as counted as we continue along the loop so as to not
+  // double count.
+  for (; I != E; I++) {
+    if (I->second)
+      continue;
+    auto J = I + 1;
+    for (; J != E; J++) {
+      if (J->second)
+        continue;
+      auto FirstPred = std::find_if(
+          I->first->Preds.begin(), I->first->Preds.end(), [](const SDep &Pred) {
+            return Pred.getSUnit()->getInstr()->getOpcode() ==
+                   AMDGPU::V_PERM_B32_e64;
+          });
 
-  // The SU is a successor of SU in prev SchedGroup
-  InstructionRuleType Rule1 =
+      SDep *VMEMSucc = std::find_if(
+          FirstPred->getSUnit()->Succs.begin(),
+          FirstPred->getSUnit()->Succs.end(), [this](const SDep &VPermPred) {
+            auto MI = VPermPred.getSUnit()->getInstr();
+            return TII->isVMEM(*MI) && MI->mayLoad();
+          });
+      if (VMEMSucc == FirstPred->getSUnit()->Succs.end())
+        continue;
+
+      if (std::any_of(J->first->Preds.begin(), J->first->Preds.end(),
+                      [&VMEMSucc](const SDep &DSWPred) {
+                        auto MI = DSWPred.getSUnit()->getInstr();
+                        if (MI->getOpcode() != AMDGPU::V_PERM_B32_e64)
+                          return false;
+                        return std::any_of(
+                            DSWPred.getSUnit()->Succs.begin(),
+                            DSWPred.getSUnit()->Succs.end(),
+                            [&VMEMSucc](const SDep &OtherVMEMSucc) {
+                              return VMEMSucc->getSUnit() ==
+                                     OtherVMEMSucc.getSUnit();
+                            });
+                      })) {
+        DSWWithSharedVMEMCount += 2;
+        I->second = true;
+        J->second = true;
+        break;
+      }
+    }
+  }
+
+  SchedGroup *SG;
+  unsigned PipelineSyncID = 0;
+  // For kernels with V_PERM, there are enough VALU to mix in between MFMAs
+  if (DSWWithPermCount) {
+    for (unsigned I = 0; I < MFMACount; I++) {
+      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+          SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+          SchedGroupMask::VALU, 2, std::nullopt, PipelineSyncID, DAG, TII);
+      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    }
+  }
+
+  PipelineSyncID = 1;
+  // Phase 1: Break up DS_READ and MFMA clusters.
+  // First DS_READ to make ready initial MFMA, then interleave MFMA with DS_READ
+  // prefetch
+
+  // Whether the DS_READ is a predecessor of first four MFMA in region
+  InstructionRuleType EnablesInitialMFMA =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        if (!SyncPipe.size())
+          return false;
+        int MFMAsFound = 0;
+        for (auto &Elt : SyncPipe[0].DAG->SUnits) {
+          if (TII->isMFMAorWMMA(*Elt.getInstr())) {
+            if (std::any_of(
+                    Elt.Preds.begin(), Elt.Preds.end(),
+                    [&SU](const SDep &Pred) { return Pred.getSUnit() == SU; }))
+              return true;
+
+            ++MFMAsFound;
+          }
+          if (MFMAsFound >= 4)
+            return false;
+        }
+        return false;
+      };
+
+  SmallVector<InstructionRuleType, 4> DSRules;
+  DSRules.push_back(EnablesInitialMFMA);
+
+  // Make ready initial MFMA
+  SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+      SchedGroupMask::DS_READ, 4, DSRules, PipelineSyncID, DAG, TII);
+  SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+  SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+      SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+  SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+  // Interleave MFMA with DS_READ prefetch
+  for (unsigned I = 0; I < DSRCount - 4; ++I) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::DS_READ, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+  }
+
+  // Phase 2a: Loop carried dependency with V_PERM
+  // Schedule VPerm & DS_WRITE as closely as possible to the VMEM_READ they
+  // depend on. Interleave MFMA to keep XDL unit busy throughout.
+
+  // Whether the MI is a V_PERM and is a predecessor of a common DS_WRITE
+  InstructionRuleType IsPermForDSW =
       [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
          SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
         auto MI = SU->getInstr();
-        if (MI->getOpcode() == TargetOpcode::BUNDLE)
+        if (MI->getOpcode() != AMDGPU::V_PERM_B32_e64)
           return false;
 
+        // Does the VALU have a DS_WRITE successor
+        if (!Collection.size()) {
+          return std::any_of(
+              SU->Succs.begin(), SU->Succs.end(), [&TII](const SDep &Succ) {
+                return (TII->isDS(*Succ.getSUnit()->getInstr()) &&
+                        Succ.getSUnit()->getInstr()->mayStore());
+              });
+        }
+
+        // Does the VALU have a DS_WRITE successor that is the same as other
+        // VALU already in the group
+        return std::any_of(
+            Collection.begin(), Collection.end(), [&SU, &TII](SUnit *Elt) {
+              return std::any_of(
+                  Elt->Succs.begin(), Elt->Succs.end(),
+                  [&SU, &TII](const SDep &Succ) {
+                    if (TII->isDS(*Succ.getSUnit()->getInstr()) &&
+                        Succ.getSUnit()->getInstr()->mayStore())
+                      return std::any_of(SU->Succs.begin(), SU->Succs.end(),
+                                         [&Succ](const SDep &ThisSucc) {
+                                           return ThisSucc.getSUnit() ==
+                                                  Succ.getSUnit();
+                                         });
+                    return false;
+                  });
+            });
+      };
+
+  // Whether the SU is a successor of any element in previous SchedGroup
+  InstructionRuleType IsSuccOfPrevGroup =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
         SchedGroup *OtherGroup = nullptr;
         for (auto &PipeSG : SyncPipe) {
-          if (PipeSG.getSGID() == (int)SGID - 1) {
+          if ((unsigned)PipeSG.getSGID() == SGID - 1) {
             OtherGroup = &PipeSG;
           }
         }
 
         if (!OtherGroup)
           return false;
+        if (!OtherGroup->Collection.size())
+          return true;
 
+        // Does the previous VALU have this DS_Write as a successor
         return (std::any_of(OtherGroup->Collection.begin(),
                             OtherGroup->Collection.end(), [&SU](SUnit *Elt) {
                               return std::any_of(Elt->Succs.begin(),
@@ -923,18 +1099,299 @@ void DemoOpt::applyIGLPStrategy(
                             }));
       };
 
-  SmallVector<InstructionRuleType, 4> DemoRules;
-  DemoRules.push_back(Rule1);
+  // Whether the combined load width of group is 128 bits
+  InstructionRuleType VMEMSize =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        auto MI = SU->getInstr();
+        if (MI->getOpcode() == TargetOpcode::BUNDLE)
+          return false;
+        if (!Collection.size())
+          return true;
 
-  // Each iteration of pipeline has 1 MFMA and 1 DS_W, where the DS_W is a
-  // successor of the MFMA
-  for (unsigned I = 0; I < MFMACount; ++I) {
+        int NumBits = 0;
+
+        auto TRI = TII->getRegisterInfo();
+        auto &MRI = MI->getParent()->getParent()->getRegInfo();
+        for (auto &Elt : Collection) {
+          auto Op = Elt->getInstr()->getOperand(0);
+          auto Size =
+              TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(MRI, Op));
+          NumBits += Size;
+        }
+
+        if (NumBits < 128) {
+          assert(TII->isVMEM(*MI) && MI->mayLoad());
+          if (NumBits + TRI.getRegSizeInBits(*TRI.getRegClassForOperandReg(
+                            MRI, MI->getOperand(0))) <=
+              128)
+            return true;
+        }
+
+        return false;
+      };
+
+  // Whether the SU shares a V_PERM predecessor with any SU in the previous
+  // SchedGroup
+  InstructionRuleType SharesPredWithPrevGroup =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        SchedGroup *OtherGroup = nullptr;
+        if (!SyncPipe.size())
+          return false;
+        for (auto &PipeSG : SyncPipe) {
+          if ((unsigned)PipeSG.getSGID() == SGID - 1) {
+            OtherGroup = &PipeSG;
+          }
+        }
+
+        if (!OtherGroup)
+          return false;
+        if (!OtherGroup->Collection.size())
+          return true;
+        auto DAG = SyncPipe[0].DAG;
+
+        // Does the previous DS_WRITE share a V_PERM predecessor with this
+        // VMEM_READ
+        return (std::any_of(
+            OtherGroup->Collection.begin(), OtherGroup->Collection.end(),
+            [&SU, &DAG](SUnit *Elt) {
+              return std::any_of(
+                  Elt->Preds.begin(), Elt->Preds.end(),
+                  [&SU, &DAG](SDep &Pred) {
+                    return Pred.getSUnit()->getInstr()->getOpcode() ==
+                               AMDGPU::V_PERM_B32_e64 &&
+                           DAG->IsReachable(const_cast<SUnit *>(SU),
+                                            Pred.getSUnit());
+                  });
+            }));
+      };
+
+  // Whether the SU shares a V_PERM predecessor with any SU in the SchedGroup 3
+  // steps back in the pipeline
+  InstructionRuleType SharesPredWithThirdPrevGroup =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        auto MI = SU->getInstr();
+        if (MI->getOpcode() == TargetOpcode::BUNDLE)
+          return false;
+
+        SchedGroup *OtherGroup = nullptr;
+        for (auto &PipeSG : SyncPipe) {
+          if ((unsigned)PipeSG.getSGID() == SGID - 3) {
+            OtherGroup = &PipeSG;
+          }
+        }
+
+        if (!OtherGroup)
+          return false;
+        if (!OtherGroup->Collection.size())
+          return true;
+
+        auto DAG = SyncPipe[0].DAG;
+
+        // Does the previous DS_WRITE share a V_PERM predecessor with this
+        // VMEM_READ
+        return (std::any_of(
+            OtherGroup->Collection.begin(), OtherGroup->Collection.end(),
+            [&SU, &DAG](SUnit *Elt) {
+              return std::any_of(
+                  Elt->Preds.begin(), Elt->Preds.end(),
+                  [&SU, &DAG](SDep &Pred) {
+                    return Pred.getSUnit()->getInstr()->getOpcode() ==
+                               AMDGPU::V_PERM_B32_e64 &&
+                           DAG->IsReachable(const_cast<SUnit *>(SU),
+                                            Pred.getSUnit());
+                  });
+            }));
+      };
+
+  SmallVector<InstructionRuleType, 4> VALURules;
+  VALURules.push_back(IsPermForDSW);
+
+  SmallVector<InstructionRuleType, 4> DSWRules;
+  DSWRules.push_back(IsSuccOfPrevGroup);
+
+  SmallVector<InstructionRuleType, 4> VMEMRules;
+  VMEMRules.push_back(SharesPredWithPrevGroup);
+  VMEMRules.push_back(VMEMSize);
+
+  SmallVector<InstructionRuleType, 4> LaterVMEMRules;
+  LaterVMEMRules.push_back(SharesPredWithThirdPrevGroup);
+  LaterVMEMRules.push_back(VMEMSize);
+
+  for (unsigned I = 0; I < DSWWithPermCount - DSWWithSharedVMEMCount; ++I) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 4, VALURules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::DS_WRITE, 1, DSWRules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VMEM_READ, 4, VMEMRules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::DS_WRITE, 1, DemoRules, PipelineSyncID, DAG, TII);
+        SchedGroupMask::VMEM_READ, 4, LaterVMEMRules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+  }
+
+  // Phase 2b: Loop carried dependency without V_PERM
+  // Schedule DS_WRITE as closely as possible to the VMEM_READ they depend on.
+  // Interleave MFMA to keep XDL unit busy throughout.
+  SmallVector<InstructionRuleType, 4> VMEMNOPermRules;
+  VMEMNOPermRules.push_back(VMEMSize);
+
+  for (unsigned I = 0; I < DSWCount - DSWWithPermCount; I++) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::DS_WRITE, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VMEM_READ, 4, VMEMNOPermRules, PipelineSyncID, DAG,
+        TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+  }
+
+  // Phase 2c: Loop carried dependency with V_PERM, VMEM_READs are
+  // ultimately used by two DS_WRITE
+  // Schedule VPerm & DS_WRITE as closely as possible to the VMEM_READ they
+  // depend on. Interleave MFMA to keep XDL unit busy throughout.
+
+  // Whether the SU shares a V_PERM predecessor with any SU in the SchedGroup 2
+  // steps back in the pipeline
+  InstructionRuleType SharesPredWithSecondPrevGroup =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        SchedGroup *OtherGroup = nullptr;
+        if (!SyncPipe.size())
+          return false;
+        for (auto &PipeSG : SyncPipe) {
+          if ((unsigned)PipeSG.getSGID() == SGID - 2) {
+            OtherGroup = &PipeSG;
+          }
+        }
+
+        if (!OtherGroup)
+          return false;
+        if (!OtherGroup->Collection.size())
+          return true;
+        auto DAG = SyncPipe[0].DAG;
+
+        // Does the previous DS_WRITE share a V_PERM predecessor with this
+        // VMEM_READ
+        return (std::any_of(
+            OtherGroup->Collection.begin(), OtherGroup->Collection.end(),
+            [&SU, &DAG](SUnit *Elt) {
+              return std::any_of(
+                  Elt->Preds.begin(), Elt->Preds.end(),
+                  [&SU, &DAG](SDep &Pred) {
+                    return Pred.getSUnit()->getInstr()->getOpcode() ==
+                               AMDGPU::V_PERM_B32_e64 &&
+                           DAG->IsReachable(const_cast<SUnit *>(SU),
+                                            Pred.getSUnit());
+                  });
+            }));
+      };
+
+  // Whether the SU shares a V_PERM predecessor with any SU in the SchedGroup 4
+  // steps back in the pipeline
+  InstructionRuleType SharesPredWithFourthPrevGroup =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        SchedGroup *OtherGroup = nullptr;
+        if (!SyncPipe.size())
+          return false;
+        for (auto &PipeSG : SyncPipe) {
+          if ((unsigned)PipeSG.getSGID() == SGID - 4) {
+            OtherGroup = &PipeSG;
+          }
+        }
+
+        if (!OtherGroup)
+          return false;
+        if (!OtherGroup->Collection.size())
+          return true;
+        auto DAG = SyncPipe[0].DAG;
+
+        // Does the previous DS_WRITE share a V_PERM predecessor with this
+        // VMEM_READ
+        return (std::any_of(
+            OtherGroup->Collection.begin(), OtherGroup->Collection.end(),
+            [&SU, &DAG](SUnit *Elt) {
+              return std::any_of(
+                  Elt->Preds.begin(), Elt->Preds.end(),
+                  [&SU, &DAG](SDep &Pred) {
+                    return Pred.getSUnit()->getInstr()->getOpcode() ==
+                               AMDGPU::V_PERM_B32_e64 &&
+                           DAG->IsReachable(const_cast<SUnit *>(SU),
+                                            Pred.getSUnit());
+                  });
+            }));
+      };
+
+  SmallVector<InstructionRuleType, 4> VMEMRules2c;
+  VMEMRules2c.push_back(SharesPredWithSecondPrevGroup);
+  VMEMRules2c.push_back(VMEMSize);
+
+  SmallVector<InstructionRuleType, 4> LaterVMEMRules2c;
+  LaterVMEMRules2c.push_back(SharesPredWithFourthPrevGroup);
+  LaterVMEMRules2c.push_back(VMEMSize);
+
+  for (unsigned I = 0; I < DSWWithSharedVMEMCount; ++I) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 4, VALURules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::DS_WRITE, 1, DSWRules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 4, VALURules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::DS_WRITE, 1, DSWRules, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VMEM_READ, 4, VMEMRules2c, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VMEM_READ, 4, LaterVMEMRules2c, PipelineSyncID, DAG,
+        TII);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 }
@@ -945,8 +1402,8 @@ createIGLPStrategy(IGLPStrategyID ID, ScheduleDAGInstrs *DAG,
   switch (ID) {
   case MFMASmallGemmOptID:
     return std::make_unique<MFMASmallGemmOpt>(DAG, TII);
-  case DemoOptID:
-    return std::make_unique<DemoOpt>(DAG, TII);
+  case MFMASmallGemmSingleWaveOptID:
+    return std::make_unique<MFMASmallGemmSingleWaveOpt>(DAG, TII);
   }
 
   llvm_unreachable("Unknown IGLPStrategyID");
