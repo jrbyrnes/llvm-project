@@ -80,7 +80,14 @@ enum class SchedGroupMask {
   LLVM_MARK_AS_BITMASK_ENUM(/* LargestFlag = */ ALL)
 };
 
+class SchedGroup;
+
 typedef DenseMap<SUnit *, SmallVector<int, 4>> SUnitsToCandidateSGsMap;
+
+typedef function_ref<bool(const SUnit *, const ArrayRef<SUnit *>,
+                          const SIInstrInfo *, SmallVectorImpl<SchedGroup> &,
+                          unsigned)>
+    InstructionRuleType;
 
 // Classify instructions into groups to enable fine tuned control over the
 // scheduler. These groups may be more specific than current SchedModel
@@ -102,10 +109,11 @@ private:
   // SGID is used to map instructions to candidate SchedGroups
   unsigned SGID;
 
+  // The different rules each instruction in this SchedGroup must conform to
+  std::optional<SmallVector<InstructionRuleType, 4>> Rules;
+
   // Count of the number of created SchedGroups, used to initialize SGID.
   static unsigned NumSchedGroups;
-
-  ScheduleDAGInstrs *DAG;
 
   const SIInstrInfo *TII;
 
@@ -119,6 +127,8 @@ private:
 public:
   // Collection of SUnits that are classified as members of this group.
   SmallVector<SUnit *, 32> Collection;
+
+  ScheduleDAGInstrs *DAG;
 
   // Returns true if SU can be added to this SchedGroup.
   bool canAddSU(SUnit &SU) const;
@@ -144,6 +154,19 @@ public:
 
   // Returns true if no more instructions may be added to this group.
   bool isFull() const { return MaxSize && Collection.size() >= *MaxSize; }
+
+  // Returns true if the SU matches all rules
+  bool allowedByRules(const SUnit *SU,
+                      SmallVectorImpl<SchedGroup> &SyncPipe) const {
+    if (!Rules.has_value())
+      return true;
+    for (auto &Rule : *Rules) {
+      if (!Rule(SU, Collection, TII, SyncPipe, SGID)) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   // Add SU to the SchedGroup.
   void add(SUnit &SU) {
@@ -176,14 +199,17 @@ public:
   SchedGroupMask getMask() { return SGMask; }
 
   SchedGroup(SchedGroupMask SGMask, std::optional<unsigned> MaxSize,
+             std::optional<SmallVector<InstructionRuleType, 4>> Rules,
              ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
-      : SGMask(SGMask), MaxSize(MaxSize), DAG(DAG), TII(TII) {
+      : SGMask(SGMask), MaxSize(MaxSize), Rules(Rules), TII(TII), DAG(DAG) {
     SGID = NumSchedGroups++;
   }
 
-  SchedGroup(SchedGroupMask SGMask, std::optional<unsigned> MaxSize, int SyncID,
-             ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
-      : SGMask(SGMask), MaxSize(MaxSize), SyncID(SyncID), DAG(DAG), TII(TII) {
+  SchedGroup(SchedGroupMask SGMask, std::optional<unsigned> MaxSize,
+             std::optional<SmallVector<InstructionRuleType, 4>> Rules,
+             int SyncID, ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
+      : SGMask(SGMask), MaxSize(MaxSize), SyncID(SyncID), Rules(Rules),
+        TII(TII), DAG(DAG) {
     SGID = NumSchedGroups++;
   }
 };
@@ -609,6 +635,9 @@ bool PipelineSolver::solveExact() {
     if (Match->isFull())
       continue;
 
+    if (!Match->allowedByRules(CurrSU.first, SyncPipeline))
+      continue;
+
     LLVM_DEBUG(dbgs() << "Assigning to SchedGroup with Mask "
                       << (int)Match->getMask() << "and ID " << CandSGID
                       << "\n");
@@ -690,6 +719,10 @@ void PipelineSolver::greedyFind(
 
     if (Match->isFull()) {
       LLVM_DEBUG(dbgs() << "SGID # " << CandSGID << " is full\n");
+      continue;
+    }
+    if (!Match->allowedByRules(CurrSU.first, SyncPipeline)) {
+      LLVM_DEBUG(dbgs() << "SGID # " << CandSGID << " has conflicting rule\n");
       continue;
     }
     TempCost = addEdges(SyncPipeline, CurrSU.first, CandSGID, AddedEdges);
@@ -826,11 +859,11 @@ void MFMASmallGemmOpt::applyIGLPStrategy(
   SchedGroup *SG = nullptr;
   for (unsigned I = 0; I < MFMACount * 3; ++I) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::DS, 2, PipelineSyncID, DAG, TII);
+        SchedGroupMask::DS, 2, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 }
@@ -861,13 +894,47 @@ void DemoOpt::applyIGLPStrategy(
 
   const unsigned PipelineSyncID = 0;
   SchedGroup *SG = nullptr;
-  for (unsigned I = 0; I < MFMACount * 3; ++I) {
+
+  // The SU is a successor of SU in prev SchedGroup
+  InstructionRuleType Rule1 =
+      [](const SUnit *SU, ArrayRef<SUnit *> Collection, const SIInstrInfo *TII,
+         SmallVectorImpl<SchedGroup> &SyncPipe, unsigned SGID) {
+        auto MI = SU->getInstr();
+        if (MI->getOpcode() == TargetOpcode::BUNDLE)
+          return false;
+
+        SchedGroup *OtherGroup = nullptr;
+        for (auto &PipeSG : SyncPipe) {
+          if (PipeSG.getSGID() == (int)SGID - 1) {
+            OtherGroup = &PipeSG;
+          }
+        }
+
+        if (!OtherGroup)
+          return false;
+
+        return (std::any_of(OtherGroup->Collection.begin(),
+                            OtherGroup->Collection.end(), [&SU](SUnit *Elt) {
+                              return std::any_of(Elt->Succs.begin(),
+                                                 Elt->Succs.end(),
+                                                 [&SU](SDep &Succ) {
+                                                   return Succ.getSUnit() == SU;
+                                                 });
+                            }));
+      };
+
+  SmallVector<InstructionRuleType, 4> DemoRules;
+  DemoRules.push_back(Rule1);
+
+  // Each iteration of pipeline has 1 MFMA and 1 DS_W, where the DS_W is a
+  // successor of the MFMA
+  for (unsigned I = 0; I < MFMACount; ++I) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
+        SchedGroupMask::MFMA, 1, std::nullopt, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::DS, 2, PipelineSyncID, DAG, TII);
+        SchedGroupMask::DS_WRITE, 1, DemoRules, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 }
@@ -879,7 +946,7 @@ createIGLPStrategy(IGLPStrategyID ID, ScheduleDAGInstrs *DAG,
   case MFMASmallGemmOptID:
     return std::make_unique<MFMASmallGemmOpt>(DAG, TII);
   case DemoOptID:
-    return std::make_unique<MFMASmallGemmOpt>(DAG, TII);
+    return std::make_unique<DemoOpt>(DAG, TII);
   }
 
   llvm_unreachable("Unknown IGLPStrategyID");
@@ -1150,7 +1217,7 @@ void IGroupLPDAGMutation::addSchedBarrierEdges(SUnit &SchedBarrier) {
   resetEdges(SchedBarrier, DAG);
   auto InvertedMask =
       invertSchedBarrierMask((SchedGroupMask)MI.getOperand(0).getImm());
-  SchedGroup SG(InvertedMask, std::nullopt, DAG, TII);
+  SchedGroup SG(InvertedMask, std::nullopt, std::nullopt, DAG, TII);
   SG.initSchedGroup();
   // Preserve original instruction ordering relative to the SCHED_BARRIER.
   SG.link(
@@ -1205,8 +1272,8 @@ void IGroupLPDAGMutation::initSchedGroupBarrierPipelineStage(
   int32_t Size = SGB.getOperand(1).getImm();
   int32_t SyncID = SGB.getOperand(2).getImm();
 
-  auto &SG = SyncedSchedGroups[SyncID].emplace_back((SchedGroupMask)SGMask,
-                                                    Size, SyncID, DAG, TII);
+  auto &SG = SyncedSchedGroups[SyncID].emplace_back(
+      (SchedGroupMask)SGMask, Size, std::nullopt, SyncID, DAG, TII);
 
   SG.initSchedGroup(RIter, SyncedInstrs[SG.getSyncID()]);
 }
