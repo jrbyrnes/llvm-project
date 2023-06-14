@@ -29,7 +29,7 @@ enum class GCNSchedStageID : unsigned {
   UnclusteredHighRPReschedule = 1,
   ClusteredLowOccupancyReschedule = 2,
   PreRARematerialize = 3,
-  ILPInitialSchedule = 4
+  ILPInitialSchedule = 4,
 };
 
 #ifndef NDEBUG
@@ -239,6 +239,10 @@ public:
   void schedule() override;
 
   void finalizeSchedule() override;
+
+
+  BitVector RescheduleILPRegions;
+
 };
 
 // GCNSchedStrategy applies multiple scheduling stages to a function.
@@ -330,6 +334,7 @@ public:
       : GCNSchedStage(StageID, DAG) {}
 };
 
+
 class UnclusteredHighRPStage : public GCNSchedStage {
 private:
   // Save the initial occupancy before starting this stage.
@@ -347,6 +352,7 @@ public:
   UnclusteredHighRPStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG) {}
 };
+
 
 // Retry function scheduling if we found resulting occupancy and it is
 // lower than used for other scheduling passes. This will give more freedom
@@ -406,6 +412,7 @@ public:
   ILPInitialScheduleStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG) {}
 };
+
 
 class GCNPostScheduleDAGMILive final : public ScheduleDAGMI {
 private:

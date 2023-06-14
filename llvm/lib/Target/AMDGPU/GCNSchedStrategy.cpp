@@ -47,6 +47,13 @@ static cl::opt<unsigned> ScheduleMetricBias(
 
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
+
+static cl::opt<bool>
+  BlendedILPRP("amdgpu-optimize-schedule-ilp-rp",
+                cl::Hidden,
+                cl::desc("Optimize for a blend of ILP and RP (weighted by amdgpu-schedule-metric-bias), rather than pure occupancy"),
+                cl::init(false));
+
 GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
     : GenericScheduler(C), TargetOccupancy(0), MF(nullptr),
       HasHighPressure(false) {}
@@ -1080,10 +1087,41 @@ GCNSchedStage::getScheduleMetrics(const GCNScheduleDAGMILive &DAG) {
 }
 
 bool GCNSchedStage::shouldRevertScheduling(unsigned WavesAfter) {
-  if (WavesAfter < DAG.MinOccupancy)
-    return true;
+  if (!BlendedILPRP) {
+    if (WavesAfter < DAG.MinOccupancy)
+      return true;
 
-  return false;
+    return false;
+  }
+
+  LLVM_DEBUG(
+      dbgs()
+      << "\n\t      *** In shouldRevertScheduling ***\n"
+      << "      *********** BEFORE " << StageID  << "***********\n");
+  ScheduleMetrics MBefore =
+      getScheduleMetrics(DAG.SUnits);
+  LLVM_DEBUG(
+      dbgs()
+      << "\n      *********** AFTER " << StageID << " ***********\n");
+  ScheduleMetrics MAfter = getScheduleMetrics(DAG);
+  unsigned OldMetric = MBefore.getMetric();
+  unsigned NewMetric = MAfter.getMetric();
+  unsigned WavesBefore =
+      std::min(S.getTargetOccupancy(), PressureBefore.getOccupancy(ST));
+  unsigned Profit =
+      ((WavesAfter * ScheduleMetrics::ScaleFactor) / WavesBefore *
+       ((OldMetric + ScheduleMetricBias) * ScheduleMetrics::ScaleFactor) /
+       NewMetric) /
+      ScheduleMetrics::ScaleFactor;
+  LLVM_DEBUG(dbgs() << "\tMetric before " << MBefore << "\tMetric after "
+                    << MAfter << "Profit: " << Profit << "\n");
+  bool ShouldRevert = Profit < ScheduleMetrics::ScaleFactor;
+
+  if (ShouldRevert && WavesAfter < WavesBefore) {
+    for (int i = 0; i < RegionIdx; i++) {
+      DAG.RescheduleILPRegions[i] = 1;
+    }
+  }
 }
 
 bool OccInitialScheduleStage::shouldRevertScheduling(unsigned WavesAfter) {
