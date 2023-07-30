@@ -71,7 +71,7 @@ static cl::opt<bool> UseMul24Intrin(
   "amdgpu-codegenprepare-mul24",
   cl::desc("Introduce mul24 intrinsics in AMDGPUCodeGenPrepare"),
   cl::ReallyHidden,
-  cl::init(true));
+  cl::init(false));
 
 // Legalize 64-bit division by using the generic IR expansion.
 static cl::opt<bool> ExpandDiv64InIR(

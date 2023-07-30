@@ -75,6 +75,11 @@ static cl::opt<size_t> InlineMaxBB(
     cl::desc("Maximum number of BBs allowed in a function after inlining"
              " (compile time constraint)"));
 
+static cl::opt<bool> Vectord8Bit(
+  "amdgpu-padded-eight-vectorization", cl::Hidden, cl::init(true),
+  cl::desc("Whether or not to account for 8 bit in vectorization cost model"));
+
+
 static bool dependsOnLocalPhi(const Loop *L, const Value *Cond,
                               unsigned Depth = 0) {
   const Instruction *I = dyn_cast<Instruction>(Cond);
@@ -334,10 +339,11 @@ unsigned GCNTTIImpl::getMinVectorRegisterBitWidth() const {
   return 32;
 }
 
+
 unsigned GCNTTIImpl::getMaximumVF(unsigned ElemWidth, unsigned Opcode) const {
   if (Opcode == Instruction::Load || Opcode == Instruction::Store)
     return 32 * 4 / ElemWidth;
-  return (ElemWidth == 16 && ST->has16BitInsts()) ? 2
+  return (((Vectord8Bit && ElemWidth == 8) || ElemWidth == 16)) && ST->has16BitInsts() ? 2
        : (ElemWidth == 32 && ST->hasPackedFP32Ops()) ? 2
        : 1;
 }
@@ -525,6 +531,11 @@ bool GCNTTIImpl::getTgtMemIntrinsic(IntrinsicInst *Inst,
   }
 }
 
+
+static bool fitsInto16Bit(MVT VT) {
+  return (Vectord8Bit && VT == MVT::i8) || VT == MVT::i16;
+}
+
 InstructionCost GCNTTIImpl::getArithmeticInstrCost(
     unsigned Opcode, Type *Ty, TTI::TargetCostKind CostKind,
     TTI::OperandValueInfo Op1Info, TTI::OperandValueInfo Op2Info,
@@ -549,7 +560,7 @@ InstructionCost GCNTTIImpl::getArithmeticInstrCost(
     if (SLT == MVT::i64)
       return get64BitInstrCost(CostKind) * LT.first * NElts;
 
-    if (ST->has16BitInsts() && SLT == MVT::i16)
+    if (ST->has16BitInsts() && fitsInto16Bit(SLT))
       NElts = (NElts + 1) / 2;
 
     // i32
@@ -558,28 +569,43 @@ InstructionCost GCNTTIImpl::getArithmeticInstrCost(
   case ISD::SUB:
   case ISD::AND:
   case ISD::OR:
-  case ISD::XOR:
+  case ISD::XOR: {
+    //errs() << "Opcode == ADD\n";
     if (SLT == MVT::i64) {
       // and, or and xor are typically split into 2 VALU instructions.
       return 2 * getFullRateInstrCost() * LT.first * NElts;
     }
 
-    if (ST->has16BitInsts() && SLT == MVT::i16)
+    if (ST->has16BitInsts() && fitsInto16Bit(SLT))
+      NElts = (NElts + 1) / 2;
+    
+    if (SLT == MVT::i8 && ST->has16BitInsts())
       NElts = (NElts + 1) / 2;
 
     return LT.first * NElts * getFullRateInstrCost();
+  }
   case ISD::MUL: {
+    //errs() << "Opcode == MUL\n";
+    //errs() << "NElts: " << NElts << "\n";
     const int QuarterRateCost = getQuarterRateInstrCost(CostKind);
+    //errs() << "QuarterRateCost: " << QuarterRateCost << "\n";
+    //errs() << "LT.first " << LT.first << "\n";
+    //errs() << "MVT "; LT.second.dump();
     if (SLT == MVT::i64) {
       const int FullRateCost = getFullRateInstrCost();
-      return (4 * QuarterRateCost + (2 * 2) * FullRateCost) * LT.first * NElts;
+      return (4 * QuarterRateCost + (2 * 2) * FullRateCost) * NElts;
     }
 
-    if (ST->has16BitInsts() && SLT == MVT::i16)
+    if (ST->has16BitInsts() && fitsInto16Bit(SLT)) {
+      NElts = (NElts + 1) / 2;
+      //errs() << "Changed NElts to " << NElts << "\n";
+    }
+
+    if (SLT == MVT::i8 && ST->has16BitInsts())
       NElts = (NElts + 1) / 2;
 
     // i32
-    return QuarterRateCost * NElts * LT.first;
+    return LT.first * QuarterRateCost * NElts;
   }
   case ISD::FMUL:
     // Check possible fuse {fadd|fsub}(a,fmul(b,c)) and return zero cost for
@@ -773,17 +799,25 @@ InstructionCost
 GCNTTIImpl::getArithmeticReductionCost(unsigned Opcode, VectorType *Ty,
                                        std::optional<FastMathFlags> FMF,
                                        TTI::TargetCostKind CostKind) {
+  // MFMA?
+  //errs() << "IN GCN getred, Ty: "; Ty->dump();
+  //if (Opcode == Instruction::Add)  return 0;
   if (TTI::requiresOrderedReduction(FMF))
     return BaseT::getArithmeticReductionCost(Opcode, Ty, FMF, CostKind);
 
   EVT OrigTy = TLI->getValueType(DL, Ty);
+  //errs() << "OrigTy: "; OrigTy.dump();
 
   // Computes cost on targets that have packed math instructions(which support
   // 16-bit types only).
-  if (!ST->hasVOP3PInsts() || OrigTy.getScalarSizeInBits() != 16)
+  if (!ST->hasVOP3PInsts() || (OrigTy.getScalarSizeInBits() != 16 && OrigTy.getScalarSizeInBits() != 8))
     return BaseT::getArithmeticReductionCost(Opcode, Ty, FMF, CostKind);
 
   std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(Ty);
+  //errs() << "Lt.first " << LT.first << "\n";
+  //errs() << "FullRateInstrCost " << getFullRateInstrCost() << "\n";
+  if (OrigTy.getScalarSizeInBits() == 8) 
+    LT.first /= 16;
   return LT.first * getFullRateInstrCost();
 }
 
@@ -806,16 +840,17 @@ InstructionCost GCNTTIImpl::getVectorInstrCost(unsigned Opcode, Type *ValTy,
                                                TTI::TargetCostKind CostKind,
                                                unsigned Index, Value *Op0,
                                                Value *Op1) {
+  //errs() << "Get VectrInstCost\n";
   switch (Opcode) {
   case Instruction::ExtractElement:
   case Instruction::InsertElement: {
     unsigned EltSize
       = DL.getTypeSizeInBits(cast<VectorType>(ValTy)->getElementType());
     if (EltSize < 32) {
-      if (EltSize == 16 && Index == 0 && ST->has16BitInsts())
+      if (((EltSize == 16 && Index == 0) || EltSize == 8) && ST->has16BitInsts())
         return 0;
-      return BaseT::getVectorInstrCost(Opcode, ValTy, CostKind, Index, Op0,
-                                       Op1);
+      return (BaseT::getVectorInstrCost(Opcode, ValTy, CostKind, Index, Op0,
+                                       Op1) + EltSize - 1) / EltSize;
     }
 
     // Extracts are just reads of a subregister, so are free. Inserts are
@@ -1329,4 +1364,17 @@ GCNTTIImpl::getTypeLegalizationCost(Type *Ty) const {
 
   Cost.first += (Size + 255) / 256;
   return Cost;
+}
+
+
+bool GCNTTIImpl::shouldExpandReduction(const IntrinsicInst *II) const { 
+  if (II->getIntrinsicID() == Intrinsic::vector_reduce_add) {
+    auto Src = II->getOperand(0);
+    //errs() << "Found Src: "; Src->dump();
+    if (auto SrcI = dyn_cast<Instruction>(Src)) {
+      // Reduce add of mul vectors can be directly lowered into dot
+      return SrcI->getOpcode() != Instruction::Mul || !ST->has16BitInsts();
+    }
+  }
+  return true; 
 }

@@ -1164,6 +1164,11 @@ public:
            !VectorizableTree.front()->UserTreeIndices.empty();
   }
 
+  std::optional<Type *> getTreeExtFromType() {
+    if (!VectorizableTree.size()) return std::nullopt;
+    return VectorizableTree[0].get()->getExtFromType();
+  }
+
   /// Return the scalars of the root node.
   ArrayRef<Value *> getRootNodeScalars() const {
     assert(!VectorizableTree.empty() && "No graph to get the first node from");
@@ -2645,6 +2650,10 @@ private:
     /// have multiple users so the data structure is not truly a tree.
     SmallVector<EdgeInfo, 1> UserTreeIndices;
 
+    /// If this TreeEntry follows a TreeEntry of SExt / ZExt, then this contains
+    /// the type extended from. Useful for cost modeling.
+    std::optional<Type *> ExtFromType;
+
     /// The index of this treeEntry in VectorizableTree.
     int Idx = -1;
 
@@ -2755,6 +2764,10 @@ private:
 
     unsigned getAltOpcode() const {
       return AltOp ? AltOp->getOpcode() : 0;
+    }
+
+    std::optional<Type *> getExtFromType() const {
+      return ExtFromType;
     }
 
     /// When ReuseReorderShuffleIndices is empty it just returns position of \p
@@ -2870,6 +2883,44 @@ private:
            "Need to vectorize gather entry?");
     VectorizableTree.push_back(std::make_unique<TreeEntry>(VectorizableTree));
     TreeEntry *Last = VectorizableTree.back().get();
+
+    std::optional<Type *> ExtFromType;
+     bool MisMatch = false;
+    for (auto Val : VL) {
+      auto I = dyn_cast<Instruction>(Val);
+      if (!I) {
+        MisMatch = true;
+        break;
+      }
+
+      if (I->getOpcode() != Instruction::ZExt && I->getOpcode() != Instruction::SExt) {
+        MisMatch = true;
+        break;
+      }
+
+      //errs() << "Found an ext:\n"; I->dump(); I->getOperand(0)->dump();
+
+      auto FromT = I->getOperand(0)->getType();
+      if (!ExtFromType) {
+        ExtFromType = FromT;
+        continue;
+      }
+
+      if (*ExtFromType != FromT) {
+        MisMatch = true;
+        break;
+      }
+    }
+
+    if (!MisMatch) {
+      //errs() << "Found ExtFromType: "; ExtFromType.value()->dump();
+      Last->ExtFromType = ExtFromType;
+      for (size_t I = 0; I < VectorizableTree.size() - 1; I++) {
+        auto TempTree = VectorizableTree[I].get();
+        TempTree->ExtFromType = ExtFromType;
+      }
+    }
+
     Last->Idx = VectorizableTree.size() - 1;
     Last->State = EntryState;
     Last->ReuseShuffleIndices.append(ReuseShuffleIndices.begin(),
@@ -7835,7 +7886,7 @@ BoUpSLP::getEntryCost(const TreeEntry *E, ArrayRef<Value *> VectorizedVals,
       unsigned OpIdx = isa<UnaryOperator>(VL0) ? 0 : 1;
       TTI::OperandValueInfo Op1Info = getOperandInfo(VL, 0);
       TTI::OperandValueInfo Op2Info = getOperandInfo(VL, OpIdx);
-      return TTI->getArithmeticInstrCost(ShuffleOrOp, VecTy, CostKind, Op1Info,
+      return TTI->getArithmeticInstrCost(ShuffleOrOp, E->getExtFromType().has_value() ? FixedVectorType::get(E->getExtFromType().value(), VecTy->getNumElements()) : VecTy, CostKind, Op1Info,
                                          Op2Info) +
              CommonCost;
     };
@@ -13651,8 +13702,9 @@ public:
 
         // Estimate cost.
         InstructionCost TreeCost = V.getTreeCost(VL);
+        auto ExtFromType = V.getTreeExtFromType();
         InstructionCost ReductionCost =
-            getReductionCost(TTI, VL, IsCmpSelMinMax, ReduxWidth, RdxFMF);
+            getReductionCost(TTI, VL, IsCmpSelMinMax, ReduxWidth, RdxFMF, ExtFromType);
         InstructionCost Cost = TreeCost + ReductionCost;
         LLVM_DEBUG(dbgs() << "SLP: Found cost = " << Cost << " for reduction\n");
         if (!Cost.isValid())
@@ -13889,10 +13941,10 @@ private:
   InstructionCost getReductionCost(TargetTransformInfo *TTI,
                                    ArrayRef<Value *> ReducedVals,
                                    bool IsCmpSelMinMax, unsigned ReduxWidth,
-                                   FastMathFlags FMF) {
+                                   FastMathFlags FMF, std::optional<Type *> ExtFromType) {
     TTI::TargetCostKind CostKind = TTI::TCK_RecipThroughput;
     Value *FirstReducedVal = ReducedVals.front();
-    Type *ScalarTy = FirstReducedVal->getType();
+    Type *ScalarTy = ExtFromType.has_value() ? *ExtFromType : FirstReducedVal->getType();
     FixedVectorType *VectorTy = FixedVectorType::get(ScalarTy, ReduxWidth);
     InstructionCost VectorCost = 0, ScalarCost;
     // If all of the reduced values are constant, the vector cost is 0, since

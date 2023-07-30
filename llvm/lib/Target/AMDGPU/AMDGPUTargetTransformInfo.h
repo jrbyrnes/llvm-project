@@ -254,6 +254,7 @@ public:
   InstructionCost getMinMaxReductionCost(Intrinsic::ID IID, VectorType *Ty,
                                          FastMathFlags FMF,
                                          TTI::TargetCostKind CostKind);
+  bool shouldExpandReduction(const IntrinsicInst *II) const;
 };
 
 } // end namespace llvm
