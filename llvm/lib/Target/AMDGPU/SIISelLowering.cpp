@@ -10429,14 +10429,35 @@ calculateSrcByte(const SDValue Op, uint64_t DestByte, uint64_t SrcIndex = 0,
     return std::nullopt;
 
   auto ValueSize = Op.getValueSizeInBits();
-  if (ValueSize != 8 && ValueSize != 16 && ValueSize != 32)
+  if (ValueSize != 8 && ValueSize != 16 && ValueSize != 32) {
     return std::nullopt;
+  }
 
   switch (Op->getOpcode()) {
   case ISD::TRUNCATE: {
     return calculateSrcByte(Op->getOperand(0), DestByte, SrcIndex, Depth + 1);
   }
 
+  case ISD::ANY_EXTEND:
+  case ISD::SIGN_EXTEND:
+  case ISD::ZERO_EXTEND:
+  case ISD::SIGN_EXTEND_INREG: {
+    SDValue NarrowOp = Op->getOperand(0);
+    auto NarrowVT = NarrowOp.getValueType();
+    if (Op->getOpcode() == ISD::SIGN_EXTEND_INREG) {
+      auto *VTSign = cast<VTSDNode>(Op->getOperand(1));
+      NarrowVT = VTSign->getVT();
+    }
+    if (!NarrowVT.isByteSized())
+      return std::nullopt;
+    uint64_t NarrowByteWidth = NarrowVT.getSizeInBits() / 8;
+
+    if (SrcIndex >= NarrowByteWidth)
+      return std::nullopt;
+    return calculateSrcByte(Op->getOperand(0), DestByte, SrcIndex, Depth + 1);
+  }
+
+  case ISD::SRA:
   case ISD::SRL: {
     auto ShiftOp = dyn_cast<ConstantSDNode>(Op->getOperand(1));
     if (!ShiftOp)
@@ -10476,7 +10497,8 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
   unsigned BitWidth = Op.getScalarValueSizeInBits();
   if (BitWidth % 8 != 0)
     return std::nullopt;
-  assert(Index < BitWidth / 8 && "invalid index requested");
+  if (Index > BitWidth / 8 - 1)
+    return std::nullopt;
 
   switch (Op.getOpcode()) {
   case ISD::OR: {
@@ -10519,6 +10541,7 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
     return calculateSrcByte(Op->getOperand(0), StartingIndex, Index);
   }
 
+  case ISD::SRA:
   case ISD::SRL: {
     auto ShiftOp = dyn_cast<ConstantSDNode>(Op->getOperand(1));
     if (!ShiftOp)
@@ -10565,9 +10588,14 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
   }
   case ISD::ANY_EXTEND:
   case ISD::SIGN_EXTEND:
-  case ISD::ZERO_EXTEND: {
+  case ISD::ZERO_EXTEND:
+  case ISD::SIGN_EXTEND_INREG: {
     SDValue NarrowOp = Op->getOperand(0);
-    unsigned NarrowBitWidth = NarrowOp.getScalarValueSizeInBits();
+    unsigned NarrowBitWidth = NarrowOp.getValueSizeInBits();
+    if (Op->getOpcode() == ISD::SIGN_EXTEND_INREG) {
+      auto *VTSign = cast<VTSDNode>(Op->getOperand(1));
+      NarrowBitWidth = VTSign->getVT().getSizeInBits();
+    }
     if (NarrowBitWidth % 8 != 0)
       return std::nullopt;
     uint64_t NarrowByteWidth = NarrowBitWidth / 8;
@@ -10632,6 +10660,20 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
   case ISD::BSWAP:
     return calculateByteProvider(Op->getOperand(0), BitWidth / 8 - Index - 1,
                                  Depth + 1, StartingIndex);
+
+  case ISD::EXTRACT_VECTOR_ELT: {
+    auto VecIdx = dyn_cast<ConstantSDNode>(Op->getOperand(1))->getZExtValue();
+    auto ScalarSize = Op.getScalarValueSizeInBits();
+    if (ScalarSize != 32) {
+      if ((VecIdx + 1) * ScalarSize > 32)
+        return std::nullopt;
+      Index = ScalarSize == 8 ? VecIdx : VecIdx * 2 + Index;
+    }
+
+    return calculateSrcByte(ScalarSize == 32 ? Op : Op.getOperand(0),
+                            StartingIndex, Index);
+  }
+
   default: {
     return std::nullopt;
   }
@@ -10871,7 +10913,7 @@ SDValue SITargetLowering::performOrCombine(SDNode *N,
                                               : *PermNodes[FirstSrc].Src;
 
       // Check that we are not just extracting the bytes in order from an op
-      if (Op == OtherOp) {
+      if (Op == OtherOp && Op.getValueSizeInBits() == 32) {
         int Low16 = PermMask & 0xffff;
         int Hi16 = (PermMask & 0xffff0000) >> 16;
 
@@ -10879,14 +10921,24 @@ SDValue SITargetLowering::performOrCombine(SDNode *N,
         bool WellFormedHi = (Hi16 == 0x0706) || (Hi16 == 0x0302);
 
         // The perm op would really just produce Op. So combine into Op
-        if (WellFormedLow && WellFormedHi)
-          return Op;
+        if (WellFormedLow && WellFormedHi) {
+          return Op.getValueType().isVector()
+                     ? DAG.getBitcast(MVT::getIntegerVT(32), Op)
+                     : Op;
+        }
       }
-
       if (hasNon16BitAccesses(PermMask, Op, OtherOp)) {
         SDLoc DL(N);
         assert(Op.getValueType().isByteSized() &&
                OtherOp.getValueType().isByteSized());
+        if (Op.getValueType().isVector()) {
+          Op = DAG.getBitcast(MVT::getIntegerVT(Op.getValueSizeInBits()), Op);
+        }
+        if (OtherOp.getValueType().isVector()) {
+          OtherOp = DAG.getBitcast(
+              MVT::getIntegerVT(OtherOp.getValueSizeInBits()), OtherOp);
+        }
+
         if (Op.getValueSizeInBits() < 32)
           // If the ultimate src is less than 32 bits, then we will only be
           // using bytes 0: Op.getValueSizeInBytes() - 1 in the or.
@@ -10896,7 +10948,7 @@ SDValue SITargetLowering::performOrCombine(SDNode *N,
           Op = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, Op);
 
         if (OtherOp.getValueSizeInBits() < 32)
-          OtherOp = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, Op);
+          OtherOp = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, OtherOp);
 
         return DAG.getNode(AMDGPUISD::PERM, DL, MVT::i32, Op, OtherOp,
                            DAG.getConstant(PermMask, DL, MVT::i32));
@@ -12229,6 +12281,50 @@ SDValue SITargetLowering::tryFoldToMad64_32(SDNode *N,
   return Accum;
 }
 
+// Collect the ultimate src of each of the mul24 node's operands, and confirm
+// each operand is 8 bytes.
+static std::optional<ByteProvider<SDValue>>
+handleMulOperand(const SDValue &MulOperand) {
+  auto Byte0 = calculateByteProvider(MulOperand, 0, 0);
+  if (!Byte0.has_value() || Byte0->isConstantZero()) {
+    return std::nullopt;
+  }
+  auto Byte1 = calculateByteProvider(MulOperand, 1, 0);
+  if (Byte1.has_value() && !Byte1->isConstantZero()) {
+    return std::nullopt;
+  }
+  return Byte0;
+}
+
+static bool matchChain(ByteProvider<SDValue> &Src0, ByteProvider<SDValue> &Src1,
+                       SmallVector<ByteProvider<SDValue>, 4> &Src0s,
+                       SmallVector<ByteProvider<SDValue>, 4> &Src1s) {
+  assert(Src0.Src.has_value() && Src1.Src.has_value());
+  bool Placed = false;
+  int Prev = -1;
+  for (auto &BP : {Src0, Src1}) {
+    for (int I = 0; I < 2; I++) {
+      // Operands from mul24 cannot provide for the same src chain
+      if (I == Prev)
+        continue;
+      SmallVector<ByteProvider<SDValue>, 4> &Srcs = I == 0 ? Src0s : Src1s;
+      // Matches chain if it is using the next least significant byte of the
+      // same src
+      if (*BP.Src == Srcs[0].Src &&
+          (BP.SrcOffset == (Srcs[Srcs.size() - 1].SrcOffset - 1))) {
+        Srcs.push_back(BP);
+        // We have provided for both chains
+        if (Prev != -1) {
+          Placed = true;
+          break;
+        }
+        Prev = I;
+      }
+    }
+  }
+  return Placed;
+}
+
 SDValue SITargetLowering::performAddCombine(SDNode *N,
                                             DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
@@ -12242,16 +12338,182 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       if (SDValue Folded = tryFoldToMad64_32(N, DCI))
         return Folded;
     }
-
-    return SDValue();
   }
 
   if (SDValue V = reassociateScalarOps(N, DAG)) {
     return V;
   }
 
-  if (VT != MVT::i32 || !DCI.isAfterLegalizeDAG())
+  // v_dot4 combining
+  auto ST = getSubtarget();
+  if ((LHS.getOpcode() == AMDGPUISD::MUL_I24 ||
+       LHS.getOpcode() == AMDGPUISD::MUL_U24 || LHS.getOpcode() == ISD::MUL ||
+       RHS.getOpcode() == AMDGPUISD::MUL_I24 ||
+       RHS.getOpcode() == AMDGPUISD::MUL_U24 || RHS.getOpcode() == ISD::MUL) &&
+      ST->hasMad64_32()) {
+    auto TempNode = SDValue(N, 0);
+    auto MulIdx =
+        (LHS.getOpcode() == AMDGPUISD::MUL_I24 ||
+         LHS.getOpcode() == AMDGPUISD::MUL_U24 || LHS.getOpcode() == ISD::MUL)
+            ? 0
+            : 1;
+    auto MulOpcode = TempNode.getOperand(MulIdx).getOpcode();
+    bool IsSigned = MulOpcode == AMDGPUISD::MUL_I24 || (MulOpcode == ISD::MUL && TempNode->getOperand(MulIdx)->getFlags().hasNoSignedWrap() && !TempNode->getOperand(MulIdx)->getFlags().hasNoUnsignedWrap());
+    SmallVector<ByteProvider<SDValue>, 4> Src0s;
+    SmallVector<ByteProvider<SDValue>, 4> Src1s;
+    SmallVector<SDValue, 4> Src2s;
+
+    // Match the v_dot4 tree, while collecting src nodes.
+    for (int I = 0; I < 4; I++) {
+      if (LHS.getOpcode() != MulOpcode && RHS.getOpcode() != MulOpcode)
+        break;
+      auto MulIdx = LHS.getOpcode() == MulOpcode ? 0 : 1;
+      auto Src0 = handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(0));
+      if (!Src0.has_value())
+        break;
+      auto Src1 = handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(1));
+      if (!Src1.has_value())
+        break;
+      if (I == 0) {
+        assert(Src0->Src.has_value() && Src1->Src.has_value());
+        Src0s.push_back(*Src0);
+        Src1s.push_back(*Src1);
+      } else if (!matchChain(*Src0, *Src1, Src0s, Src1s))
+        break;
+      auto AddIdx = 1 - MulIdx;
+      // Allow the special case where add (add (mul24, 0), mul24) became ->
+      // add (mul24, mul24)
+      if (I == 2 && (TempNode->getOperand(AddIdx).getOpcode() == MulOpcode)) {
+        Src2s.push_back(TempNode->getOperand(AddIdx));
+        auto Src0 =
+            handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(0));
+        if (!Src0.has_value())
+          break;
+        auto Src1 =
+            handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(1));
+        if (!Src1.has_value())
+          break;
+        if (!matchChain(*Src0, *Src1, Src0s, Src1s))
+          break;
+        Src2s.push_back(DAG.getConstant(0, SL, MVT::i32));
+        break;
+      }
+
+      TempNode = TempNode->getOperand(AddIdx);
+      Src2s.push_back(TempNode);
+      if (TempNode->getNumOperands() < 2)
+        break;
+      LHS = TempNode->getOperand(0);
+      RHS = TempNode->getOperand(1);
+    }
+
+    auto ChainLength = std::min(Src0s.size(), Src1s.size());
+    if (ChainLength < 2)
+      return SDValue();
+
+    auto Src0Start = Src0s[ChainLength - 1].SrcOffset;
+    auto Src1Start = Src1s[ChainLength - 1].SrcOffset;
+
+    auto Src0 = *Src0s[0].Src;
+    auto Src1 = *Src1s[0].Src;
+    if (Src0.getValueSizeInBits() < 16 || Src1.getValueSizeInBits() < 16)
+      return SDValue();
+
+    if (Src0.getValueType().isVector())
+      Src0 = DAG.getBitcast(MVT::getIntegerVT(Src0.getValueSizeInBits()), Src0);
+
+    if (Src1.getValueType().isVector())
+      Src1 = DAG.getBitcast(MVT::getIntegerVT(Src1.getValueSizeInBits()), Src1);
+
+    if (Src0.getValueSizeInBits() > 32)
+      Src0 = DAG.getNode(ISD::TRUNCATE, SL, MVT::i32, Src0);
+
+    if (Src1.getValueSizeInBits() > 32)
+      Src1 = DAG.getNode(ISD::TRUNCATE, SL, MVT::i32, Src1);
+
+    if (ChainLength < 4) {
+      // TODO -- combine well formed 2 x v2i8 Src0/1s into a single v_dot4
+      assert((Src0.getValueSizeInBits() == 32 &&
+              Src1.getValueSizeInBits() == 32) ||
+             ChainLength == 2);
+      if (Src0.getValueSizeInBits() == 32) {
+        assert(Src0Start + ChainLength < 5);
+        auto BitMask = ChainLength == 2
+                           ? (0x0c0c0000 + 0x0100 + 0x0101 * Src0Start)
+                           : (0x0c000000 + 0x020100 + 0x010101 * Src0Start);
+        Src0 = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Src0, Src0,
+                           DAG.getConstant(BitMask, SL, MVT::i32));
+      }
+      if (Src1.getValueSizeInBits() == 32) {
+        assert(Src1Start + ChainLength < 5);
+        auto BitMask = ChainLength == 2
+                           ? (0x0c0c0000 + 0x0100 + 0x0101 * Src1Start)
+                           : (0x0c000000 + 0x020100 + 0x010101 * Src1Start);
+
+        Src1 = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Src1, Src1,
+                           DAG.getConstant(BitMask, SL, MVT::i32));
+      }
+    }
+
+    if (Src0.getValueSizeInBits() == 16)
+      Src0 = DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src0);
+
+    if (Src1.getValueSizeInBits() == 16)
+      Src1 = DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src1);
+
+    SDValue Src2 = Src2s[ChainLength - 1];
+
+    if (Src2.getValueType().isVector())
+      Src2 = DAG.getBitcast(MVT::getIntegerVT(Src2.getValueSizeInBits()), Src2);
+
+    if (Src2.getValueSizeInBits() < 32) {
+      Src2 = IsSigned
+                 ? DAG.getNode(ISD::SIGN_EXTEND, SL, MVT::i32, Src2)
+                 : DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src2);
+    }
+
+    std::optional<unsigned> Opcode;
+    if (ST->getGeneration() == AMDGPUSubtarget::GFX11) {
+      Opcode = IsSigned ? AMDGPU::V_DOT4_I32_IU8_gfx11
+                                               : AMDGPU::V_DOT4_U32_U8_gfx11;
+    }
+    if (ST->getGeneration() == AMDGPUSubtarget::GFX10) {
+      Opcode = IsSigned ? AMDGPU::V_DOT4_I32_I8_gfx10
+                                               : AMDGPU::V_DOT4_U32_U8_gfx10;
+    }
+
+    if (ST->getGeneration() == AMDGPUSubtarget::GFX9) {
+      Opcode = IsSigned ? AMDGPU::V_DOT4_I32_I8
+                                               : AMDGPU::V_DOT4_U32_U8;
+    }
+
+    if (!Opcode.has_value())
+      return SDValue();
+
+    SmallVector<SDValue, 12> Ops = {DAG.getTargetConstant(8, SL, MVT::i32),
+                                    Src0,
+                                    DAG.getTargetConstant(8, SL, MVT::i32),
+                                    Src1,
+                                    DAG.getTargetConstant(8, SL, MVT::i32),
+                                    Src2,
+                                    DAG.getTargetConstant(0, SL, MVT::i1),
+                                    DAG.getTargetConstant(0, SL, MVT::i1),
+                                    DAG.getTargetConstant(0, SL, MVT::i1),
+                                    DAG.getTargetConstant(0, SL, MVT::i1),
+                                    DAG.getTargetConstant(0, SL, MVT::i1)};
+    SmallVector<EVT, 1> VTList = {MVT::i32};
+    auto Dot = SDValue(DAG.getMachineNode(*Opcode, SL, VTList, Ops), 0);
+
+    if (VT != MVT::i32) {
+      return MulOpcode == AMDGPUISD::MUL_U24 ? DAG.getZExtOrTrunc(Dot, SL, VT)
+                                             : DAG.getSExtOrTrunc(Dot, SL, VT);
+    }
+    return Dot;
+  }
+
+  if (VT != MVT::i32 || !DCI.isAfterLegalizeDAG()) {
     return SDValue();
+  }
 
   // add x, zext (setcc) => uaddo_carry x, 0, setcc
   // add x, sext (setcc) => usubo_carry x, 0, setcc
