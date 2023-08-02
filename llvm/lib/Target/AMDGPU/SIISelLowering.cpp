@@ -12362,6 +12362,7 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
     SmallVector<ByteProvider<SDValue>, 4> Src0s;
     SmallVector<ByteProvider<SDValue>, 4> Src1s;
     SmallVector<SDValue, 4> Src2s;
+    SmallVector<SmallVector<ByteProvider<SDValue>, 2>, 4> Srcs;
 
     // Match the v_dot4 tree, while collecting src nodes.
     for (int I = 0; I < 4; I++) {
@@ -12374,12 +12375,18 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       auto Src1 = handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(1));
       if (!Src1.has_value())
         break;
+      //Srcs.push_back({*Src0, *Src1});
+      Src0s.push_back(*Src0);
+      Src1s.push_back(*Src1);
+      /*
       if (I == 0) {
         assert(Src0->Src.has_value() && Src1->Src.has_value());
+        Srcs.push_back({*Src0, *Src1});
         Src0s.push_back(*Src0);
         Src1s.push_back(*Src1);
       } else if (!matchChain(*Src0, *Src1, Src0s, Src1s))
         break;
+      */
       auto AddIdx = 1 - MulIdx;
       // Allow the special case where add (add (mul24, 0), mul24) became ->
       // add (mul24, mul24)
@@ -12393,8 +12400,9 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
             handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(1));
         if (!Src1.has_value())
           break;
-        if (!matchChain(*Src0, *Src1, Src0s, Src1s))
-          break;
+        //Srcs.push_back({*Src0, *Src1});
+        Src0s.push_back(*Src0);
+        Src1s.push_back(*Src1);
         Src2s.push_back(DAG.getConstant(0, SL, MVT::i32));
         break;
       }
@@ -12411,8 +12419,64 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
     if (ChainLength < 2)
       return SDValue();
 
+    unsigned PermMask = 0x0c0c0000 + Src0s[0].SrcOffset + 0x0400 + Src0s[1].SrcOffset;
+    auto Src00 = *Src0s[0].Src;
+    auto Src01 = *Src0s[1].Src;
+    if (Src00.getValueType().isVector())
+      Src00 = DAG.getBitcast(MVT::getIntegerVT(Src00.getValueSizeInBits()), Src00);
+    
+    if (Src01.getValueType().isVector())
+      Src01 = DAG.getBitcast(MVT::getIntegerVT(Src01.getValueSizeInBits()), Src01);
+
+    Src00 = DAG.getZExtOrTrunc(Src00, SL, MVT::i32);
+    Src01 = DAG.getZExtOrTrunc(Src01, SL, MVT::i32);
+    auto Permd = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Src00, Src01,
+                                    DAG.getConstant(PermMask, SL, MVT::i32));
+    
+    for (int I = 2; I < ChainLength; I++) {
+      auto NewSrc = *Src0s[I].Src;
+      if (NewSrc.getValueType().isVector())
+        NewSrc = DAG.getBitcast(MVT::getIntegerVT(NewSrc.getValueSizeInBits()), NewSrc);
+      NewSrc = DAG.getZExtOrTrunc(NewSrc, SL, MVT::i32);
+      
+      auto PermMask = I == 2 ? 0x0C000504 : 0x00060504;
+      PermMask += Src0s[I].SrcOffset  << (I * 8);
+      Permd = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Permd, NewSrc, DAG.getConstant(PermMask, SL, MVT::i32));
+    }
+    auto Src0 = Permd;
+
+
+    PermMask = 0x0c0c0000 + Src1s[0].SrcOffset + 0x0400 + Src1s[1].SrcOffset;
+    auto Src10 = *Src1s[0].Src;
+    auto Src11 = *Src1s[1].Src;
+    if (Src10.getValueType().isVector())
+      Src00 = DAG.getBitcast(MVT::getIntegerVT(Src10.getValueSizeInBits()), Src10);
+    
+    if (Src01.getValueType().isVector())
+      Src11 = DAG.getBitcast(MVT::getIntegerVT(Src11.getValueSizeInBits()), Src11);
+
+    Src10 = DAG.getZExtOrTrunc(Src10, SL, MVT::i32);
+    Src11 = DAG.getZExtOrTrunc(Src11, SL, MVT::i32);
+    Permd = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Src10, Src11,
+                                    DAG.getConstant(PermMask, SL, MVT::i32));
+    
+    for (int I = 2; I < ChainLength; I++) {
+      auto NewSrc = *Src1s[I].Src;
+      if (NewSrc.getValueType().isVector())
+        NewSrc = DAG.getBitcast(MVT::getIntegerVT(NewSrc.getValueSizeInBits()), NewSrc);
+      NewSrc = DAG.getZExtOrTrunc(NewSrc, SL, MVT::i32);
+      
+      auto PermMask = I == 2 ? 0x0C000504 : 0x00060504;
+      PermMask += Src1s[I].SrcOffset  << (I * 8);
+      Permd = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Permd, NewSrc, DAG.getConstant(PermMask, SL, MVT::i32));
+    }
+    auto Src1 = Permd;
+
+/*
     auto Src0Start = Src0s[ChainLength - 1].SrcOffset;
     auto Src1Start = Src1s[ChainLength - 1].SrcOffset;
+
+
 
     auto Src0 = *Src0s[0].Src;
     auto Src1 = *Src1s[0].Src;
@@ -12460,7 +12524,7 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
 
     if (Src1.getValueSizeInBits() == 16)
       Src1 = DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src1);
-
+*/
     SDValue Src2 = Src2s[ChainLength - 1];
 
     if (Src2.getValueType().isVector())
