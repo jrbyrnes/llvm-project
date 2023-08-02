@@ -632,6 +632,24 @@ void MachineCopyPropagation::forwardUses(MachineInstr &MI) {
     if (!MOUse.getReg())
       continue;
 
+
+    MCRegUnit RU = *(*TRI).regunits(MOUse.getReg().asMCReg()).begin();
+    MachineInstr *AnyCopy =
+        Tracker.findCopyForUnit(RU, *TRI, /*MustBeAvailable=*/false);
+      
+    if (AnyCopy) {
+      std::optional<DestSourcePair> CopyOperands =
+        isCopyInstr(*AnyCopy, *TII, UseCopyInstr);
+      const MachineOperand &CopySrc = *CopyOperands->Source;
+      Register CopySrcReg = CopySrc.getReg();
+
+      
+      // Clear kill markers that may have been invalidated.
+      for (MachineInstr &KMI :
+           make_range(AnyCopy->getIterator(), std::next(MI.getIterator())))
+        KMI.clearRegisterKills(CopySrcReg, TRI);
+    }
+
     // Check that the register is marked 'renamable' so we know it is safe to
     // rename it without violating any constraints that aren't expressed in the
     // IR (e.g. ABI or opcode requirements).
@@ -1014,7 +1032,6 @@ void MachineCopyPropagation::BackwardCopyPropagateBlock(
           continue;
         Tracker.invalidateRegister(Reg, *TRI, *TII, UseCopyInstr);
       }
-
     propagateDefs(MI);
     for (const MachineOperand &MO : MI.operands()) {
       if (!MO.isReg())
