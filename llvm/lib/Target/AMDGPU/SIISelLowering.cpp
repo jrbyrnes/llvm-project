@@ -10589,10 +10589,12 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
   case ISD::ANY_EXTEND:
   case ISD::SIGN_EXTEND:
   case ISD::ZERO_EXTEND:
-  case ISD::SIGN_EXTEND_INREG: {
+  case ISD::SIGN_EXTEND_INREG:
+  case ISD::AssertZext:
+  case ISD::AssertSext: {
     SDValue NarrowOp = Op->getOperand(0);
     unsigned NarrowBitWidth = NarrowOp.getValueSizeInBits();
-    if (Op->getOpcode() == ISD::SIGN_EXTEND_INREG) {
+    if (Op->getOpcode() == ISD::SIGN_EXTEND_INREG || Op->getOpcode() == ISD::AssertZext || Op->getOpcode() == ISD::AssertSext) {
       auto *VTSign = cast<VTSDNode>(Op->getOperand(1));
       NarrowBitWidth = VTSign->getVT().getSizeInBits();
     }
@@ -10948,7 +10950,7 @@ SDValue SITargetLowering::performOrCombine(SDNode *N,
           Op = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, Op);
 
         if (OtherOp.getValueSizeInBits() < 32)
-          OtherOp = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, OtherOp);
+          OtherOp = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, OtherOp);
 
         return DAG.getNode(AMDGPUISD::PERM, DL, MVT::i32, Op, OtherOp,
                            DAG.getConstant(PermMask, DL, MVT::i32));
@@ -12296,35 +12298,163 @@ handleMulOperand(const SDValue &MulOperand) {
   }
   return Byte0;
 }
+static unsigned addPermMasks(unsigned First, unsigned Second) {
+  unsigned Dest = 0;
+  for (int I = 0; I < 4; I++) {
+    unsigned ByteFirst = First & (0xFF << (I * 8));
+    unsigned ByteSecond = Second & (0xFF << (I * 8));
+    unsigned C = 0x0c << (I * 8);
 
-static bool matchChain(ByteProvider<SDValue> &Src0, ByteProvider<SDValue> &Src1,
-                       SmallVector<ByteProvider<SDValue>, 4> &Src0s,
-                       SmallVector<ByteProvider<SDValue>, 4> &Src1s) {
-  assert(Src0.Src.has_value() && Src1.Src.has_value());
-  bool Placed = false;
-  int Prev = -1;
-  for (auto &BP : {Src0, Src1}) {
-    for (int I = 0; I < 2; I++) {
-      // Operands from mul24 cannot provide for the same src chain
-      if (I == Prev)
-        continue;
-      SmallVector<ByteProvider<SDValue>, 4> &Srcs = I == 0 ? Src0s : Src1s;
-      // Matches chain if it is using the next least significant byte of the
-      // same src
-      if (*BP.Src == Srcs[0].Src &&
-          (BP.SrcOffset == (Srcs[Srcs.size() - 1].SrcOffset - 1))) {
-        Srcs.push_back(BP);
-        // We have provided for both chains
-        if (Prev != -1) {
-          Placed = true;
-          break;
-        }
-        Prev = I;
-      }
+    assert(ByteFirst == C || ByteSecond == C);
+    if (ByteFirst == C && ByteSecond == C) {
+      Dest += C;
+    }
+
+    else if (ByteFirst == C) {
+      Dest += ByteSecond;
+    }
+
+    else {
+      Dest += ByteFirst;
     }
   }
-  return Placed;
+  return Dest;
+
 }
+
+static void placeSources(ByteProvider<SDValue> &Src0, ByteProvider<SDValue> &Src1,
+                       DenseMap<SDValue, unsigned> &Src0s,
+                       DenseMap<SDValue, unsigned> &Src1s, int Step) {
+  assert(Src0.Src.has_value() && Src1.Src.has_value());
+  if (Step == 0) {
+    Src0s[*Src0.Src] = (Src0.SrcOffset << 24) + 0x0c0c0c;
+    Src1s[*Src1.Src] = (Src1.SrcOffset << 24) + 0x0c0c0c;
+    return;
+  }
+
+  for (int BPI = 0; BPI < 2; BPI++) {
+    std::pair<ByteProvider<SDValue>, ByteProvider<SDValue>> BPP = {Src0, Src1};
+    if (BPI == 1) {
+      BPP = {Src1, Src0};
+    }
+    unsigned ZeroMask = 0x0c0c0c0c;
+    unsigned FMask = 0xFF << (8 * (3 - Step));
+    
+    unsigned FirstMask = BPP.first.SrcOffset << (8 * (3 - Step)) | (ZeroMask & ~FMask);
+    unsigned SecondMask = BPP.second.SrcOffset << (8 * (3 - Step)) | (ZeroMask & ~FMask);
+    // If we find Srcs already has our SDValue, do bytewise special or -- if one mask is oxc use the other, if both are oxc use oxc
+    int FirstGroup = -1;
+    for (int I = 0; I < 2; I++) {
+      DenseMap<SDValue, unsigned> &Srcs = I == 0 ? Src0s : Src1s;
+      if (Srcs.contains(*BPP.first.Src)) {
+        Srcs[*BPP.first.Src] = addPermMasks(FirstMask, Srcs[*BPP.first.Src]);
+        FirstGroup = I;
+        break;
+      }
+    }
+    if (FirstGroup != -1) {
+      DenseMap<SDValue, unsigned> &Srcs = FirstGroup == 1 ? Src0s : Src1s;
+      if (Srcs.contains(*BPP.second.Src)) {
+        Srcs[*BPP.second.Src] = addPermMasks(SecondMask, Srcs[*BPP.second.Src]);
+      }
+      else Srcs[*BPP.second.Src] = SecondMask;
+      return;
+    }
+  }
+
+  // If we have made it here, then we could not find a match in Src0s or Src1s for either Src0 or Src1,
+  // so just place them arbitrarily.
+
+  unsigned ZeroMask = 0x0c0c0c0c;
+  unsigned FMask = 0xFF << (8 * (3 - Step));
+
+  Src0s[*Src0.Src] = Src0.SrcOffset << (8 * (3 - Step)) | (ZeroMask & ~FMask);
+  Src1s[*Src1.Src] = Src1.SrcOffset << (8 * (3 - Step)) | (ZeroMask & ~FMask);
+
+  return;
+}
+
+static SDValue &convertToScalarType(SelectionDAG &DAG, SDLoc &SL, SDValue &Op, MVT ScalarType, bool IsSigned) {
+  auto Type = Op.getValueType();
+  if (Type == ScalarType)
+    return Op;
+  auto Size = Op.getValueSizeInBits();
+  
+  if (Type.isVector())
+    Op = DAG.getBitcast(MVT::getIntegerVT(Size), Op);
+
+  if (Size != ScalarType.getSizeInBits())
+    Op = IsSigned ? DAG.getSExtOrTrunc(Op, SL, ScalarType) : DAG.getZExtOrTrunc(Op, SL, ScalarType);
+
+  return Op;
+}
+
+static SDValue resolveSources(SelectionDAG &DAG, SDLoc SL,
+                       DenseMap<SDValue, unsigned> &Srcs, bool IsSigned) {
+
+  if (Srcs.size() == 1) {
+    auto Elt = Srcs.begin();
+    auto EltVal = convertToScalarType(DAG, SL, Elt->first, MVT::i32, IsSigned);
+
+    if (Elt->second == 0x3020100)
+      return EltVal;
+    
+    return DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, EltVal, EltVal,
+                                      DAG.getConstant(Elt->second, SL, MVT::i32));
+  }
+
+  auto FirstElt = Srcs.begin();
+  auto SecondElt = std::next(FirstElt);
+
+  SmallVector<SDValue, 2> Perms;
+
+  while (true) {
+    auto FirstMask = FirstElt->second;
+    auto SecondMask = SecondElt->second;
+
+    for (int I = 0; I < 4; I++) {
+      unsigned BitMask = 0xFF << (I * 8);
+      unsigned OffsetMask = 0x04 << (I * 8);
+      unsigned C = 0x0c << (I * 8);
+      if ((FirstMask & BitMask) != C) FirstMask += OffsetMask;
+    }
+
+    auto PermMask = addPermMasks(FirstMask, SecondMask);
+
+    auto FirstVal = convertToScalarType(DAG, SL, FirstElt->first, MVT::i32, IsSigned);
+    auto SecondVal = convertToScalarType(DAG, SL, SecondElt->first, MVT::i32, IsSigned);
+
+    Perms.push_back(DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, FirstVal, SecondVal,
+                                      DAG.getConstant(PermMask, SL, MVT::i32)));
+    
+    FirstElt = std::next(SecondElt);
+    if (FirstElt == Srcs.end())
+      break;
+  
+    SecondElt = std::next(FirstElt);
+    if (SecondElt == Srcs.end()) {
+      auto EltVal = convertToScalarType(DAG, SL, FirstElt->first, MVT::i32, IsSigned);
+
+      Perms.push_back(DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, EltVal, EltVal,
+                                    DAG.getConstant(FirstElt->second, SL, MVT::i32)));
+      break;
+
+    }
+  }
+
+  assert(Perms.size() > 0 && Perms.size() <= 2);
+  return Perms.size() == 2 ? DAG.getNode(ISD::OR, SL, MVT::i32, Perms[0], Perms[1]) : Perms[0];
+
+}
+
+static void fixMasks(DenseMap<SDValue, unsigned> &Srcs, unsigned ChainLength) {
+  for (auto &Entry : Srcs) {
+    Entry.second = Entry.second >> ((4 - ChainLength) * 8);
+    auto ZeroMask = ChainLength == 2 ? 0x0c0c0000 : 0x0c000000;
+    Entry.second += ZeroMask;
+  }
+}
+
 
 SDValue SITargetLowering::performAddCombine(SDNode *N,
                                             DAGCombinerInfo &DCI) const {
@@ -12347,11 +12477,12 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
 
   // v_dot4 combining
   auto ST = getSubtarget();
+
   if ((LHS.getOpcode() == AMDGPUISD::MUL_I24 ||
        LHS.getOpcode() == AMDGPUISD::MUL_U24 || LHS.getOpcode() == ISD::MUL ||
        RHS.getOpcode() == AMDGPUISD::MUL_I24 ||
        RHS.getOpcode() == AMDGPUISD::MUL_U24 || RHS.getOpcode() == ISD::MUL) &&
-      ST->hasMad64_32()) {
+      ST->hasDot7Insts() && (ST->hasDot1Insts() || ST->hasDot8Insts())) {
     auto TempNode = SDValue(N, 0);
     auto MulIdx =
         (LHS.getOpcode() == AMDGPUISD::MUL_I24 ||
@@ -12360,11 +12491,12 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
             : 1;
     auto MulOpcode = TempNode.getOperand(MulIdx).getOpcode();
     bool IsSigned = MulOpcode == AMDGPUISD::MUL_I24 || (MulOpcode == ISD::MUL && TempNode->getOperand(MulIdx)->getFlags().hasNoSignedWrap() && !TempNode->getOperand(MulIdx)->getFlags().hasNoUnsignedWrap());
-    SmallVector<ByteProvider<SDValue>, 4> Src0s;
-    SmallVector<ByteProvider<SDValue>, 4> Src1s;
+    DenseMap<SDValue, unsigned> Src0s;
+    DenseMap<SDValue, unsigned> Src1s;
     SmallVector<SDValue, 4> Src2s;
 
     // Match the v_dot4 tree, while collecting src nodes.
+    int ChainLength = 0;
     for (int I = 0; I < 4; I++) {
       if (LHS.getOpcode() != MulOpcode && RHS.getOpcode() != MulOpcode)
         break;
@@ -12375,12 +12507,7 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
       auto Src1 = handleMulOperand(TempNode->getOperand(MulIdx)->getOperand(1));
       if (!Src1.has_value())
         break;
-      if (I == 0) {
-        assert(Src0->Src.has_value() && Src1->Src.has_value());
-        Src0s.push_back(*Src0);
-        Src1s.push_back(*Src1);
-      } else if (!matchChain(*Src0, *Src1, Src0s, Src1s))
-        break;
+      placeSources(*Src0, *Src1, Src0s, Src1s, I);
       auto AddIdx = 1 - MulIdx;
       // Allow the special case where add (add (mul24, 0), mul24) became ->
       // add (mul24, mul24)
@@ -12394,84 +12521,61 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
             handleMulOperand(TempNode->getOperand(AddIdx)->getOperand(1));
         if (!Src1.has_value())
           break;
-        if (!matchChain(*Src0, *Src1, Src0s, Src1s))
-          break;
+        placeSources(*Src0, *Src1, Src0s, Src1s, I+1);
         Src2s.push_back(DAG.getConstant(0, SL, MVT::i32));
+        ChainLength = I + 2;
         break;
       }
 
       TempNode = TempNode->getOperand(AddIdx);
       Src2s.push_back(TempNode);
+      ChainLength = I + 1;
       if (TempNode->getNumOperands() < 2)
         break;
       LHS = TempNode->getOperand(0);
       RHS = TempNode->getOperand(1);
     }
 
-    auto ChainLength = std::min(Src0s.size(), Src1s.size());
     if (ChainLength < 2)
       return SDValue();
-
-    auto Src0Start = Src0s[ChainLength - 1].SrcOffset;
-    auto Src1Start = Src1s[ChainLength - 1].SrcOffset;
-
-    auto Src0 = *Src0s[0].Src;
-    auto Src1 = *Src1s[0].Src;
-    if (Src0.getValueSizeInBits() < 16 || Src1.getValueSizeInBits() < 16)
-      return SDValue();
-
-    if (Src0.getValueType().isVector())
-      Src0 = DAG.getBitcast(MVT::getIntegerVT(Src0.getValueSizeInBits()), Src0);
-
-    if (Src1.getValueType().isVector())
-      Src1 = DAG.getBitcast(MVT::getIntegerVT(Src1.getValueSizeInBits()), Src1);
-
-    if (Src0.getValueSizeInBits() > 32)
-      Src0 = DAG.getNode(ISD::TRUNCATE, SL, MVT::i32, Src0);
-
-    if (Src1.getValueSizeInBits() > 32)
-      Src1 = DAG.getNode(ISD::TRUNCATE, SL, MVT::i32, Src1);
-
+    
     if (ChainLength < 4) {
-      // TODO -- combine well formed 2 x v2i8 Src0/1s into a single v_dot4
-      assert((Src0.getValueSizeInBits() == 32 &&
-              Src1.getValueSizeInBits() == 32) ||
-             ChainLength == 2);
-      if (Src0.getValueSizeInBits() == 32) {
-        assert(Src0Start + ChainLength < 5);
-        auto BitMask = ChainLength == 2
-                           ? (0x0c0c0000 + 0x0100 + 0x0101 * Src0Start)
-                           : (0x0c000000 + 0x020100 + 0x010101 * Src0Start);
-        Src0 = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Src0, Src0,
-                           DAG.getConstant(BitMask, SL, MVT::i32));
-      }
-      if (Src1.getValueSizeInBits() == 32) {
-        assert(Src1Start + ChainLength < 5);
-        auto BitMask = ChainLength == 2
-                           ? (0x0c0c0000 + 0x0100 + 0x0101 * Src1Start)
-                           : (0x0c000000 + 0x020100 + 0x010101 * Src1Start);
+      fixMasks(Src0s, ChainLength);
+      fixMasks(Src1s, ChainLength);
+    }
 
-        Src1 = DAG.getNode(AMDGPUISD::PERM, SL, MVT::i32, Src1, Src1,
-                           DAG.getConstant(BitMask, SL, MVT::i32));
+    SDValue Src0, Src1;
+
+    // If we are just using a single source for both, and have permuted the bytes consistently,
+    // we can just use the sources without permuting
+    bool UseOriginalSrc = false;
+    if (ChainLength == 4 && Src0s.size() == 1 && Src1s.size() == 1 && Src0s.begin()->second == Src1s.begin()->second && Src0s.begin()->first.getValueSizeInBits() == 32 && Src1s.begin()->first.getValueSizeInBits() == 32) {
+      SmallVector<unsigned, 4> SrcBytes;
+      auto Src0Mask = Src0s.begin()->second;
+      SrcBytes.push_back(Src0Mask & 0xFF000000);
+      bool UniqueEntries = true;
+      for (auto I = 1; I < 4; I++) {
+        auto NextByte = Src0Mask & (0xFF << ((3 - I) * 8));
+        if (std::find(SrcBytes.begin(), SrcBytes.end(), NextByte) != SrcBytes.end()) {
+          UniqueEntries = false;
+          break;
+        }
+        SrcBytes.push_back(NextByte);
+      }
+
+      if (UniqueEntries) {
+        UseOriginalSrc = true;
+        Src0 = convertToScalarType(DAG, SL, Src0s.begin()->first, MVT::i32, IsSigned);
+        Src1 = convertToScalarType(DAG, SL, Src1s.begin()->first, MVT::i32, IsSigned);
       }
     }
 
-    if (Src0.getValueSizeInBits() == 16)
-      Src0 = DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src0);
-
-    if (Src1.getValueSizeInBits() == 16)
-      Src1 = DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src1);
-
-    SDValue Src2 = Src2s[ChainLength - 1];
-
-    if (Src2.getValueType().isVector())
-      Src2 = DAG.getBitcast(MVT::getIntegerVT(Src2.getValueSizeInBits()), Src2);
-
-    if (Src2.getValueSizeInBits() < 32) {
-      Src2 = IsSigned
-                 ? DAG.getNode(ISD::SIGN_EXTEND, SL, MVT::i32, Src2)
-                 : DAG.getNode(ISD::ZERO_EXTEND, SL, MVT::i32, Src2);
+    if (!UseOriginalSrc) {
+      Src0 = resolveSources(DAG, SL, Src0s, IsSigned);
+      Src1 = resolveSources(DAG, SL, Src1s, IsSigned);
     }
+
+    SDValue Src2 = convertToScalarType(DAG, SL, Src2s[ChainLength - 1], MVT::i32, IsSigned);
 
     std::optional<unsigned> Opcode;
     if (ST->getGeneration() == AMDGPUSubtarget::GFX11) {
@@ -12502,15 +12606,16 @@ SDValue SITargetLowering::performAddCombine(SDNode *N,
                                     DAG.getTargetConstant(0, SL, MVT::i1),
                                     DAG.getTargetConstant(0, SL, MVT::i1),
                                     DAG.getTargetConstant(0, SL, MVT::i1)};
-    SmallVector<EVT, 1> VTList = {MVT::i32};
-    auto Dot = SDValue(DAG.getMachineNode(*Opcode, SL, VTList, Ops), 0);
 
+    auto Dot = SDValue(DAG.getMachineNode(*Opcode, SL, MVT::i32, Ops), 0);
     if (VT != MVT::i32) {
-      return MulOpcode == AMDGPUISD::MUL_U24 ? DAG.getZExtOrTrunc(Dot, SL, VT)
-                                             : DAG.getSExtOrTrunc(Dot, SL, VT);
+      assert(!VT.isVector());
+      return MulOpcode == IsSigned ? DAG.getZExtOrTrunc(Dot, SL, VT)
+                                   : DAG.getSExtOrTrunc(Dot, SL, VT);
     }
     return Dot;
   }
+  
 
   if (VT != MVT::i32 || !DCI.isAfterLegalizeDAG()) {
     return SDValue();
