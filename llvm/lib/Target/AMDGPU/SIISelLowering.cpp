@@ -11612,6 +11612,44 @@ calculateSrcByte(const SDValue Op, uint64_t DestByte, uint64_t SrcIndex = 0,
     return calculateSrcByte(Op->getOperand(0), DestByte, SrcIndex, Depth + 1);
   }
 
+  case ISD::SHL: {
+    auto ShiftOp = dyn_cast<ConstantSDNode>(Op->getOperand(1));
+    if (!ShiftOp)
+      return std::nullopt;
+
+    uint64_t BitShift = ShiftOp->getZExtValue();
+
+    if (BitShift % 8 != 0)
+      return std::nullopt;
+
+    if (SrcIndex < BitShift / 8)
+      return ByteProvider<SDValue>::getSrc(Op, DestByte, SrcIndex);
+
+    SrcIndex -= BitShift / 8;
+
+    return calculateSrcByte(Op->getOperand(0), DestByte, SrcIndex, Depth + 1);
+  }
+
+  case ISD::EXTRACT_VECTOR_ELT: {
+    auto IdxOp = dyn_cast<ConstantSDNode>(Op->getOperand(1));
+    if (!IdxOp)
+      return std::nullopt;
+    auto VecIdx = IdxOp->getZExtValue();
+    auto ScalarSize = Op.getScalarValueSizeInBits();
+
+    assert((ScalarSize >= 8) && !(ScalarSize % 8));
+    if (ScalarSize < 32) {
+      if ((VecIdx + 1) * ScalarSize > 32)
+        return std::nullopt;
+
+      SrcIndex = VecIdx * ScalarSize / 8 + SrcIndex;
+      return calculateSrcByte(Op->getOperand(0), DestByte, SrcIndex, Depth + 1);
+    }
+    // Just use the scalar
+    return ByteProvider<SDValue>::getSrc(Op, DestByte, SrcIndex);
+
+
+  }
   default: {
     return ByteProvider<SDValue>::getSrc(Op, DestByte, SrcIndex);
   }
@@ -11640,6 +11678,7 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
     return std::nullopt;
 
   bool IsVec = Op.getValueType().isVector();
+
   switch (Op.getOpcode()) {
   case ISD::OR: {
     if (IsVec)
@@ -11854,11 +11893,10 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
       return std::nullopt;
     auto VecIdx = IdxOp->getZExtValue();
     auto ScalarSize = Op.getScalarValueSizeInBits();
-    if (ScalarSize != 32) {
-      Index = ScalarSize == 8 ? VecIdx : VecIdx * 2 + Index;
-    }
+    if (ScalarSize < 32)
+      Index = ScalarSize == 8 ? VecIdx : VecIdx * ScalarSize / 8 + Index;
 
-    return calculateSrcByte(ScalarSize == 32 ? Op : Op.getOperand(0),
+    return calculateSrcByte(ScalarSize < 32 ? Op.getOperand(0) : Op,
                             StartingIndex, Index);
   }
 
@@ -11892,7 +11930,7 @@ calculateByteProvider(const SDValue &Op, unsigned Index, unsigned Depth,
 }
 
 // Returns true if the Operand is a scalar and is 16 bits
-static bool isExtendedFrom16Bits(SDValue &Operand) {
+static bool isPossiblyExtendedFrom16Bits(SDValue &Operand) {
 
   switch (Operand.getOpcode()) {
   case ISD::ANY_EXTEND:
@@ -11911,6 +11949,9 @@ static bool isExtendedFrom16Bits(SDValue &Operand) {
     }
     return L->getMemoryVT().getSizeInBits() == 16;
   }
+  case ISD::CopyFromReg: {
+    return true;
+  }
   default:
     return false;
   }
@@ -11921,6 +11962,9 @@ static bool isExtendedFrom16Bits(SDValue &Operand) {
 static bool addresses16Bits(int Mask) {
   int Low8 = Mask & 0xff;
   int Hi8 = (Mask & 0xff00) >> 8;
+
+  if (Low8 == 0x0c || Hi8 == 0x0c)
+    return false;
 
   assert(Low8 < 8 && Hi8 < 8);
   // Are the bytes contiguous in the order of increasing addresses.
@@ -11934,29 +11978,31 @@ static bool addresses16Bits(int Mask) {
   return IsConsecutive && Is16Aligned;
 }
 
-// Do not lower into v_perm if the operands are actually 16 bit
-// and the selected bits (based on PermMask) correspond with two
-// easily addressable 16 bit operands.
-static bool hasNon16BitAccesses(uint64_t PermMask, SDValue &Op,
-                                SDValue &OtherOp) {
-  int Low16 = PermMask & 0xffff;
-  int Hi16 = (PermMask & 0xffff0000) >> 16;
+// If the op is a cleanly addressed 16 bit op, or an 8 bit op, then it is not permuted.
+// We have better CodeGen if we do not lower these to v_perms.
+static bool hasPermutation(uint64_t PermMask, SDValue &Op, bool IsNotLegalized) {
+  if (IsNotLegalized) {
+    if (Op.getValueSizeInBits() == 8)
+      return false;
+  }
+
+  bool Is8Bit = true;
+  for (unsigned I = 1; I < Op.getValueSizeInBits().getFixedValue() / 8; I++) {
+    auto BP = calculateByteProvider(Op, I, 0, I);
+    if (BP && !BP->isConstantZero()) {
+      Is8Bit = false;
+      break;
+    }
+  }
+  if (Is8Bit)
+    return false;
 
   auto TempOp = peekThroughBitcasts(Op);
-  auto TempOtherOp = peekThroughBitcasts(OtherOp);
-
-  auto OpIs16Bit =
-      TempOtherOp.getValueSizeInBits() == 16 || isExtendedFrom16Bits(TempOp);
+  bool OpIs16Bit = TempOp.getValueSizeInBits() == 16 || isPossiblyExtendedFrom16Bits(TempOp);
   if (!OpIs16Bit)
     return true;
-
-  auto OtherOpIs16Bit = TempOtherOp.getValueSizeInBits() == 16 ||
-                        isExtendedFrom16Bits(TempOtherOp);
-  if (!OtherOpIs16Bit)
-    return true;
-
-  // Do we cleanly address both
-  return !addresses16Bits(Low16) || !addresses16Bits(Hi16);
+  
+  return !addresses16Bits(PermMask);
 }
 
 static SDValue getDWordFromOffset(SelectionDAG &DAG, SDLoc SL, SDValue Src,
@@ -12016,29 +12062,35 @@ static SDValue getDWordFromOffset(SelectionDAG &DAG, SDLoc SL, SDValue Src,
 
 static SDValue matchPERM(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
   SelectionDAG &DAG = DCI.DAG;
-  [[maybe_unused]] EVT VT = N->getValueType(0);
   SmallVector<ByteProvider<SDValue>, 8> PermNodes;
 
   // VT is known to be MVT::i32, so we need to provide 4 bytes.
-  assert(VT == MVT::i32);
+  assert(N->getValueType(0) == MVT::i32);
+
   for (int i = 0; i < 4; i++) {
     // Find the ByteProvider that provides the ith byte of the result of OR
     std::optional<ByteProvider<SDValue>> P =
         calculateByteProvider(SDValue(N, 0), i, 0, /*StartingIndex = */ i);
-    // TODO support constantZero
-    if (!P || P->isConstantZero())
+    if (!P)
       return SDValue();
 
     PermNodes.push_back(*P);
   }
   if (PermNodes.size() != 4)
     return SDValue();
+  
 
   std::pair<unsigned, unsigned> FirstSrc(0, PermNodes[0].SrcOffset / 4);
   std::optional<std::pair<unsigned, unsigned>> SecondSrc;
   uint64_t PermMask = 0x00000000;
   for (size_t i = 0; i < PermNodes.size(); i++) {
     auto PermOp = PermNodes[i];
+    if (PermOp.isConstantZero()) {
+      if (FirstSrc.first == i)
+        ++FirstSrc.first;
+      PermMask |= 0x0c << (i * 8);
+      continue;
+    }
     // Since the mask is applied to Src1:Src2, Src1 bytes must be offset
     // by sizeof(Src2) = 4
     int SrcByteAdjust = 4;
@@ -12062,10 +12114,14 @@ static SDValue matchPERM(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
     PermMask |= ((PermOp.SrcOffset % 4) + SrcByteAdjust) << (i * 8);
   }
   SDLoc DL(N);
+  if (PermMask == 0x0c0c0c0c)
+    return DAG.getConstant(0, DL, MVT::i32);
+
   SDValue Op = *PermNodes[FirstSrc.first].Src;
   Op = getDWordFromOffset(DAG, DL, Op, FirstSrc.second);
   assert(Op.getValueSizeInBits() == 32);
 
+  SDValue OtherOp;
   // Check that we are not just extracting the bytes in order from an op
   if (!SecondSrc) {
     int Low16 = PermMask & 0xffff;
@@ -12077,17 +12133,17 @@ static SDValue matchPERM(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
     // The perm op would really just produce Op. So combine into Op
     if (WellFormedLow && WellFormedHi)
       return DAG.getBitcast(MVT::getIntegerVT(32), Op);
+
+    OtherOp = Op;
   }
 
-  SDValue OtherOp = SecondSrc ? *PermNodes[SecondSrc->first].Src : Op;
-
   if (SecondSrc) {
-    OtherOp = getDWordFromOffset(DAG, DL, OtherOp, SecondSrc->second);
+    OtherOp = getDWordFromOffset(DAG, DL, *PermNodes[SecondSrc->first].Src,
+                                 SecondSrc->second);
     assert(OtherOp.getValueSizeInBits() == 32);
   }
 
-  if (hasNon16BitAccesses(PermMask, Op, OtherOp)) {
-
+  if (hasPermutation(PermMask & 0xFFFF, Op, DCI.isBeforeLegalize()) || hasPermutation((PermMask >> 16) & 0xFFFF, OtherOp, DCI.isBeforeLegalize())) {
     assert(Op.getValueType().isByteSized() &&
            OtherOp.getValueType().isByteSized());
 
@@ -12159,12 +12215,33 @@ SDValue SITargetLowering::performOrCombine(SDNode *N,
     // If all the uses of an or need to extract the individual elements, do not
     // attempt to lower into v_perm
     auto usesCombinedOperand = [](SDNode *OrUse) {
-      // If we have any non-vectorized use, then it is a candidate for v_perm
-      if (OrUse->getOpcode() != ISD::BITCAST ||
-          !OrUse->getValueType(0).isVector())
-        return true;
+      //  The combined bytes seem to be getting extracted
+      if (OrUse->getOpcode() == ISD::SRL || OrUse->getOpcode() == ISD::TRUNCATE)
+        return false;
+
+      if (OrUse->getOpcode() == ISD::AND) {
+        auto SelectMask = dyn_cast<ConstantSDNode>(OrUse->getOperand(1));
+        if (SelectMask && (SelectMask->getZExtValue() == 0xFF))
+          return false;
+      }
+
+      if (OrUse->getOpcode() == AMDGPUISD::CVT_F32_UBYTE0 ||
+          OrUse->getOpcode() == AMDGPUISD::CVT_F32_UBYTE1 ||
+          OrUse->getOpcode() == AMDGPUISD::CVT_F32_UBYTE2 ||
+          OrUse->getOpcode() == AMDGPUISD::CVT_F32_UBYTE3) {
+        return false;
+      }
+
+      if (auto StoreUse = dyn_cast<StoreSDNode>(OrUse))
+        if (StoreUse->isTruncatingStore() &&
+            StoreUse->getMemoryVT().getSizeInBits() == 8)
+          return false;
 
       // If we have any non-vectorized use, then it is a candidate for v_perm
+      if (!(OrUse->getValueType(0).isVector() &&
+            OrUse->getOpcode() != ISD::BUILD_VECTOR))
+        return true;
+
       for (auto VUse : OrUse->uses()) {
         if (!VUse->getValueType(0).isVector())
           return true;
