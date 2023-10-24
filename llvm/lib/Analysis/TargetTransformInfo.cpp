@@ -1248,6 +1248,13 @@ bool TargetTransformInfo::hasActiveVectorLength(unsigned Opcode, Type *DataType,
   return TTIImpl->hasActiveVectorLength(Opcode, DataType, Alignment);
 }
 
+std::optional<KnownBits> TargetTransformInfo::computeKnownBitsAddrSpaceCast(
+    unsigned DestAS, unsigned SrcAS, const APInt &DemandedElts,
+    KnownBits &Known, const SimplifyQuery &Q) const {
+  return TTIImpl->computeKnownBitsAddrSpaceCast(DestAS, SrcAS, DemandedElts,
+                                                Known, Q);
+}
+
 TargetTransformInfo::Concept::~Concept() = default;
 
 TargetIRAnalysis::TargetIRAnalysis() : TTICallback(&getDefaultTTI) {}

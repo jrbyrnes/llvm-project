@@ -29,6 +29,7 @@
 #include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/InstructionCost.h"
+#include "llvm/Support/KnownBits.h"
 #include <functional>
 #include <optional>
 #include <utility>
@@ -67,6 +68,7 @@ class User;
 class Value;
 class VPIntrinsic;
 struct KnownBits;
+struct SimplifyQuery;
 
 /// Information about a load/store intrinsic defined by the target.
 struct MemIntrinsicInfo {
@@ -1674,6 +1676,11 @@ public:
 
   /// @}
 
+  std::optional<KnownBits>
+  computeKnownBitsAddrSpaceCast(unsigned DestAS, unsigned SrcAS,
+                                const APInt &DemandedElts, KnownBits &Known,
+                                const SimplifyQuery &Q) const;
+
 private:
   /// The abstract base class used to type erase specific TTI
   /// implementations.
@@ -2041,6 +2048,10 @@ public:
   getVPLegalizationStrategy(const VPIntrinsic &PI) const = 0;
   virtual bool hasArmWideBranch(bool Thumb) const = 0;
   virtual unsigned getMaxNumArgs() const = 0;
+  virtual std::optional<KnownBits>
+  computeKnownBitsAddrSpaceCast(unsigned DestAS, unsigned SrcAS,
+                                const APInt &DemandedElts, KnownBits &Known,
+                                const SimplifyQuery &Q) const = 0;
 };
 
 template <typename T>
@@ -2756,6 +2767,14 @@ public:
 
   unsigned getMaxNumArgs() const override {
     return Impl.getMaxNumArgs();
+  }
+
+  std::optional<KnownBits>
+  computeKnownBitsAddrSpaceCast(unsigned DestAS, unsigned SrcAS,
+                                const APInt &DemandedElts, KnownBits &Known,
+                                const SimplifyQuery &Q) const override {
+    return Impl.computeKnownBitsAddrSpaceCast(DestAS, SrcAS, DemandedElts,
+                                              Known, Q);
   }
 };
 

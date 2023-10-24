@@ -809,7 +809,7 @@ std::vector<Chain> Vectorizer::splitChainByAlignment(Chain &C) {
       if (IsAllocaAccess && Alignment.value() % SizeBytes != 0 &&
           IsAllowedAndFast(PrefAlign)) {
         Align NewAlign = getOrEnforceKnownAlignment(
-            PtrOperand, PrefAlign, DL, C[CBegin].Inst, nullptr, &DT);
+            PtrOperand, PrefAlign, DL, C[CBegin].Inst, nullptr, &DT, &TTI);
         if (NewAlign >= Alignment) {
           LLVM_DEBUG(dbgs()
                      << "LSV: splitByChain upgrading alloca alignment from "
@@ -876,10 +876,10 @@ bool Vectorizer::vectorizeChain(Chain &C) {
   // If this is a load/store of an alloca, we might have upgraded the alloca's
   // alignment earlier.  Get the new alignment.
   if (AS == DL.getAllocaAddrSpace()) {
-    Alignment = std::max(
-        Alignment,
-        getOrEnforceKnownAlignment(getLoadStorePointerOperand(C[0].Inst),
-                                   MaybeAlign(), DL, C[0].Inst, nullptr, &DT));
+    Alignment = std::max(Alignment,
+                         getOrEnforceKnownAlignment(
+                             getLoadStorePointerOperand(C[0].Inst),
+                             MaybeAlign(), DL, C[0].Inst, nullptr, &DT, &TTI));
   }
 
   // All elements of the chain must have the same scalar-type size.

@@ -235,7 +235,8 @@ Align getOrEnforceKnownAlignment(Value *V, MaybeAlign PrefAlign,
                                  const DataLayout &DL,
                                  const Instruction *CxtI = nullptr,
                                  AssumptionCache *AC = nullptr,
-                                 const DominatorTree *DT = nullptr);
+                                 const DominatorTree *DT = nullptr,
+                                 const TargetTransformInfo *TTI = nullptr);
 
 /// Try to infer an alignment for the specified pointer.
 inline Align getKnownAlignment(Value *V, const DataLayout &DL,

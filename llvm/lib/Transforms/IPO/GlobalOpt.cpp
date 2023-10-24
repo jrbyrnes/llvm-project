@@ -506,7 +506,9 @@ static void transferSRADebugInfo(GlobalVariable *GV, GlobalVariable *NGV,
 /// program in a more fine-grained way.  We have determined that this
 /// transformation is safe already.  We return the first global variable we
 /// insert so that the caller can reprocess it.
-static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
+static GlobalVariable *
+SRAGlobal(GlobalVariable *GV, const DataLayout &DL,
+          function_ref<TargetTransformInfo &(Function &)> GetTTI) {
   assert(GV->hasLocalLinkage());
 
   // Collect types to split into.
@@ -608,9 +610,14 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
       assert(NGV && "Must have replacement global for this offset");
 
       // Update the pointer operand and recalculate alignment.
+
       Align PrefAlign = DL.getPrefTypeAlign(getLoadStoreType(V));
-      Align NewAlign =
-          getOrEnforceKnownAlignment(NGV, PrefAlign, DL, cast<Instruction>(V));
+      TargetTransformInfo *FTTI = nullptr;
+      if (auto I = dyn_cast<Instruction>(V)) {
+        FTTI = &GetTTI(*I->getFunction());
+      }
+      Align NewAlign = getOrEnforceKnownAlignment(
+          NGV, PrefAlign, DL, cast<Instruction>(V), nullptr, nullptr, FTTI);
 
       if (auto *LI = dyn_cast<LoadInst>(V)) {
         LI->setOperand(0, NGV);
@@ -1530,7 +1537,7 @@ processInternalGlobal(GlobalVariable *GV, const GlobalStatus &GS,
   }
   if (!GV->getInitializer()->getType()->isSingleValueType()) {
     const DataLayout &DL = GV->getParent()->getDataLayout();
-    if (SRAGlobal(GV, DL))
+    if (SRAGlobal(GV, DL, GetTTI))
       return true;
   }
   Value *StoredOnceValue = GS.getStoredOnceValue();

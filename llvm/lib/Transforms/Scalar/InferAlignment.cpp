@@ -13,6 +13,7 @@
 
 #include "llvm/Transforms/Scalar/InferAlignment.h"
 #include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/InitializePasses.h"
@@ -47,7 +48,8 @@ static bool tryToImproveAlign(
   return false;
 }
 
-bool inferAlignment(Function &F, AssumptionCache &AC, DominatorTree &DT) {
+bool inferAlignment(Function &F, AssumptionCache &AC, DominatorTree &DT,
+                    TargetTransformInfo &TTI) {
   const DataLayout &DL = F.getParent()->getDataLayout();
   bool Changed = false;
 
@@ -70,7 +72,8 @@ bool inferAlignment(Function &F, AssumptionCache &AC, DominatorTree &DT) {
     for (Instruction &I : BB) {
       Changed |= tryToImproveAlign(
           DL, &I, [&](Value *PtrOp, Align OldAlign, Align PrefAlign) {
-            KnownBits Known = computeKnownBits(PtrOp, DL, 0, &AC, &I, &DT);
+            KnownBits Known =
+                computeKnownBits(PtrOp, DL, 0, &AC, &I, &DT, &TTI);
             unsigned TrailZ = std::min(Known.countMinTrailingZeros(),
                                        +Value::MaxAlignmentExponent);
             return Align(1ull << std::min(Known.getBitWidth() - 1, TrailZ));
@@ -85,7 +88,8 @@ PreservedAnalyses InferAlignmentPass::run(Function &F,
                                           FunctionAnalysisManager &AM) {
   AssumptionCache &AC = AM.getResult<AssumptionAnalysis>(F);
   DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
-  inferAlignment(F, AC, DT);
+  TargetTransformInfo &TTI = AM.getResult<TargetIRAnalysis>(F);
+  inferAlignment(F, AC, DT, TTI);
   // Changes to alignment shouldn't invalidated analyses.
   return PreservedAnalyses::all();
 }

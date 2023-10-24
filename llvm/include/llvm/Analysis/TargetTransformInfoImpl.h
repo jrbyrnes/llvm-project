@@ -28,6 +28,8 @@
 namespace llvm {
 
 class Function;
+struct KnownBits;
+struct SimplifyQuery;
 
 /// Base class for use as a mix-in that aids implementing
 /// a TargetTransformInfo-compatible class.
@@ -894,6 +896,13 @@ public:
   bool hasArmWideBranch(bool) const { return false; }
 
   unsigned getMaxNumArgs() const { return UINT_MAX; }
+
+  std::optional<KnownBits>
+  computeKnownBitsAddrSpaceCast(unsigned DestAS, unsigned SrcAS,
+                                const APInt &DemandedElts, KnownBits &Known,
+                                const SimplifyQuery &Q) const {
+    return std::nullopt;
+  }
 
 protected:
   // Obtain the minimum required size to hold the value (without the sign)

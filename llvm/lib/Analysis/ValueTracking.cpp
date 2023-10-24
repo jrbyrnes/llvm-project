@@ -32,6 +32,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/VectorUtils.h"
 #include "llvm/Analysis/WithCache.h"
 #include "llvm/IR/Argument.h"
@@ -166,7 +167,7 @@ void llvm::computeKnownBits(const Value *V, KnownBits &Known,
                             const DominatorTree *DT, bool UseInstrInfo) {
   ::computeKnownBits(
       V, Known, Depth,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 void llvm::computeKnownBits(const Value *V, const APInt &DemandedElts,
@@ -176,15 +177,18 @@ void llvm::computeKnownBits(const Value *V, const APInt &DemandedElts,
                             bool UseInstrInfo) {
   ::computeKnownBits(
       V, DemandedElts, Known, Depth,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 KnownBits llvm::computeKnownBits(const Value *V, const DataLayout &DL,
                                  unsigned Depth, AssumptionCache *AC,
                                  const Instruction *CxtI,
-                                 const DominatorTree *DT, bool UseInstrInfo) {
+                                 const DominatorTree *DT,
+                                 const TargetTransformInfo *TTI,
+                                 bool UseInstrInfo) {
   return computeKnownBits(
-      V, Depth, SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      V, Depth,
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), TTI, UseInstrInfo, true));
 }
 
 KnownBits llvm::computeKnownBits(const Value *V, const APInt &DemandedElts,
@@ -193,7 +197,7 @@ KnownBits llvm::computeKnownBits(const Value *V, const APInt &DemandedElts,
                                  const DominatorTree *DT, bool UseInstrInfo) {
   return computeKnownBits(
       V, DemandedElts, Depth,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 bool llvm::haveNoCommonBitsSet(const WithCache<const Value *> &LHSCache,
@@ -270,7 +274,7 @@ bool llvm::isKnownToBeAPowerOfTwo(const Value *V, const DataLayout &DL,
                                   const DominatorTree *DT, bool UseInstrInfo) {
   return ::isKnownToBeAPowerOfTwo(
       V, OrZero, Depth,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 static bool isKnownNonZero(const Value *V, const APInt &DemandedElts,
@@ -283,14 +287,16 @@ bool llvm::isKnownNonZero(const Value *V, const DataLayout &DL, unsigned Depth,
                           AssumptionCache *AC, const Instruction *CxtI,
                           const DominatorTree *DT, bool UseInstrInfo) {
   return ::isKnownNonZero(
-      V, Depth, SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      V, Depth,
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 bool llvm::isKnownNonNegative(const Value *V, const DataLayout &DL,
                               unsigned Depth, AssumptionCache *AC,
                               const Instruction *CxtI, const DominatorTree *DT,
                               bool UseInstrInfo) {
-  KnownBits Known = computeKnownBits(V, DL, Depth, AC, CxtI, DT, UseInstrInfo);
+  KnownBits Known =
+      computeKnownBits(V, DL, Depth, AC, CxtI, DT, nullptr, UseInstrInfo);
   return Known.isNonNegative();
 }
 
@@ -309,7 +315,8 @@ bool llvm::isKnownPositive(const Value *V, const DataLayout &DL, unsigned Depth,
 bool llvm::isKnownNegative(const Value *V, const DataLayout &DL, unsigned Depth,
                            AssumptionCache *AC, const Instruction *CxtI,
                            const DominatorTree *DT, bool UseInstrInfo) {
-  KnownBits Known = computeKnownBits(V, DL, Depth, AC, CxtI, DT, UseInstrInfo);
+  KnownBits Known =
+      computeKnownBits(V, DL, Depth, AC, CxtI, DT, nullptr, UseInstrInfo);
   return Known.isNegative();
 }
 
@@ -322,7 +329,7 @@ bool llvm::isKnownNonEqual(const Value *V1, const Value *V2,
                            bool UseInstrInfo) {
   return ::isKnownNonEqual(
       V1, V2, 0,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V2, V1, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(V2, V1, CxtI), nullptr, UseInstrInfo));
 }
 
 static bool MaskedValueIsZero(const Value *V, const APInt &Mask, unsigned Depth,
@@ -334,7 +341,7 @@ bool llvm::MaskedValueIsZero(const Value *V, const APInt &Mask,
                              const DominatorTree *DT, bool UseInstrInfo) {
   return ::MaskedValueIsZero(
       V, Mask, Depth,
-      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 static unsigned ComputeNumSignBits(const Value *V, const APInt &DemandedElts,
@@ -353,7 +360,8 @@ unsigned llvm::ComputeNumSignBits(const Value *V, const DataLayout &DL,
                                   const Instruction *CxtI,
                                   const DominatorTree *DT, bool UseInstrInfo) {
   return ::ComputeNumSignBits(
-      V, Depth, SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+      V, Depth,
+      SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), nullptr, UseInstrInfo));
 }
 
 unsigned llvm::ComputeMaxSignificantBits(const Value *V, const DataLayout &DL,
@@ -961,7 +969,7 @@ KnownBits llvm::analyzeKnownBitsFromAndXorOr(
 
   return getKnownBitsFromAndXorOr(
       I, DemandedElts, KnownLHS, KnownRHS, Depth,
-      SimplifyQuery(DL, DT, AC, safeCxtI(I, CxtI), UseInstrInfo));
+      SimplifyQuery(DL, DT, AC, safeCxtI(I, CxtI), nullptr, UseInstrInfo));
 }
 
 ConstantRange llvm::getVScaleRange(const Function *F, unsigned BitWidth) {
@@ -988,7 +996,6 @@ static void computeKnownBitsFromOperator(const Operator *I,
                                          KnownBits &Known, unsigned Depth,
                                          const SimplifyQuery &Q) {
   unsigned BitWidth = Known.getBitWidth();
-
   KnownBits Known2(BitWidth);
   switch (I->getOpcode()) {
   default: break;
@@ -1775,6 +1782,28 @@ static void computeKnownBitsFromOperator(const Operator *I,
                                   Depth + 1))
       computeKnownBits(I->getOperand(0), Known, Depth + 1, Q);
     break;
+  case Instruction::AddrSpaceCast: {
+    auto ASC = dyn_cast<AddrSpaceCastOperator>(I);
+    assert(ASC);
+    unsigned SrcAS = ASC->getSrcAddressSpace();
+    unsigned DestAS = ASC->getDestAddressSpace();
+    if (Q.TTI) {
+      // If we cannot look through the AddrSpaceCast and convert back, then the
+      // whole process fails and reverts to using the previous state of
+      // KnownBits.
+      auto Known3 = Q.TTI->computeKnownBitsAddrSpaceCast(
+          DestAS, SrcAS, DemandedElts, Known, Q);
+      if (!Known3)
+        break;
+      computeKnownBits(I->getOperand(0), DemandedElts, *Known3, Depth + 1, Q);
+      Known3 = Q.TTI->computeKnownBitsAddrSpaceCast(SrcAS, DestAS, DemandedElts,
+                                                    *Known3, Q);
+      if (!Known3)
+        break;
+      Known = *Known3;
+    }
+    break;
+  }
   }
 }
 
@@ -1840,6 +1869,7 @@ void computeKnownBits(const Value *V, const APInt &DemandedElts,
   }
 
   Type *ScalarTy = Ty->getScalarType();
+
   if (ScalarTy->isPointerTy()) {
     assert(BitWidth == Q.DL.getPointerTypeSizeInBits(ScalarTy) &&
            "V and Known should have same BitWidth");

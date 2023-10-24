@@ -16,6 +16,7 @@ namespace llvm {
 class AssumptionCache;
 class DominatorTree;
 class TargetLibraryInfo;
+class TargetTransformInfo;
 
 /// InstrInfoQuery provides an interface to query additional information for
 /// instructions like metadata or keywords like nsw, which provides conservative
@@ -62,6 +63,7 @@ struct SimplifyQuery {
   const DominatorTree *DT = nullptr;
   AssumptionCache *AC = nullptr;
   const Instruction *CxtI = nullptr;
+  const TargetTransformInfo *TTI = nullptr;
 
   // Wrapper to query additional information for instructions like metadata or
   // keywords like nsw, which provides conservative results if those cannot
@@ -86,9 +88,10 @@ struct SimplifyQuery {
 
   SimplifyQuery(const DataLayout &DL, const DominatorTree *DT,
                 AssumptionCache *AC = nullptr,
-                const Instruction *CXTI = nullptr, bool UseInstrInfo = true,
-                bool CanUseUndef = true)
-      : DL(DL), DT(DT), AC(AC), CxtI(CXTI), IIQ(UseInstrInfo),
+                const Instruction *CXTI = nullptr,
+                const TargetTransformInfo *TTI = nullptr,
+                bool UseInstrInfo = true, bool CanUseUndef = true)
+      : DL(DL), DT(DT), AC(AC), CxtI(CXTI), TTI(TTI), IIQ(UseInstrInfo),
         CanUseUndef(CanUseUndef) {}
 
   SimplifyQuery getWithInstruction(const Instruction *I) const {
