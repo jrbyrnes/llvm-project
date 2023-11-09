@@ -1296,9 +1296,8 @@ bool ILPInitialScheduleStage::shouldRevertScheduling(unsigned WavesAfter) {
 }
 
 bool GCNSchedStage::mayCauseSpilling(unsigned WavesAfter) {
-  if (WavesAfter <= MFI.getMinWavesPerEU() &&
-      !PressureAfter.less(ST, PressureBefore) &&
-      isRegionWithExcessRP()) {
+  if (WavesAfter <= MFI.getMinWavesPerEU() && isRegionWithExcessRP() &&
+      !PressureAfter.less(MF, PressureBefore)) {
     LLVM_DEBUG(dbgs() << "New pressure will result in more spilling.\n");
     return true;
   }
