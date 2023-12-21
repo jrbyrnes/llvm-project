@@ -141,6 +141,7 @@ add_llvm_target(AMDGPUCodeGen
   SIFrameLowering.cpp
   SIInsertHardClauses.cpp
   SIInsertWaitcnts.cpp
+  SIInsertWaveBarrier.cpp
   SIInstrInfo.cpp
   SIISelLowering.cpp
   SILateBranchLowering.cpp

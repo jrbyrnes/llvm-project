@@ -186,6 +186,9 @@ extern char &SIOptimizeExecMaskingID;
 void initializeSIPreAllocateWWMRegsPass(PassRegistry &);
 extern char &SIPreAllocateWWMRegsID;
 
+void initializeSIInsertWaveBarrierPass(PassRegistry &);
+extern char &SIInsertWaveBarrierID;
+
 void initializeAMDGPUSimplifyLibCallsPass(PassRegistry &);
 extern char &AMDGPUSimplifyLibCallsID;
 
