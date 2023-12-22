@@ -3042,6 +3042,7 @@ const char *GenericSchedulerBase::getReasonStr(
   case BotPathReduce:  return "BOT-PATH  ";
   case NextDefUse:     return "DEF-USE   ";
   case NodeOrder:      return "ORDER     ";
+  case Target:         return "TARGET    ";
   };
   llvm_unreachable("Unknown reason!");
 }
@@ -3497,6 +3498,15 @@ bool GenericScheduler::tryCandidate(SchedCandidate &Cand,
   // is a clear good pick on one boundary. Skip heuristics that are more
   // "tie-breaking" in nature.
   bool SameBoundary = Zone != nullptr;
+
+  if (SameBoundary) {
+    auto Index = Zone->isTop() ? 0 : 1;
+    if (tryTarget(TryCand, Cand, LastN[Index], Target)) {
+      return TryCand.Reason != NoCand;
+    }
+  }
+
+
   if (SameBoundary) {
     // For loops that are acyclic path limited, aggressively schedule for
     // latency. Within an single cycle, whenever CurrMOps > 0, allow normal
@@ -3755,11 +3765,19 @@ void GenericScheduler::reschedulePhysReg(SUnit *SU, bool isTop) {
 /// them here. See comments in biasPhysReg.
 void GenericScheduler::schedNode(SUnit *SU, bool IsTopNode) {
   if (IsTopNode) {
+    auto &TheVec = LastN[0];
+    if (TheVec.size() > 6)
+      TheVec.pop_back();
+    TheVec.insert(TheVec.begin(), SU);
     SU->TopReadyCycle = std::max(SU->TopReadyCycle, Top.getCurrCycle());
     Top.bumpNode(SU);
     if (SU->hasPhysRegUses)
       reschedulePhysReg(SU, true);
   } else {
+    auto &TheVec = LastN[1];
+    if (TheVec.size() > 6)
+      TheVec.pop_back();
+    TheVec.insert(TheVec.begin(), SU);
     SU->BotReadyCycle = std::max(SU->BotReadyCycle, Bot.getCurrCycle());
     Bot.bumpNode(SU);
     if (SU->hasPhysRegDefs)
@@ -3844,6 +3862,11 @@ bool PostGenericScheduler::tryCandidate(SchedCandidate &Cand,
               Top.getLatencyStallCycles(Cand.SU), TryCand, Cand, Stall))
     return TryCand.Reason != NoCand;
 
+  if (tryTarget(TryCand, Cand, LastN, Target)) {
+      return TryCand.Reason != NoCand;
+  }
+
+
   // Keep clustered nodes together.
   if (tryGreater(TryCand.SU == DAG->getNextClusterSucc(),
                  Cand.SU == DAG->getNextClusterSucc(),
@@ -3922,6 +3945,9 @@ SUnit *PostGenericScheduler::pickNode(bool &IsTopNode) {
 /// Called after ScheduleDAGMI has scheduled an instruction and updated
 /// scheduled/remaining flags in the DAG nodes.
 void PostGenericScheduler::schedNode(SUnit *SU, bool IsTopNode) {
+  if (LastN.size() > 6)
+    LastN.pop_back();
+  LastN.insert(LastN.begin(), SU);
   SU->TopReadyCycle = std::max(SU->TopReadyCycle, Top.getCurrCycle());
   Top.bumpNode(SU);
 }

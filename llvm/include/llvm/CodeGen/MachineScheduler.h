@@ -1070,7 +1070,7 @@ public:
   enum CandReason : uint8_t {
     NoCand, Only1, PhysReg, RegExcess, RegCritical, Stall, Cluster, Weak,
     RegMax, ResourceReduce, ResourceDemand, BotHeightReduce, BotPathReduce,
-    TopDepthReduce, TopPathReduce, NextDefUse, NodeOrder};
+    TopDepthReduce, TopPathReduce, NextDefUse, NodeOrder, Target};
 
 #ifndef NDEBUG
   static const char *getReasonStr(GenericSchedulerBase::CandReason Reason);
@@ -1135,6 +1135,10 @@ public:
 
     SchedCandidate() { reset(CandPolicy()); }
     SchedCandidate(const CandPolicy &Policy) { reset(Policy); }
+
+    void setReason(uint8_t Val) {
+      Reason = (CandReason)Val;
+    }
 
     void reset(const CandPolicy &NewPolicy) {
       Policy = NewPolicy;
@@ -1250,6 +1254,8 @@ public:
 
   void registerRoots() override;
 
+  std::vector<std::vector<SUnit *>> LastN = {{},{}};
+
 protected:
   ScheduleDAGMILive *DAG = nullptr;
 
@@ -1281,6 +1287,8 @@ protected:
                          SchedCandidate &Candidate);
 
   void reschedulePhysReg(SUnit *SU, bool isTop);
+
+  virtual bool tryTarget(SchedCandidate &Cand, SchedCandidate &TryCand, std::vector<SUnit *> LastN, uint8_t Reason) const {return false;}
 };
 
 /// PostGenericScheduler - Interface to the scheduling algorithm used by
@@ -1332,8 +1340,12 @@ public:
     BotRoots.push_back(SU);
   }
 
+  std::vector<SUnit *> LastN = {};
+
 protected:
   virtual bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand);
+
+  virtual bool tryTarget(SchedCandidate &Cand, SchedCandidate &TryCand, std::vector<SUnit *> LastN, uint8_t Reason) const {return false;}
 
   void pickNodeFromQueue(SchedCandidate &Cand);
 };

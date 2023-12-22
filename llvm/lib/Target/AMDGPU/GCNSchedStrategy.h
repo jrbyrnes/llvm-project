@@ -113,6 +113,8 @@ public:
 
   bool hasNextStage() const;
 
+  bool tryTarget(SchedCandidate &Cand, SchedCandidate &TryCand, std::vector<SUnit *> LastN, uint8_t Reason) const override;
+
   GCNSchedStageID getNextStage() const;
 };
 

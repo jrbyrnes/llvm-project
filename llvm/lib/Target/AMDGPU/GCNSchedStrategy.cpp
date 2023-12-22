@@ -58,6 +58,68 @@ GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
     : GenericScheduler(C), TargetOccupancy(0), MF(nullptr),
       HasHighPressure(false) {}
 
+
+bool GCNSchedStrategy::tryTarget(SchedCandidate &Cand, SchedCandidate &TryCand, std::vector<SUnit *> LastN, uint8_t Reason) const {
+  errs() << "In GCN TryTarget\n";
+  unsigned TryCandRank = 10;
+  unsigned CandRank = 10;
+  const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
+  const SIInstrInfo *TII = ST.getInstrInfo();
+  auto &CandInstr = *Cand.SU->getInstr();
+  auto &TryCandInstr = *TryCand.SU->getInstr();
+
+  for (unsigned I = 0; I < LastN.size(); I++) {
+    if (TryCandRank < 10 && CandRank < 10)
+      break;
+    auto &TheInstr = *(LastN[I]->getInstr());
+    if (TII->isMFMAorWMMA(TheInstr)) {
+      if (TII->isMFMAorWMMA(CandInstr))
+        CandRank = I;
+      if (TII->isMFMAorWMMA(TryCandInstr))
+        TryCandRank = I;
+    }
+    if (TII->isTRANS(TheInstr)) {
+      if (TII->isTRANS(CandInstr))
+        CandRank = I;
+      if (TII->isTRANS(TryCandInstr))
+        TryCandRank = I;
+    }
+    if (TII->isVALU(TheInstr) && !TII->isTRANS(TheInstr) && !TII->isMFMAorWMMA(TheInstr)) {
+      if (TII->isVALU(CandInstr) && !TII->isTRANS(CandInstr) && !TII->isMFMAorWMMA(CandInstr))
+        CandRank = I;
+      if (TII->isVALU(TryCandInstr)  && !TII->isTRANS(TryCandInstr) && !TII->isMFMAorWMMA(TryCandInstr))
+        TryCandRank = I;
+    }
+    if (TII->isSALU(TheInstr)) {
+      if (TII->isSALU(CandInstr))
+        CandRank = I;
+      if (TII->isSALU(TryCandInstr))
+        TryCandRank = I;
+    }
+    if (TII->isVMEM(TheInstr)) {
+      if (TII->isVMEM(CandInstr))
+        CandRank = I;
+      if (TII->isVMEM(TryCandInstr))
+        TryCandRank = I;
+    }
+    if (TII->isDS(TheInstr)) {
+      if (TII->isDS(CandInstr))
+        CandRank = I;
+      if (TII->isDS(TryCandInstr))
+        TryCandRank = I;
+    }             
+  }
+
+  if (TryCandRank > CandRank) {
+    TryCand.setReason(Reason);
+    return true;
+  }
+
+
+
+  return false;
+}
+
 void GCNSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   GenericScheduler::initialize(DAG);
 
