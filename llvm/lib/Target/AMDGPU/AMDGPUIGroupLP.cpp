@@ -986,8 +986,7 @@ private:
   public:
     bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
-
-      return SU->getInstr()->getOpcode() == AMDGPU::V_CVT_I32_F32_e32;
+      return SU->getInstr()->getOpcode() == AMDGPU::V_CVT_F16_F32_e32;
 
     }
     IsCvt(const SIInstrInfo *TII,
@@ -1313,7 +1312,19 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   errs() << "L3Size : " << L3Size << "\n";
 
 
-  for (unsigned I = 0; I < L1Size-1; ++I) {
+  for (unsigned I = 0; I < L1Size/2; ++I) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsExp>(1,TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsMul>(TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+}
+
+  for (unsigned I = 0; I < L1Size/2 + L2Size; ++I) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(1,TII, SG->getSGID(), true));
@@ -1329,10 +1340,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 //    SG->addRule(std::make_shared<IsMul>(TII, SG->getSGID(), true));
 //    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<isLdexp>(1,TII, SG->getSGID(), true));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+//    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+//        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+//    SG->addRule(std::make_shared<isLdexp>(1,TII, SG->getSGID(), true));
+//    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
   }
 
@@ -1340,16 +1351,16 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 //        SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
 //    SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
 //    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-
+/*
   for (unsigned I = 0; I < L2Size+1; ++I) {
 //    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
 //        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII, true);
 //    SG->addRule(std::make_shared<IsExp>(I + 20, TII, SG->getSGID(), true));
 //    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsExp>(1,TII, SG->getSGID(), true));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+//    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+//        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+//    SG->addRule(std::make_shared<IsExp>(1,TII, SG->getSGID(), true));
+//    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII, true);
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), true));
@@ -1357,10 +1368,6 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<isLdexp>(1,TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
