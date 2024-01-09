@@ -1896,6 +1896,8 @@ static bool isVectorPromotionViableForSlice(Partition &P, const Slice &S,
                                             VectorType *Ty,
                                             uint64_t ElementSize,
                                             const DataLayout &DL) {
+  errs() << "Checking Promotion viable: "; S.getUse()->getUser()->dump();
+  Ty->dump();
   // First validate the slice offsets.
   uint64_t BeginOffset =
       std::max(S.beginOffset(), P.beginOffset()) - P.beginOffset();
@@ -1955,6 +1957,7 @@ static bool isVectorPromotionViableForSlice(Partition &P, const Slice &S,
     }
     if (!canConvertValue(DL, STy, SliceTy))
       return false;
+    errs() << "Store is fine, can convert: "; STy->dump(); SliceTy->dump();
   } else {
     return false;
   }
@@ -2040,10 +2043,13 @@ static VectorType *isVectorPromotionViable(Partition &P, const DataLayout &DL) {
   for (const Slice &S : P)
     if (S.beginOffset() == P.beginOffset() &&
         S.endOffset() == P.endOffset()) {
+      errs() << "Found slice with exact size\n";
       if (auto *LI = dyn_cast<LoadInst>(S.getUse()->getUser()))
         CheckCandidateType(LI->getType());
-      else if (auto *SI = dyn_cast<StoreInst>(S.getUse()->getUser()))
+      else if (auto *SI = dyn_cast<StoreInst>(S.getUse()->getUser())) {
+        errs() << "Exact size store: "; SI->dump();
         CheckCandidateType(SI->getValueOperand()->getType());
+      }
     }
 
   // If we didn't find a vector type, nothing to do here.
@@ -2059,10 +2065,12 @@ static VectorType *isVectorPromotionViable(Partition &P, const DataLayout &DL) {
 
   // Try to pick the "best" element type out of the choices.
   if (!HaveCommonEltTy && HaveVecPtrTy) {
+    errs() << "!HaveCommonEltTy && HaveVecPtrTy\n";
     // If there was a pointer element type, there's really only one choice.
     CandidateTys.clear();
     CandidateTys.push_back(CommonVecPtrTy);
   } else if (!HaveCommonEltTy && !HaveVecPtrTy) {
+    errs() << "!HaveCommon && !HaveVec\n";
     // Integer-ify vector types.
     for (VectorType *&VTy : CandidateTys) {
       if (!VTy->getElementType()->isIntegerTy())
@@ -2101,6 +2109,7 @@ static VectorType *isVectorPromotionViable(Partition &P, const DataLayout &DL) {
                                    RankVectorTypesEq),
                        CandidateTys.end());
   } else {
+    errs() << "Else\n";
 // The only way to have the same element type in every vector type is to
 // have the same vector type. Check that and remove all but one.
 #ifndef NDEBUG
@@ -2112,6 +2121,7 @@ static VectorType *isVectorPromotionViable(Partition &P, const DataLayout &DL) {
     }
 #endif
     CandidateTys.resize(1);
+    errs() << "CandidateTy: "; CandidateTys[0]->dump();
   }
 
   // FIXME: hack. Do we have a named constant for this?
@@ -4502,6 +4512,7 @@ bool SROAPass::presplitLoadsAndStores(AllocaInst &AI, AllocaSlices &AS) {
 /// promoted.
 AllocaInst *SROAPass::rewritePartition(AllocaInst &AI, AllocaSlices &AS,
                                        Partition &P) {
+  errs() << "rewrite: "; AI.dump();
   // Try to compute a friendly type for this partition of the alloca. This
   // won't always succeed, in which case we fall back to a legal integer type
   // or an i8 array of an appropriate size.
@@ -4555,6 +4566,8 @@ AllocaInst *SROAPass::rewritePartition(AllocaInst &AI, AllocaSlices &AS,
       IsIntegerPromotable ? nullptr : isVectorPromotionViable(P, DL);
   if (VecTy)
     SliceTy = VecTy;
+
+  errs() << "Is IntegerPromotable: " << IsIntegerPromotable << ", Have VectTy ? " << (VecTy != nullptr) << "\n";
 
   // Check for the case where we're going to rewrite to a new alloca of the
   // exact same type as the original, and with the same access offsets. In that
