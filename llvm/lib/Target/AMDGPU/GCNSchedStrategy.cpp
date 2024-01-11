@@ -706,6 +706,7 @@ bool UnclusteredHighRPStage::initGCNSchedStage() {
   if (DAG.RegionsWithHighRP.none() && DAG.RegionsWithExcessRP.none())
     return false;
 
+  errs() << "Running Unlclustered highRPstage\n";
   SavedMutations.swap(DAG.Mutations);
   DAG.addMutation(createIGroupLPDAGMutation(/*IsPostRA=*/false));
 
@@ -1119,12 +1120,15 @@ bool UnclusteredHighRPStage::shouldRevertScheduling(unsigned WavesAfter) {
        mayCauseSpilling(WavesAfter)) ||
       GCNSchedStage::shouldRevertScheduling(WavesAfter)) {
     LLVM_DEBUG(dbgs() << "Unclustered reschedule did not help.\n");
+    errs() << "Revert unclust, didn't help\n";
     return true;
   }
 
   // Do not attempt to relax schedule even more if we are already spilling.
-  if (isRegionWithExcessRP())
+  if (isRegionWithExcessRP()) {
+    errs() << "Don't revert unclust\n";
     return false;
+  }
 
   LLVM_DEBUG(
       dbgs()
@@ -1147,6 +1151,7 @@ bool UnclusteredHighRPStage::shouldRevertScheduling(unsigned WavesAfter) {
       ScheduleMetrics::ScaleFactor;
   LLVM_DEBUG(dbgs() << "\tMetric before " << MBefore << "\tMetric after "
                     << MAfter << "Profit: " << Profit << "\n");
+  errs() << "Revert clust profit ? " << (Profit < ScheduleMetrics::ScaleFactor) << "\n";
   return Profit < ScheduleMetrics::ScaleFactor;
 }
 
