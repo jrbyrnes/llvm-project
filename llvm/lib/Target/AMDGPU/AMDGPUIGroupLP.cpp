@@ -1020,7 +1020,7 @@ private:
 
         for (auto &OtherEle : OtherGroup->Collection) {
           for (auto &Succ : OtherEle->Succs) {
-            if (Succ.getSUnit() == SU)
+            if (Succ.getSUnit() == SU && Succ.getKind() == SDep::Data)
 	      return true;
           }
         }
@@ -1056,8 +1056,9 @@ private:
 
         for (auto &OtherEle : OtherGroup->Collection) {
           for (auto &Succ : OtherEle->Succs) {
+            if (Succ.getKind() != SDep::Data) continue;
             for (auto &SecondSucc : Succ.getSUnit()->Succs)
-              if (SecondSucc.getSUnit() == SU)
+              if (SecondSucc.getSUnit() == SU && SecondSucc.getKind() == SDep::Data)
                 return true;
           }
         }
