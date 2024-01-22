@@ -71,7 +71,7 @@ char SIInsertWaveBarrier::ID = 0;
 char &llvm::SIInsertWaveBarrierID = SIInsertWaveBarrier::ID;
 
 bool SIInsertWaveBarrier::runOnMachineFunction(MachineFunction &MF) {
-//    return false;
+    return false;
     errs() << "SIInsertWaveBarrier\n";
     const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
     const SIInstrInfo *TII = ST.getInstrInfo();
