@@ -176,6 +176,7 @@ multiclass SICommonWriteRes {
   // need to consume 2 or 4 more vgprs to be initialized before the acc
   // write sequence. Just assume worst case here.
   def : ReadAdvance<MIMFMARead, -4>;
+
 }
 
 def PredIsVGPR32Copy : SchedPredicate<[{TII->isVGPRCopy(*MI) && TII->getOpSize(*MI, 0) <= 32}]>;
@@ -307,8 +308,8 @@ def : HWWriteRes<WriteSALU,          [HWSALU,   HWRC], 2>;
 def : HWWriteRes<WriteSMEM,          [HWLGKM,   HWRC], 20>;
 def : HWWriteRes<WriteVMEM,          [HWVMEM,   HWRC], 320>;
 def : HWWriteRes<WriteBarrier,       [HWBranch],       2000>;
-} // End RetireOOO = 1
 
+} // End RetireOOO = 1
 def : InstRW<[WriteCopy], (instrs COPY)>;
 
 }  // End SchedModel = GFX10SpeedModel
@@ -336,5 +337,4 @@ def : HWWriteRes<WriteVMEM,          [HWVMEM,   HWRC], 320>;
 def : HWWriteRes<WriteBarrier,       [HWBranch],       2000>;
 
 def : InstRW<[WriteCopy], (instrs COPY)>;
-
 }  // End SchedModel = GFX11SpeedModel

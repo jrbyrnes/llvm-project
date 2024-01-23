@@ -843,6 +843,7 @@ unsigned GCNSubtarget::getMaxNumVGPRs(const MachineFunction &MF) const {
 
 void GCNSubtarget::adjustSchedDependency(SUnit *Def, int DefOpIdx, SUnit *Use,
                                          int UseOpIdx, SDep &Dep) const {
+
   if (Dep.getKind() != SDep::Kind::Data || !Dep.getReg() ||
       !Def->isInstr() || !Use->isInstr())
     return;
