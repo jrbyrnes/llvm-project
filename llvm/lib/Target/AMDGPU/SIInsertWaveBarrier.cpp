@@ -26,7 +26,7 @@
 
 using namespace llvm;
 
-#define DEBUG_TYPE "si-pre-allocate-wwm-regs"
+#define DEBUG_TYPE "si-insert-wave"
 
 namespace {
 
@@ -62,20 +62,21 @@ private:
 } // End anonymous namespace.
 
 INITIALIZE_PASS_BEGIN(SIInsertWaveBarrier, DEBUG_TYPE,
-                "SI Pre-allocate WWM Registers", false, false)
+                "si-insert-wave", false, false)
 INITIALIZE_PASS_END(SIInsertWaveBarrier, DEBUG_TYPE,
-                "SI Pre-allocate WWM Registers", false, false)
+                "si-insert-wave ", false, false)
 
 char SIInsertWaveBarrier::ID = 0;
 
 char &llvm::SIInsertWaveBarrierID = SIInsertWaveBarrier::ID;
 
 bool SIInsertWaveBarrier::runOnMachineFunction(MachineFunction &MF) {
-    return false;
+//    return false;
     errs() << "SIInsertWaveBarrier\n";
     const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
     const SIInstrInfo *TII = ST.getInstrInfo();
     bool HasIGLP = false;
+    auto &MRI = MF.getRegInfo();;
 
     for (auto &MBB : MF) {
         for (auto &MI : MBB) {
@@ -92,6 +93,32 @@ bool SIInsertWaveBarrier::runOnMachineFunction(MachineFunction &MF) {
                     errs() << "MFMA\n";
                     MFMAs.push_back(&MI);
                 }
+                auto Opc = MI.getOpcode();
+		if (TII->isTRANS(Opc) || Opc == AMDGPU::V_CVT_F16_F32_e32 || Opc == AMDGPU::V_MUL_F32_e32 || Opc == AMDGPU::V_FMA_F32_e64) {
+		  auto Op0 = MI.getOperand(0);
+                  if (Op0.isReg()) {
+		    auto OpReg = Op0.getReg();
+		    if (OpReg.isVirtual()) {
+      		      MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR254);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR253);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR252);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR251);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR250);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR249);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR248);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR247);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR246);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR245);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR244);
+MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR243);
+                     errs() << "Added hint to: "; Op0.dump(); MI.dump();
+                    }
+                  }
+
+
+                }
+
+
             }
 
             auto MFMACount = MFMAs.size();
@@ -103,8 +130,8 @@ bool SIInsertWaveBarrier::runOnMachineFunction(MachineFunction &MF) {
 //              BuildMI(MBB, InstPt, InstPt->getDebugLoc(), TII->get(AMDGPU::S_BARRIER));
 //            }
 //            BuildMI(MBB, InstPt, InstPt->getDebugLoc(), TII->get(AMDGPU::S_BARRIER));
-            InstPt = MFMAs[MFMACount/2];
-            BuildMI(MBB, InstPt, InstPt->getDebugLoc(), TII->get(AMDGPU::S_BARRIER));
+//            InstPt = MFMAs[MFMACount/2];
+//            BuildMI(MBB, InstPt, InstPt->getDebugLoc(), TII->get(AMDGPU::S_BARRIER));
 
             
         }

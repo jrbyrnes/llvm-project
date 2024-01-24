@@ -1527,6 +1527,11 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   unsigned MulCount = 0;
   std::optional<MachineInstr *> InitialMFMA;
   SmallVector<SUnit *, 16> ExpCache;
+
+    const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
+    const SIInstrInfo *TII = ST.getInstrInfo();
+    auto &MRI = DAG->MF.getRegInfo();;
+
   for (SUnit SU : DAG->SUnits){
     if (TII->isTRANS(SU.getInstr()->getOpcode()))
       ++TransCount;
@@ -1541,7 +1546,37 @@ void ExpInterleaveOpt::applyIGLPStrategy(
    }
    if (TII->isDS(SU.getInstr()->getOpcode()) && SU.getInstr()->mayLoad())
      ++DSRCount;
+
+   auto MI = SU.getInstr();
+                auto Opc = MI->getOpcode();
+                if (TII->isTRANS(Opc) || Opc == AMDGPU::V_CVT_F16_F32_e32 || Opc == AMDGPU::V_MUL_F32_e32 || Opc == AMDGPU::V_FMA_F32_e64) {
+                  auto Op0 = MI->getOperand(0);
+                  if (Op0.isReg()) {
+                    auto OpReg = Op0.getReg();
+                    if (OpReg.isVirtual()) {
+                      MRI.setRegAllocationHint(OpReg, 0, AMDGPU::VGPR254);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR253);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR252);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR251);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR250);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR249);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR248);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR247);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR246);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR245);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR244);
+MRI.addRegAllocationHint(OpReg, AMDGPU::VGPR243);
+                     errs() << "Added hint to: "; Op0.dump(); MI->dump();
+                    }
+                  }
+
+
+                }
+
+
+
   }
+  return;
   auto TempDAG = DAG;
 
   for (SUnit SU : DAG->SUnits){

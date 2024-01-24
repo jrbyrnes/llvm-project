@@ -369,8 +369,11 @@ unsigned DefaultPriorityAdvisor::getPriority(const LiveInterval &LI) const {
     Prio |= (1u << 31);
 
     // Boost ranges that have a physical register hint.
-    if (VRM->hasKnownPreference(Reg))
+    if (VRM->hasKnownPreference(Reg)) {
+      errs() << "Has KNown pref\n";
+      LI.dump();
       Prio |= (1u << 30);
+    }
   }
 
   return Prio;

@@ -117,6 +117,8 @@ bool VirtRegMap::hasPreferredPhys(Register VirtReg) const {
 
 bool VirtRegMap::hasKnownPreference(Register VirtReg) const {
   std::pair<unsigned, Register> Hint = MRI->getRegAllocationHint(VirtReg);
+  printReg(Hint.second, TRI, 0, MRI);
+  printReg(VirtReg.id());
   if (Hint.second.isPhysical())
     return true;
   if (Hint.second.isVirtual())
