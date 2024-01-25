@@ -855,7 +855,8 @@ bool GCNSchedStage::initGCNRegion() {
     SavedMutations.swap(DAG.Mutations);
     bool IsInitialStage = StageID == GCNSchedStageID::OccInitialSchedule ||
                           StageID == GCNSchedStageID::ILPInitialSchedule;
-    DAG.addMutation(createIGroupLPDAGMutation(IsInitialStage ? IGLPPhase::Initial : IGLPPhase::PreRAReentry));
+    DAG.addMutation(createIGroupLPDAGMutation(
+        IsInitialStage ? IGLPPhase::Initial : IGLPPhase::PreRAReentry));
   }
 
   return true;
