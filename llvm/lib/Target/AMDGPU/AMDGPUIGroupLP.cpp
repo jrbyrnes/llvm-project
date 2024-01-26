@@ -277,6 +277,8 @@ typedef SmallVector<SUToCandSGsPair, 4> SUsToCandSGsVec;
 class PipelineSolver {
   ScheduleDAGMI *DAG;
 
+  std::vector<std::vector<SUnit *>> FittedSUs;
+
   // Instructions that can be assigned to multiple SchedGroups
   DenseMap<int, SUnitsToCandidateSGsMap> SyncedInstrs;
   SmallVector<SUsToCandSGsVec, 4> PipelineInstrs;
@@ -419,6 +421,8 @@ void PipelineSolver::convertSyncMapsToArrays() {
 
   int PipelineIDx = SyncedInstrs.size() - 1;
   PipelineInstrs.resize(SyncedInstrs.size());
+  FittedSUs.resize(SyncedInstrs.size());
+
   for (auto &SyncInstrMap : SyncedInstrs) {
     for (auto &SUsToCandSGs : SyncInstrMap.second) {
       if (PipelineInstrs[PipelineIDx].size() == 0) {
@@ -785,9 +789,17 @@ bool PipelineSolver::solveGreedy() {
 
   while (static_cast<size_t>(CurrSyncGroupIdx) < PipelineInstrs.size()) {
     SUToCandSGsPair CurrSU = PipelineInstrs[CurrSyncGroupIdx][CurrConflInstNo];
+    auto &SUsPerPipeline = FittedSUs[CurrSyncGroupIdx];
+    auto TheSU = CurrSU.first;
+    if (std::find(SUsPerPipeline.begin(), SUsPerPipeline.end(), TheSU) != SUsPerPipeline.end()) {
+      advancePosition();
+      continue;
+    }
+
     IsBottomUp
         ? greedyFind(AddedEdges, CurrSU.second.rbegin(), CurrSU.second.rend())
         : greedyFind(AddedEdges, CurrSU.second.begin(), CurrSU.second.end());
+    SUsPerPipeline.push_back(TheSU);
     advancePosition();
   }
   BestPipeline = CurrPipeline;
