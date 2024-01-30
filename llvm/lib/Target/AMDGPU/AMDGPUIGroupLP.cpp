@@ -1259,17 +1259,21 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     }
   }
 
-  assert(MFMAPredCount <= MFMACount);
+  //assert(MFMAPredCount <= MFMACount);
   MFMANonPredCount = MFMACount - MFMAPredCount;
   bool IsSmallKernel = MFMANonPredCount < (TransCount - 1);
-  assert(CvtCount == TransCount - 1);
-  assert(FMACount == CvtCount);
-  assert(TransCount >= 10);
+
+  errs() << "MFMANonPredCount: " << MFMANonPredCount << ", TransCount: " << TransCount << ", FMACount: " << FMACount <<  "\n";
+  bool HasFMA = FMACount > 0;
+  //assert(CvtCount == TransCount - 1);
+  //assert(FMACount == CvtCount);
+  //assert(TransCount >= 10);
 
   unsigned PipelineSyncID = 0;
   SchedGroup *SG = nullptr;
 
   if (IsSmallKernel && !IsPostRA) {
+    errs() << "Is Small Kernel\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
@@ -1394,6 +1398,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   }
 
   if (!IsSmallKernel && !IsPostRA) {
+    errs() << "!IsSmallKernel\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID(), false));
@@ -1648,17 +1653,22 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-  if (!IsSmallKernel && IsPostRA) {
+  if (!IsSmallKernel && (IsPostRA)) {
+    errs() << "Small kernel posta\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 6, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), true));
+    SG->addRule(
+          std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     for (unsigned I = 0; I < (TransCount - 7); I++) {
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(
+      if (!IsPostRA) SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
+      else SG->addRule(
           std::make_shared<IsNthMFMA>(MFMACount / 2, TII, SG->getSGID(), true));
+      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), true));
@@ -1669,8 +1679,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 6, PipelineSyncID, DAG, TII);
-    SG->addRule(
+    if (!IsPostRA) SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
+    else SG->addRule(
         std::make_shared<IsNthMFMA>(MFMACount / 2, TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 }
 
@@ -2253,11 +2265,11 @@ bool SchedGroup::canAddMI(const MachineInstr &MI) const {
            MI.getOpcode() == AMDGPU::V_EXP_F32_e32)
     Result = true;
 
-    LLVM_DEBUG(
-        dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10,
-        true)
-               << (Result ? " could classify " : " unable to classify ") <<
-               MI);
+    //LLVM_DEBUG(
+      //  dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10,
+        //true)
+          //     << (Result ? " could classify " : " unable to classify ") <<
+            //   MI);
 
   return Result;
 }
