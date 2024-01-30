@@ -940,6 +940,11 @@ private:
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
 
 
+        if (!std::any_of(SU->Succs.begin(), SU->Succs.end(), [](const SDep &Succ) {
+            return Succ.getSUnit()->getInstr()->getOpcode() == AMDGPU::V_CVT_F16_F32_e32;})) {
+          errs() << "No Succ\n";
+          return false;
+        }
 
         bool FoundThing = 0;
         for (auto Succ : SU->Succs) {
@@ -961,12 +966,90 @@ private:
             }
           }
         }
-
+       errs() << "Is Exp pipe: " << FoundThing << "\n";
        return FoundThing;
 
     }
     IsExpPipe(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
         : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
+  class ProduceSameMFMAWithPrevN final : public InstructionRule {
+  private:
+    unsigned Number = 1;
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      SchedGroup *OtherGroup = nullptr;
+      errs() << "Produce Same MFMA as SG: " << SGID - Number << "?\n";
+      for (auto &PipeSG : SyncPipe) {
+        if ((unsigned)PipeSG.getSGID() == SGID - Number) {
+          OtherGroup = &PipeSG;
+        }
+      }
+
+      if (!OtherGroup)
+        return false;
+      if (!OtherGroup->Collection.size())
+        return true;
+
+      if (Cache->empty()) {
+        bool FoundThing = 0;
+        for (auto &OtherSU : OtherGroup->Collection) {
+          if (FoundThing) break;
+          for (auto Succ : OtherSU->Succs) {
+            if (FoundThing) break;
+            for (auto Succ2 : Succ.getSUnit()->Succs) {
+              if (FoundThing) break;
+              if (TII->isMFMAorWMMA(*Succ2.getSUnit()->getInstr())) {
+//                errs() << "TransPipe: SU(" << SU.NodeNum << ")\n";
+                Cache->push_back(Succ2.getSUnit());
+                FoundThing = 1;
+                break;
+              }
+              for (auto Succ3 : Succ2.getSUnit()->Succs) {
+                if (TII->isMFMAorWMMA(*Succ3.getSUnit()->getInstr())) {
+  //                errs() << "TransPipe: SU(" << SU.NodeNum << ")\n";
+                  Cache->push_back(Succ3.getSUnit());
+                  FoundThing = 1;
+                  break;
+                }
+
+              }
+            }
+          }
+        }
+      }
+
+      if (Cache->empty())
+        return false;
+
+      for (auto ele : *Cache) {
+        ele->getInstr()->dump();
+      }
+
+          for (auto Succ : SU->Succs) {
+            for (auto Succ2 : Succ.getSUnit()->Succs) {
+              if (Succ2.getSUnit() == (*Cache)[0]) {
+//                errs() << "Found Succ2 Match: "; Succ2.getSUnit()->getInstr()->dump();
+                return true;
+              }
+              for (auto Succ3 : Succ2.getSUnit()->Succs) {
+                if (Succ3.getSUnit() == (*Cache)[0]) {
+  //                errs() << "Found Succ3 Match: "; Succ3.getSUnit()->getInstr()->dump();
+                  return true;
+                }
+              }
+            }
+          }
+        errs() << "No match\n";
+        return false;
+        }
+
+
+    ProduceSameMFMAWithPrevN(unsigned Number, const SIInstrInfo *TII, unsigned SGID,
+                         bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) , Number(Number) {}
   };
 
 
@@ -1337,6 +1420,9 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     if (TII->isTRANS(SU.getInstr()->getOpcode())) {
       ++TransCount;
       if (!IsPostRA) {
+        if (SU.Succs.size() >= 10) {
+          continue;
+        }
         bool FoundThing = 0;
         for (auto Succ : SU.Succs) {
           if (FoundThing) break;
@@ -1571,125 +1657,81 @@ return;
 
   }
 
-  if ((TransPipeCount > MFMAPipeCount) && !IsPostRA) {
-    errs() << "PipelineTrans, CVTCount, MFMANonPred: " << PipelineTrans << ", " << CvtCount << ", " << MFMANonPredCount << "\n";
+  if ((TransPipeCount > MFMAPipeCount)){// && !IsPostRA) {
+    unsigned Ratio = TransPipeCount / MFMAPipeCount;
+//    errs() << "PipelineTrans, CVTCount, MFMANonPred: " << PipelineTrans << ", " << CvtCount << ", " << MFMANonPredCount << "\n";
+    errs() << "TransPipeCount, MFMAPipeCount: " << TransPipeCount << ", " << MFMAPipeCount << "\n";
+     errs() << "Ratio: " << Ratio << "\n";
     //assert(PipelineTrans == MFMANonPredCount*2);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
     SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(1,TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2,TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(3,TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
+
+    for (unsigned I = 0; I < 4; I++) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
     SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(1, TII, SG->getSGID(), false));
+        std::make_shared<IsSuccOfPrevNthGroup>(4 + I, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
     SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
+    if (I != 0) SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * I,TII, SG->getSGID(), true));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+}
+
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-    SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(3, TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
-    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-    SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(5, TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
-    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-    SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(7, TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
-    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-
-    for (unsigned I = 0; I < (TransPipeCount - 9) / 4; ++I) {
+    auto LoopSize = std::min((TransPipeCount - 8)/Ratio, MFMAPipeCount - (8/Ratio));
+    errs() << "LoopSize: " << LoopSize << "\n";
+    for (unsigned I = 0; I < LoopSize; ++I) {
 
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-      SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(8, TII,
-                                                         SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
-    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-      SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(8, TII,
-                                                         SG->getSGID(), false));
+      if (!IsPostRA) SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
+      if (CvtCount > 0) SG->addRule(std::make_shared<Is2ndSuccOfPrevNthGroup>(8 + ((Ratio == 2 && I != 0) ? 1 : 0), TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
-    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-      SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(8, TII,
-                                                         SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    for (unsigned J = 0; J < Ratio; J++) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
+    SG->addRule(
+        std::make_shared<IsSuccOfPrevNthGroup>(8 + ((Ratio < 4 && I != 0) ? 1 : 0), TII, SG->getSGID(), false));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
     SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-      SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(8, TII,
-                                                         SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    if ((J + Ratio * I) % 4) SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * ((J + Ratio * I)%4) + ((Ratio == 2 && I % 2) ? 1 : 0),TII, SG->getSGID(), true));
+    errs() << "SG tries to match SG" << SG->getSGID() << ": " << 2 * ((J + Ratio * I)%4) + ((Ratio == 2 && I % 2) ? 1 : 0) << "\n";
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+}
 
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
-    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-      SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-      SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(8, TII,
-                                                         SG->getSGID(), false));
-      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
 /*
 
@@ -1726,6 +1768,7 @@ return;
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
+    if (CvtCount > 0) SG->addRule(std::make_shared<Is2ndSuccOfPrevNthGroup>(8 + ((Ratio == 2) ? 1 : 0), TII, SG->getSGID(), false));
     SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
     SG->addRule(
         std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID(), false));
@@ -1735,21 +1778,20 @@ return;
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
+        SchedGroupMask::MFMA, 2, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<SecondMFMAChain>(TII, SG->getSGID(), true));
-    SG->addRule(
-        std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<Is2ndSuccOfPrevNthGroup>(1, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+/*    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);*/
   }
 
   if ((TransPipeCount == MFMAPipeCount) && !IsPostRA) {
-    assert(CvtCount > 0 && "Exp = MFMA with no CVT!");
+//    assert(CvtCount > 0 && "Exp = MFMA with no CVT!");
     errs() << "PipelineTrans, CVTCount, MFMANonPred: " << PipelineTrans << ", " << CvtCount << ", " << MFMANonPredCount << "\n";
-    assert(PipelineTrans == MFMANonPredCount);
+    assert(TransPipeCount == MFMAPipeCount);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID(), false));
@@ -1757,6 +1799,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 2, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
@@ -1773,6 +1816,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(
         std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1790,6 +1834,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(
         std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1807,6 +1852,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(
         std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1829,6 +1875,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(
         std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1846,6 +1893,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(
         std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1870,6 +1918,7 @@ return;
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+      SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
       SG->addRule(
           std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1893,6 +1942,7 @@ return;
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
       SG->addRule(
           std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1921,6 +1971,7 @@ return;
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
       SG->addRule(
           std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1944,6 +1995,7 @@ return;
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
       SG->addRule(
           std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1968,6 +2020,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->addRule(
         std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -2008,6 +2061,7 @@ return;
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 6, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     for (unsigned I = 0; I < (TransCount - 7); I++) {
@@ -2018,6 +2072,7 @@ return;
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsExp>(TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<IsExpPipe>(TII, SG->getSGID(), false));
       SG->addRule(
           std::make_shared<LessThanNSuccs>(10, TII, SG->getSGID(), true));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
