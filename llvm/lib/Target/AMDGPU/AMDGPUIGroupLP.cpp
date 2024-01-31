@@ -971,12 +971,11 @@ private:
       if (!OtherGroup->Collection.size())
         return true;
 
-      for (auto &OtherEle : OtherGroup->Collection) {
-        for (auto &Succ : OtherEle->Succs) {
-          if (Succ.getSUnit() == SU && Succ.getKind() == SDep::Data)
-            return true;
-        }
-      }
+      auto DAG = SyncPipe[0].DAG;
+
+      for (auto &OtherEle : OtherGroup->Collection)
+        if (DAG->IsReachable(const_cast<SUnit *>(SU), OtherEle))
+          return true;
 
       return false;
     }
@@ -1006,17 +1005,12 @@ private:
         return false;
       if (!OtherGroup->Collection.size())
         return true;
+      
+      auto DAG = SyncPipe[0].DAG;
 
-      for (auto &OtherEle : OtherGroup->Collection) {
-        for (auto &Succ : OtherEle->Succs) {
-          if (Succ.getKind() != SDep::Data)
-            continue;
-          for (auto &SecondSucc : Succ.getSUnit()->Succs)
-            if (SecondSucc.getSUnit() == SU &&
-                SecondSucc.getKind() == SDep::Data)
-              return true;
-        }
-      }
+      for (auto &OtherEle : OtherGroup->Collection)
+        if (DAG->IsReachable(const_cast<SUnit *>(SU), OtherEle))
+          return true;
 
       return false;
     }
@@ -1333,18 +1327,18 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
         return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;});
 
-    SUnit *PackPred = std::find_if(TempMFMA->Preds.begin(), TempMFMA->Preds.end(), [](SDep &Pred) {
+    auto PackPred = std::find_if(TempMFMA->Preds.begin(), TempMFMA->Preds.end(), [](SDep &Pred) {
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
-        return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;})->getSUnit();
+        return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;});
 
 
     // Assumes exp wont map to more than one pack
-    MFMAEnablement = std::count_if(PackPred->Succs.begin(), PackPred->Succs.end(), [&TII](SDep &Succ) {
+    MFMAEnablement = std::count_if(PackPred->getSUnit()->Succs.begin(), PackPred->getSUnit()->Succs.end(), [&TII](SDep &Succ) {
         return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());});
 
 
     for (auto &PredSU : ExpPipeCands) {
-      if (DAG->IsReachable(PackPred, &PredSU)) {
+      if (DAG->IsReachable(PackPred->getSUnit(), &PredSU)) {
           ++EXPRequirement;
           break;
         }
@@ -1607,7 +1601,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-  if ((MFMAEnablement == 2 && EXPRequirement == 2) && (IsPostRA)) {
+  if ((MFMAEnablement == 4 && EXPRequirement == 2) && (IsPostRA)) {
     errs() << "Small kernel posta\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 6, PipelineSyncID, DAG, TII);
