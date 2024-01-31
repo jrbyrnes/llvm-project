@@ -1244,7 +1244,6 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
 
-  if (!IsPostRA) {
   SmallVector<SUnit, 10> ExpPipeCands;
   SmallVector<SUnit, 10> MFMAPipeCands;
   SmallVector<SUnit, 10> MFMAPipeSUs;
@@ -1252,9 +1251,8 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   for (SUnit SU : DAG->SUnits) {
     auto Opc = SU.getInstr()->getOpcode();
     if (TII->isTRANS(Opc)) {
-        if (SU.Succs.size() >= 10) {
+        if (SU.Succs.size() >= 7)
           continue;
-        }
         ExpPipeCands.push_back(SU);
       }
     
@@ -1267,6 +1265,9 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
   }
 
+  if (!(PackSUs.size() && MFMAPipeCands.size() && ExpPipeCands.size()))
+    return;
+
     TransPipeCount = 0;
     MFMAPipeCount = 0;
     MFMAEnablement = 0;
@@ -1278,8 +1279,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     for (auto &PredSU : ExpPipeCands) {
       for (auto &SuccSU : MFMAPipeCands) {
         if (DAG->IsReachable(&SuccSU, &PredSU)) {
-          TempExp = PredSU;
-          TempMFMA = SuccSU;
+          if (!TempExp.has_value()) {
+            TempExp = PredSU;
+            TempMFMA = SuccSU;
+          }
           MFMAPipeSUs.push_back(SuccSU);
           ++TransPipeCount;
           break;
@@ -1287,7 +1290,8 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       }
     }
 
-    
+    if (!TempExp.has_value())
+      return;
     // Count the number of MFMAs that are reached by an EXP
     for (auto &SuccSU : MFMAPipeCands) {
       if (std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(), [&SuccSU](SUnit &PotentialMatch){return PotentialMatch.NodeNum == SuccSU.NodeNum;})) {
@@ -1300,7 +1304,6 @@ void ExpInterleaveOpt::applyIGLPStrategy(
           break;
         }
       }
-    }
 
     if (!TempMFMA.has_value() || !TempExp.has_value())
       return;
@@ -1317,12 +1320,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
         return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;});
 
-    if (PackPred == TempMFMA->Preds.end())
-      return;
-
-
     MFMAEnablement = std::count_if(PackPred->getSUnit()->Succs.begin(), PackPred->getSUnit()->Succs.end(), [&TII](SDep &Succ) {
         return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());});
+
+    errs() << "MFMAEnablement, PackSuccCount: " << MFMAEnablement, PackSuccCount << "\n";
     MFMAEnablement *= PackSuccCount;
 
 
@@ -1333,6 +1334,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         }
       }
 
+    errs() << "ExpRequirement PackPredCount : " << EXPRequirement, PackPredCount << "\n"
     EXPRequirement *= PackPredCount;
   }
 
