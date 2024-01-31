@@ -992,14 +992,14 @@ private:
             }
           }
         }
-
+      }
       if (Cache->empty())
         return false;
 
       return DAG->IsReachable((*Cache)[0],const_cast<SUnit*>(SU));
 
-        }
-               }
+
+    }
 
 
     ProduceSameMFMAWithPrevN(unsigned Number, const SIInstrInfo *TII, unsigned SGID,
@@ -1244,14 +1244,13 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
 
+  if (!IsPostRA) {
   SmallVector<SUnit, 10> ExpPipeCands;
   SmallVector<SUnit, 10> MFMAPipeCands;
   SmallVector<SUnit, 10> MFMAPipeSUs;
-
-  if (!IsPostRA) {
+  SmallVector<SUnit, 10> PackSUs;
   for (SUnit SU : DAG->SUnits) {
     auto Opc = SU.getInstr()->getOpcode();
-
     if (TII->isTRANS(Opc)) {
         if (SU.Succs.size() >= 10) {
           continue;
@@ -1261,17 +1260,26 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     
     if (TII->isMFMAorWMMA(*SU.getInstr()))
         MFMAPipeCands.push_back(SU);
-    
-    }
+
+    if (Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11)
+      PackSUs.push_back(SU);
+
+
+  }
 
     TransPipeCount = 0;
     MFMAPipeCount = 0;
     MFMAEnablement = 0;
     EXPRequirement = 0;
 
+    // Count the number of EXPs that reach an MFMA
+    std::optional<SUnit> TempMFMA;
+    std::optional<SUnit> TempExp;
     for (auto &PredSU : ExpPipeCands) {
       for (auto &SuccSU : MFMAPipeCands) {
         if (DAG->IsReachable(&SuccSU, &PredSU)) {
+          TempExp = PredSU;
+          TempMFMA = SuccSU;
           MFMAPipeSUs.push_back(SuccSU);
           ++TransPipeCount;
           break;
@@ -1279,10 +1287,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       }
     }
 
-    std::optional<SUnit> TempMFMA;
+    
+    // Count the number of MFMAs that are reached by an EXP
     for (auto &SuccSU : MFMAPipeCands) {
       if (std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(), [&SuccSU](SUnit &PotentialMatch){return PotentialMatch.NodeNum == SuccSU.NodeNum;})) {
-        TempMFMA = SuccSU;
         ++MFMAPipeCount;
         continue;
       }
@@ -1294,8 +1302,12 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       }
     }
 
-    if (!TempMFMA.has_value())
+    if (!TempMFMA.has_value() || !TempExp.has_value())
       return;
+    
+    unsigned PackSuccCount = std::count_if(PackSUs.begin(), PackSUs.end(), [this, &TempExp](SUnit VPack) {
+        return DAG->IsReachable(&VPack, &*TempExp);});
+
 
     unsigned PackPredCount = std::count_if(TempMFMA->Preds.begin(), TempMFMA->Preds.end(), [](SDep &Pred) {
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
@@ -1309,9 +1321,9 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       return;
 
 
-    // Assumes exp wont map to more than one pack
     MFMAEnablement = std::count_if(PackPred->getSUnit()->Succs.begin(), PackPred->getSUnit()->Succs.end(), [&TII](SDep &Succ) {
         return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());});
+    MFMAEnablement *= PackSuccCount;
 
 
     for (auto &PredSU : ExpPipeCands) {
@@ -1473,7 +1485,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
-    if (CvtCount > 0) SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(8 + ((Ratio == 2) ? 1 : 0), TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(8 + ((Ratio == 2) ? 1 : 0), TII, SG->getSGID(), false));
     SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
     SG->addRule(
         std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID(), false));
@@ -1487,10 +1499,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
     SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
-/*    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);*/
+
   }
 
 
