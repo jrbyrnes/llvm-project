@@ -1335,12 +1335,6 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       }
 
     EXPRequirement *= PackPredCount;
-
-
-
-    
-    
- 
   }
 
   errs() << "MFMAEnablement: " << MFMAEnablement << ", ExpRequirement: " << EXPRequirement << "\n";
@@ -1359,7 +1353,13 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   unsigned PipelineSyncID = 0;
   SchedGroup *SG = nullptr;
 
-  if ((MFMAEnablement == 2 && EXPRequirement == 2) && !IsPostRA) {
+  bool IsSmallKernelType = MFMAEnablement == 2 && EXPRequirement == 2 && TransPipeCount == 32;
+  bool IsLargeKernelType = MFMAEnablement == 4 && EXPRequirement == 2 && TransPipeCount == 64;
+
+  if (!(IsSmallKernelType || IsLargeKernelType))
+    return;
+
+  if (IsSmallKernelType && !IsPostRA) {
     errs() << "Is Small Kernel\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 4, PipelineSyncID, DAG, TII);
@@ -1422,7 +1422,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-  if ((MFMAEnablement == 4 && EXPRequirement == 2) && !IsPostRA) {
+  if (IsLargeKernelType && !IsPostRA) {
     errs() << "!IsSmallKernel\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
@@ -1439,7 +1439,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
       SG->addRule(
-          std::make_shared<IsSuccOfPrevNthGroup>(I == 0 ? 1 : 4, TII, SG->getSGID(), false));
+          std::make_shared<Is2ndSuccOfPrevNthGroup>(I == 0 ? 1 : 4, TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
@@ -1462,7 +1462,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
       SG->addRule(
-          std::make_shared<IsSuccOfPrevNthGroup>(5, TII, SG->getSGID(), false));
+          std::make_shared<Is2ndSuccOfPrevNthGroup>(5, TII, SG->getSGID(), false));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
@@ -1487,7 +1487,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
         SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-        SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(I == 0 ? 5 + J : 6, TII,
+        SG->addRule(std::make_shared<Is2ndSuccOfPrevNthGroup>(I == 0 ? 5 + J : 6, TII,
                                                          SG->getSGID(), false));
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1517,7 +1517,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
         SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
-        SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(7, TII,
+        SG->addRule(std::make_shared<Is2ndSuccOfPrevNthGroup>(7, TII,
                                                          SG->getSGID(), false));
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1542,7 +1542,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
     SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(7, TII, SG->getSGID(), false));
+        std::make_shared<Is2ndSuccOfPrevNthGroup>(7, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
@@ -1564,7 +1564,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
     SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(6, TII, SG->getSGID(), true));
+        std::make_shared<Is2ndSuccOfPrevNthGroup>(6, TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1577,7 +1577,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
     SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(4, TII, SG->getSGID(), false));
+        std::make_shared<Is2ndSuccOfPrevNthGroup>(4, TII, SG->getSGID(), false));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1586,7 +1586,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-  if ((MFMAEnablement == 4 && EXPRequirement == 2) && (IsPostRA)) {
+  if (IsLargeKernelType && (IsPostRA)) {
     errs() << "Small kernel posta\n";
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 6, PipelineSyncID, DAG, TII);
