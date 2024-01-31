@@ -917,7 +917,7 @@ private:
   public:
     bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
-
+      
       if (!std::any_of(SU->Succs.begin(), SU->Succs.end(), [](const SDep &Succ) {
           auto Opc = Succ.getSUnit()->getInstr()->getOpcode();
           return Opc == AMDGPU::V_CVT_F16_F32_e32 || Opc == AMDGPU::V_CVT_F16_F32_e32_gfx10 || Opc == AMDGPU::V_CVT_I32_F32_e32 || Opc == AMDGPU::V_CVT_I32_F32_e32_gfx10 || Opc == AMDGPU::V_CVT_I32_F32_e32_gfx11;})) {
@@ -930,9 +930,10 @@ private:
       if (Cache->empty()) {
         auto I = DAG->SUnits.rbegin();
         auto E = DAG->SUnits.rend();
-        for (; I != E; I++)
+        for (; I != E; I++) {
           if (TII->isMFMAorWMMA(*(I->getInstr())))
             Cache->push_back(&*I);
+        }
       }
 
       if (Cache->empty())
@@ -1349,7 +1350,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
   bool IsSmallKernelType = MFMAEnablement == 2 && EXPRequirement == 4 && TransPipeCount == 32;
   bool IsLargeKernelType = MFMAEnablement == 4 && EXPRequirement == 4 && TransPipeCount == 64;
-  bool IsNewSmallKernelType = MFMAEnablement == 1 && EXPRequirement == 4 && TransPipeCount == 34;
+  bool IsNewSmallKernelType = MFMAEnablement == 1 && EXPRequirement == 4 && TransPipeCount == 32;
 
   if (!(IsSmallKernelType || IsLargeKernelType || IsNewSmallKernelType))
     return;
@@ -1429,21 +1430,21 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     //assert(PipelineTrans == MFMANonPredCount*2);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
     SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(1,TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
     SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2,TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
     SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(3,TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
@@ -1456,7 +1457,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
     if (I != 0) SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * I,TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 }
@@ -1483,7 +1484,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
     if ((J + Ratio * I) % 4) SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * ((J + Ratio * I)%4) + ((Ratio == 2 && I % 2) ? 1 : 0),TII, SG->getSGID(), true));
     errs() << "SG tries to match SG" << SG->getSGID() << ": " << 2 * ((J + Ratio * I)%4) + ((Ratio == 2 && I % 2) ? 1 : 0) << "\n";
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
