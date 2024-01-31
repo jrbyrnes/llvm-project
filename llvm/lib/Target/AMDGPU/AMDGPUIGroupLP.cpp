@@ -1244,6 +1244,8 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
 
+
+  if (!IsPostRA) {
   SmallVector<SUnit, 10> ExpPipeCands;
   SmallVector<SUnit, 10> MFMAPipeCands;
   SmallVector<SUnit, 10> MFMAPipeSUs;
@@ -1265,8 +1267,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
   }
 
-  if (!(PackSUs.size() && MFMAPipeCands.size() && ExpPipeCands.size()))
+  if (!(PackSUs.size() && MFMAPipeCands.size() && ExpPipeCands.size())) {
+    errs() << "Failed collection\n";
     return;
+  }
 
     TransPipeCount = 0;
     MFMAPipeCount = 0;
@@ -1290,8 +1294,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       }
     }
 
-    if (!TempExp.has_value())
-      return;
+    if (!TempExp.has_value()) {
+      errs() << "No Temp EXP\n";
+      return;;
+    }
     // Count the number of MFMAs that are reached by an EXP
     for (auto &SuccSU : MFMAPipeCands) {
       if (std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(), [&SuccSU](SUnit &PotentialMatch){return PotentialMatch.NodeNum == SuccSU.NodeNum;})) {
@@ -1304,6 +1310,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
           break;
         }
       }
+    }
 
     if (!TempMFMA.has_value() || !TempExp.has_value())
       return;
@@ -1323,27 +1330,26 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     MFMAEnablement = std::count_if(PackPred->getSUnit()->Succs.begin(), PackPred->getSUnit()->Succs.end(), [&TII](SDep &Succ) {
         return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());});
 
-    errs() << "MFMAEnablement, PackSuccCount: " << MFMAEnablement, PackSuccCount << "\n";
     MFMAEnablement *= PackSuccCount;
 
 
     for (auto &PredSU : ExpPipeCands) {
       if (DAG->IsReachable(PackPred->getSUnit(), &PredSU)) {
           ++EXPRequirement;
-          break;
         }
       }
-
-    errs() << "ExpRequirement PackPredCount : " << EXPRequirement, PackPredCount << "\n"
+    
+    errs() << "ExpRequirement PackPredCount : " << EXPRequirement << ", " << PackPredCount << "\n";
     EXPRequirement *= PackPredCount;
   }
+
 
   errs() << "MFMAEnablement: " << MFMAEnablement << ", ExpRequirement: " << EXPRequirement << "\n";
   errs() << "TransPipeCount: " << TransPipeCount << ", MFMAPipeCount: " << MFMAPipeCount <<  "\n";
 
-  bool IsSmallKernelType = MFMAEnablement == 2 && EXPRequirement == 2 && TransPipeCount == 32;
-  bool IsLargeKernelType = MFMAEnablement == 4 && EXPRequirement == 2 && TransPipeCount == 64;
-  bool IsNewSmallKernelType = MFMAEnablement == 1 && EXPRequirement == 2 && TransPipeCount == 34;
+  bool IsSmallKernelType = MFMAEnablement == 2 && EXPRequirement == 4 && TransPipeCount == 32;
+  bool IsLargeKernelType = MFMAEnablement == 4 && EXPRequirement == 4 && TransPipeCount == 64;
+  bool IsNewSmallKernelType = MFMAEnablement == 1 && EXPRequirement == 4 && TransPipeCount == 34;
 
   if (!(IsSmallKernelType || IsLargeKernelType || IsNewSmallKernelType))
     return;
