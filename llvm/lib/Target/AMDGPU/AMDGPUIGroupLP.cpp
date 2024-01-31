@@ -1403,7 +1403,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
     SG->addRule(
-        std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID(), false));
+        std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 2, PipelineSyncID, DAG, TII);
@@ -1421,13 +1421,8 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-    if (IsNewSmallKernelType){// && !IsPostRA) {
-    errs() << " K2\n";
-    unsigned Ratio = TransPipeCount / MFMAPipeCount;
-//    errs() << "PipelineTrans, CVTCount, MFMANonPred: " << PipelineTrans << ", " << CvtCount << ", " << MFMANonPredCount << "\n";
-    errs() << "TransPipeCount, MFMAPipeCount: " << TransPipeCount << ", " << MFMAPipeCount << "\n";
-     errs() << "Ratio: " << Ratio << "\n";
-    //assert(PipelineTrans == MFMANonPredCount*2);
+    if (IsNewSmallKernelType) {
+
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
@@ -1451,42 +1446,41 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     for (unsigned I = 0; I < 4; I++) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
     SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(4 + I, TII, SG->getSGID(), false));
+        std::make_shared<IsSuccOfPrevNthGroup>(4 + I, TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
-    if (I != 0) SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * I,TII, SG->getSGID(), true));
+    if (I != 0)
+      SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * I,TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 }
 
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
-    auto LoopSize = std::min((TransPipeCount - 8)/Ratio, MFMAPipeCount - (8/Ratio));
-    errs() << "LoopSize: " << LoopSize << "\n";
-    for (unsigned I = 0; I < LoopSize; ++I) {
+    for (unsigned I = 0; I < 6; ++I) {
 
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
-      SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(8 + ((Ratio == 2 && I != 0) ? 1 : 0), TII, SG->getSGID(), false));
+      SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(8, TII, SG->getSGID()));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
 
-    for (unsigned J = 0; J < Ratio; J++) {
+    for (unsigned J = 0; J < 4; J++) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
     SG->addRule(
-        std::make_shared<IsSuccOfPrevNthGroup>(8 + ((Ratio < 4 && I != 0) ? 1 : 0), TII, SG->getSGID(), false));
+        std::make_shared<IsSuccOfPrevNthGroup>(8, TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
-    if ((J + Ratio * I) % 4) SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * ((J + Ratio * I)%4) + ((Ratio == 2 && I % 2) ? 1 : 0),TII, SG->getSGID(), true));
-    errs() << "SG tries to match SG" << SG->getSGID() << ": " << 2 * ((J + Ratio * I)%4) + ((Ratio == 2 && I % 2) ? 1 : 0) << "\n";
+    if ((J + 4 * I) % 4) 
+      SG->addRule(std::make_shared<ProduceSameMFMAWithPrevN>(2 * ((J + 4 * I) % 4),TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 }
 
@@ -1494,19 +1488,19 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(8 + ((Ratio == 2) ? 1 : 0), TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(8, TII, SG->getSGID()));
     SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
     SG->addRule(
-        std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID(), false));
+        std::make_shared<IsNotSuccOfPrevGroup>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VALU, 4, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 2, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
-    SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1, TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1, TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
   }
@@ -1572,7 +1566,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
             SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
         SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
         SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(
-            I == 0 ? 16 + J : 20, TII, SG->getSGID(), false));
+            I == 0 ? 16 + J : 20, TII, SG->getSGID()));
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1602,7 +1596,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
             SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
         SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
         SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(
-            I == 0 ? 19 : 21 - J, TII, SG->getSGID(), false));
+            I == 0 ? 19 : 21 - J, TII, SG->getSGID()));
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2054,14 +2048,14 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::DS_WRITE, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsSuccOfPrevGroup>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsSuccOfPrevGroup>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VMEM_READ, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<SharesPredWithPrevNthGroup>(
         1, TII, SG->getSGID(), true));
-    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2072,7 +2066,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
         SchedGroupMask::VMEM_READ, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<SharesPredWithPrevNthGroup>(
         3, TII, SG->getSGID(), true));
-    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2090,7 +2084,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::VMEM_READ, 4, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2111,7 +2105,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::DS_WRITE, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsSuccOfPrevGroup>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsSuccOfPrevGroup>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2125,7 +2119,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::DS_WRITE, 1, PipelineSyncID, DAG, TII);
-    SG->addRule(std::make_shared<IsSuccOfPrevGroup>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<IsSuccOfPrevGroup>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2136,7 +2130,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
         SchedGroupMask::VMEM_READ, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<SharesPredWithPrevNthGroup>(
         2, TII, SG->getSGID(), true));
-    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2147,7 +2141,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
         SchedGroupMask::VMEM_READ, 4, PipelineSyncID, DAG, TII);
     SG->addRule(std::make_shared<SharesPredWithPrevNthGroup>(
         4, TII, SG->getSGID(), true));
-    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID(), false));
+    SG->addRule(std::make_shared<VMEMSize>(TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
