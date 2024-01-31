@@ -964,7 +964,8 @@ private:
   public:
     bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
-      return SU->getInstr()->getOpcode() == AMDGPU::V_CVT_F16_F32_e32;
+      auto Opc = SU->getInstr()->getOpcode();
+      return Opc == AMDGPU::V_CVT_F16_F32_e32 || Opc == AMDGPU::V_CVT_F16_F32_e32_gfx10 || Opc == AMDGPU::V_CVT_I32_F32_e32 || Opc == AMDGPU::V_CVT_I32_F32_e32_gfx10 || Opc == AMDGPU::V_CVT_I32_F32_e32_gfx11;
     }
     IsCvt(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
         : InstructionRule(TII, SGID, NeedsCache) {}
@@ -1133,9 +1134,10 @@ private:
 
       SmallVector<SUnit *, 12> Worklist;
       auto DAG = SyncPipe[0].DAG;
+      auto TII = SyncPipe[0].TII;
       if (Cache->empty()) {
         for (auto &SU : DAG->SUnits)
-          if (SU.getInstr()->getOpcode() == AMDGPU::V_EXP_F32_e32)
+          if (TII->isTRANS(SU.getInstr()->getOpcode()))
             Cache->push_back(&SU);
       }
 
@@ -1243,7 +1245,6 @@ void ExpInterleaveOpt::applyIGLPStrategy(
   // Count the number of MFMA instructions.
   unsigned MFMACount = 0;
   unsigned TransCount = 0;
-  unsigned CvtCount = 0;
   unsigned FMACount = 0;
 
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
@@ -1263,10 +1264,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
         ExpPipeCands.push_back(SU);
       }
     }
-    if (SU.getInstr()->getOpcode() == AMDGPU::V_CVT_I32_F32_e32 ||
-        SU.getInstr()->getOpcode() == AMDGPU::V_CVT_F16_F32_e32) {
-      ++CvtCount;
-    }
+
     if (SU.getInstr()->getOpcode() == AMDGPU::V_FMA_F32_e64) {
       ++FMACount;
     }
@@ -1320,6 +1318,9 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     auto PackPred = std::find_if(TempMFMA->Preds.begin(), TempMFMA->Preds.end(), [](SDep &Pred) {
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
         return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;});
+
+    if (PackPred == TempMFMA->Preds.end())
+      return;
 
 
     // Assumes exp wont map to more than one pack
@@ -1597,9 +1598,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     for (unsigned I = 0; I < (TransPipeCount - 7); I++) {
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::MFMA, 1, PipelineSyncID, DAG, TII);
-      if (!IsPostRA) SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
-      else SG->addRule(
-          std::make_shared<IsNthMFMA>(MFMACount / 2, TII, SG->getSGID(), true));
+      SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
@@ -1610,9 +1609,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::MFMA, 6, PipelineSyncID, DAG, TII);
-    if (!IsPostRA) SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
-    else SG->addRule(
-        std::make_shared<IsNthMFMA>(MFMACount / 2, TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 }
