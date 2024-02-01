@@ -918,12 +918,6 @@ private:
     bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
       
-      if (!std::any_of(SU->Succs.begin(), SU->Succs.end(), [](const SDep &Succ) {
-          auto Opc = Succ.getSUnit()->getInstr()->getOpcode();
-          return Opc == AMDGPU::V_CVT_F16_F32_e32 || Opc == AMDGPU::V_CVT_F16_F32_e32_gfx10 || Opc == AMDGPU::V_CVT_I32_F32_e32 || Opc == AMDGPU::V_CVT_I32_F32_e32_gfx10 || Opc == AMDGPU::V_CVT_I32_F32_e32_gfx11;})) {
-        return false;
-      }
-
       auto DAG = SyncPipe[0].DAG;
       auto TII = SyncPipe[0].TII;
 
@@ -1247,23 +1241,23 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
 
   if (!IsPostRA) {
-  SmallVector<SUnit, 10> ExpPipeCands;
-  SmallVector<SUnit, 10> MFMAPipeCands;
-  SmallVector<SUnit, 10> MFMAPipeSUs;
-  SmallVector<SUnit, 10> PackSUs;
-  for (SUnit SU : DAG->SUnits) {
+  SmallVector<SUnit *, 10> ExpPipeCands;
+  SmallVector<SUnit *, 10> MFMAPipeCands;
+  SmallVector<SUnit *, 10> MFMAPipeSUs;
+  SmallVector<SUnit *, 10> PackSUs;
+  for (SUnit &SU : DAG->SUnits) {
     auto Opc = SU.getInstr()->getOpcode();
     if (TII->isTRANS(Opc)) {
         if (SU.Succs.size() >= 7)
           continue;
-        ExpPipeCands.push_back(SU);
+        ExpPipeCands.push_back(&SU);
       }
     
     if (TII->isMFMAorWMMA(*SU.getInstr()))
-        MFMAPipeCands.push_back(SU);
+        MFMAPipeCands.push_back(&SU);
 
     if (Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11)
-      PackSUs.push_back(SU);
+      PackSUs.push_back(&SU);
 
 
   }
@@ -1278,12 +1272,28 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     MFMAEnablement = 0;
     EXPRequirement = 0;
 
+    errs() << "ExpPipeCands: \n";
+    for (auto &S : ExpPipeCands) {
+      errs() << "SU(" << S->NodeNum << ")\n";
+    }
+
+    errs() << "MFMAPipeCands: \n";
+    for (auto &S : MFMAPipeCands) {
+      errs() << "SU(" << S->NodeNum << ")\n";
+    }
+
+    errs() << "PackSUs: \n";
+    for (auto &S : PackSUs) {
+      errs() << "SU(" << S->NodeNum << ")\n";
+    }
+
+
     // Count the number of EXPs that reach an MFMA
-    std::optional<SUnit> TempMFMA;
-    std::optional<SUnit> TempExp;
+    std::optional<SUnit *> TempMFMA;
+    std::optional<SUnit *> TempExp;
     for (auto &PredSU : ExpPipeCands) {
       for (auto &SuccSU : MFMAPipeCands) {
-        if (DAG->IsReachable(&SuccSU, &PredSU)) {
+        if (DAG->IsReachable(SuccSU, PredSU)) {
           if (!TempExp.has_value()) {
             TempExp = PredSU;
             TempMFMA = SuccSU;
@@ -1301,12 +1311,12 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     }
     // Count the number of MFMAs that are reached by an EXP
     for (auto &SuccSU : MFMAPipeCands) {
-      if (std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(), [&SuccSU](SUnit &PotentialMatch){return PotentialMatch.NodeNum == SuccSU.NodeNum;})) {
+      if (std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(), [&SuccSU](SUnit *PotentialMatch){return PotentialMatch == SuccSU;})) {
         ++MFMAPipeCount;
         continue;
       }
       for (auto &PredSU : ExpPipeCands) {
-        if (DAG->IsReachable(&SuccSU, &PredSU)) {
+        if (DAG->IsReachable(SuccSU, PredSU)) {
           ++MFMAPipeCount;
           break;
         }
@@ -1316,15 +1326,15 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     if (!TempMFMA.has_value() || !TempExp.has_value())
       return;
     
-    unsigned PackSuccCount = std::count_if(PackSUs.begin(), PackSUs.end(), [this, &TempExp](SUnit VPack) {
-        return DAG->IsReachable(&VPack, &*TempExp);});
+    unsigned PackSuccCount = std::count_if(PackSUs.begin(), PackSUs.end(), [this, &TempExp](SUnit *VPack) {
+        return DAG->IsReachable(VPack, *TempExp);});
 
 
-    unsigned PackPredCount = std::count_if(TempMFMA->Preds.begin(), TempMFMA->Preds.end(), [](SDep &Pred) {
+    unsigned PackPredCount = std::count_if((*TempMFMA)->Preds.begin(), (*TempMFMA)->Preds.end(), [](SDep &Pred) {
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
         return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;});
 
-    auto PackPred = std::find_if(TempMFMA->Preds.begin(), TempMFMA->Preds.end(), [](SDep &Pred) {
+    auto PackPred = std::find_if((*TempMFMA)->Preds.begin(), (*TempMFMA)->Preds.end(), [](SDep &Pred) {
         auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
         return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PACK_B32_F16_gfx10 || Opc == AMDGPU::V_PACK_B32_F16_e64_gfx11;});
 
@@ -1334,8 +1344,8 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     MFMAEnablement *= PackSuccCount;
 
 
-  EXPRequirement = std::count_if(ExpPipeCands.begin(), ExpPipeCands.end(), [this, &PackPred](SUnit &ExpBase) {
-    return DAG->IsReachable(PackPred->getSUnit(), &ExpBase);
+  EXPRequirement = std::count_if(ExpPipeCands.begin(), ExpPipeCands.end(), [this, &PackPred](SUnit *ExpBase) {
+    return DAG->IsReachable(PackPred->getSUnit(), ExpBase);
   });
 
     
@@ -1349,9 +1359,9 @@ void ExpInterleaveOpt::applyIGLPStrategy(
 
   bool IsSmallKernelType = MFMAEnablement == 2 && EXPRequirement == 4 && TransPipeCount == 32;
   bool IsLargeKernelType = MFMAEnablement == 4 && EXPRequirement == 4 && TransPipeCount == 64;
-  bool IsNewSmallKernelType = MFMAEnablement == 1 && EXPRequirement == 4 && TransPipeCount == 32;
+  bool IsTinyKernelType = MFMAEnablement == 1 && EXPRequirement == 4 && TransPipeCount == 32;
 
-  if (!(IsSmallKernelType || IsLargeKernelType || IsNewSmallKernelType))
+  if (!(IsSmallKernelType || IsLargeKernelType || IsTinyKernelType))
     return;
 
   unsigned PipelineSyncID = 0;
@@ -1384,7 +1394,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
       SG->addRule(std::make_shared<IsPipeMFMA>(TII, SG->getSGID(), true));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       
-      for (unsigned J = 0; J < EXPRequirement; J++) {
+      for (unsigned J = 0; J < 2; J++) {
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
         SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
@@ -1420,7 +1430,7 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
   }
 
-    if (IsNewSmallKernelType) {
+    if (IsTinyKernelType) {
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
