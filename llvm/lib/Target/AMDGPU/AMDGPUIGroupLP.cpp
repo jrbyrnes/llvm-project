@@ -855,7 +855,7 @@ public:
   virtual void applyIGLPStrategy(
       DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
       DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
-      bool IsPostRA) = 0;
+      IGLPPhase Phase) = 0;
 
   // Returns true if this strategy should be applied to a ScheduleDAG.
   virtual bool shouldApplyStrategy(ScheduleDAGInstrs *DAG) = 0;
@@ -874,7 +874,7 @@ public:
   void applyIGLPStrategy(
       DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
       DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
-      bool IsPostRA) override;
+      IGLPPhase Phase) override;
 
   bool shouldApplyStrategy(ScheduleDAGInstrs *DAG) override { return true; }
 
@@ -887,7 +887,7 @@ public:
 void MFMASmallGemmOpt::applyIGLPStrategy(
     DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
     DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
-    bool IsPostRA) {
+    IGLPPhase Phase) {
   // Count the number of MFMA instructions.
   unsigned MFMACount = 0;
   for (const MachineInstr &I : *DAG)
@@ -1106,7 +1106,7 @@ public:
   void applyIGLPStrategy(
       DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
       DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
-      bool IsPostRA) override;
+      IGLPPhase Phase) override;
 
   bool shouldApplyStrategy(ScheduleDAGInstrs *DAG) override { return true; }
 
@@ -1123,13 +1123,14 @@ static unsigned DSWWithSharedVMEMCount = 0;
 void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
     DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
     DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
-    bool IsPostRA) {
+    IGLPPhase Phase) {
   unsigned MFMACount = 0;
   unsigned DSRCount = 0;
 
-  assert((IsPostRA ||
-          DSWCount == DSWWithPermCount == DSWWithSharedVMEMCount == 0) &&
-         "DSWCounters should be zero in pre-RA scheduling!");
+  assert(
+      (Phase != IGLPPhase::Initial || (DSWCount == 0 && DSWWithPermCount == 0 &&
+                                       DSWWithSharedVMEMCount == 0)) &&
+      "DSWCounters should be zero in pre-RA scheduling!");
   SmallVector<SUnit *, 6> DSWithPerms;
   for (auto &SU : DAG->SUnits) {
     auto I = SU.getInstr();
@@ -1138,7 +1139,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
     else if (TII->isDS(*I)) {
       if (I->mayLoad())
         ++DSRCount;
-      else if (I->mayStore() && !IsPostRA) {
+      else if (I->mayStore() && Phase == IGLPPhase::Initial) {
         ++DSWCount;
         for (auto Pred : SU.Preds) {
           if (Pred.getSUnit()->getInstr()->getOpcode() ==
@@ -1151,7 +1152,7 @@ void MFMASmallGemmSingleWaveOpt::applyIGLPStrategy(
     }
   }
 
-  if (!IsPostRA) {
+  if (Phase == IGLPPhase::Initial) {
     DSWWithPermCount = DSWithPerms.size();
     auto I = DSWithPerms.begin();
     auto E = DSWithPerms.end();
@@ -1418,11 +1419,11 @@ public:
   // first created SchedGroup first.
   bool IsBottomUp = 1;
 
-  // Whether the mutation is being applied to post RA scheduling
-  bool IsPostRA = false;
+  // Whether or not this is a reentry into the IGroupLPDAGMutation.
+  IGLPPhase Phase = IGLPPhase::Initial;
 
   IGroupLPDAGMutation() = default;
-  IGroupLPDAGMutation(bool IsPostRA) : IsPostRA(IsPostRA) {}
+  IGroupLPDAGMutation(IGLPPhase Phase) : Phase(Phase) {}
 };
 
 unsigned SchedGroup::NumSchedGroups = 0;
@@ -1710,7 +1711,7 @@ void IGroupLPDAGMutation::initIGLPOpt(SUnit &SU) {
   auto S = createIGLPStrategy(StrategyID, DAG, TII);
   if (S->shouldApplyStrategy(DAG)) {
     IsBottomUp = S->IsBottomUp;
-    S->applyIGLPStrategy(SyncedInstrs, SyncedSchedGroups, IsPostRA);
+    S->applyIGLPStrategy(SyncedInstrs, SyncedSchedGroups, Phase);
   }
 }
 
@@ -1718,8 +1719,14 @@ void IGroupLPDAGMutation::initIGLPOpt(SUnit &SU) {
 
 namespace llvm {
 
-std::unique_ptr<ScheduleDAGMutation> createIGroupLPDAGMutation(bool IsPostRA) {
-  return std::make_unique<IGroupLPDAGMutation>(IsPostRA);
+/// \p Phase specifes whether or not this is a reentry into the
+/// IGroupLPDAGMutation. Since there may be multiple scheduling passes on the
+/// same scheduling region (e.g. pre and post-RA scheduling / multiple
+/// scheduling "phases"), we can reenter this mutation framework more than once
+/// for a given region.
+std::unique_ptr<ScheduleDAGMutation>
+createIGroupLPDAGMutation(IGLPPhase Phase) {
+  return std::make_unique<IGroupLPDAGMutation>(Phase);
 }
 
 } // end namespace llvm
