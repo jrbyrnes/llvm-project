@@ -1334,11 +1334,10 @@ void ExpInterleaveOpt::applyIGLPStrategy(
     MFMAEnablement *= PackSuccCount;
 
 
-    for (auto &PredSU : ExpPipeCands) {
-      if (DAG->IsReachable(PackPred->getSUnit(), &PredSU)) {
-          ++EXPRequirement;
-        }
-      }
+  EXPRequirement = std::count_if(ExpPipeCands.begin(), ExpPipeCands.end(), [this, &PackPred](SUnit &ExpBase) {
+    return DAG->IsReachable(PackPred->getSUnit(), &ExpBase);
+  });
+
     
     errs() << "ExpRequirement PackPredCount : " << EXPRequirement << ", " << PackPredCount << "\n";
     EXPRequirement *= PackPredCount;
