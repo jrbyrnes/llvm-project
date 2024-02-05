@@ -334,6 +334,9 @@ bool AMDGPUAsmPrinter::doInitialization(Module &M) {
     case AMDGPU::AMDHSA_COV5:
       HSAMetadataStream.reset(new HSAMD::MetadataStreamerMsgPackV5());
       break;
+    case AMDGPU::AMDHSA_COV6:
+      HSAMetadataStream.reset(new HSAMD::MetadataStreamerMsgPackV6());
+      break;
     default:
       report_fatal_error("Unexpected code object version");
     }

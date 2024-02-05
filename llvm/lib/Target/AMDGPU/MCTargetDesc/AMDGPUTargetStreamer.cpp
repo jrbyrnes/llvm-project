@@ -25,6 +25,7 @@
 #include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Support/AMDHSAKernelDescriptor.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/TargetParser/TargetParser.h"
 
@@ -34,6 +35,12 @@ using namespace llvm::AMDGPU;
 //===----------------------------------------------------------------------===//
 // AMDGPUTargetStreamer
 //===----------------------------------------------------------------------===//
+
+static cl::opt<unsigned>
+    ForceGenericVersion("amdgpu-force-generic-version",
+                        cl::desc("Force a specific generic_v<N> flag to be "
+                                 "added. For testing purposes only."),
+                        cl::ReallyHidden, cl::init(0));
 
 static void convertIsaVersionV2(uint32_t &Major, uint32_t &Minor,
                                 uint32_t &Stepping, bool Sramecc, bool Xnack) {
@@ -445,6 +452,7 @@ void AMDGPUTargetAsmStreamer::EmitAmdhsaKernelDescriptor(
     break;
   case AMDGPU::AMDHSA_COV4:
   case AMDGPU::AMDHSA_COV5:
+  case AMDGPU::AMDHSA_COV6:
     if (getTargetID()->isXnackSupported())
       OS << "\t\t.amdhsa_reserve_xnack_mask " << getTargetID()->isXnackOnOrAny() << '\n';
     break;
@@ -634,6 +642,8 @@ unsigned AMDGPUTargetELFStreamer::getEFlagsAMDHSA() {
     case ELF::ELFABIVERSION_AMDGPU_HSA_V4:
     case ELF::ELFABIVERSION_AMDGPU_HSA_V5:
       return getEFlagsV4();
+    case ELF::ELFABIVERSION_AMDGPU_HSA_V6:
+      return getEFlagsV6();
     }
   }
 
@@ -706,6 +716,23 @@ unsigned AMDGPUTargetELFStreamer::getEFlagsV4() {
   }
 
   return EFlagsV4;
+}
+
+unsigned AMDGPUTargetELFStreamer::getEFlagsV6() {
+  unsigned Flags = getEFlagsV4();
+
+  unsigned Version = ForceGenericVersion;
+
+  // Versions start at 1.
+  if (Version) {
+    if (Version > ELF::EF_AMDGPU_GENERIC_VERSION_MAX)
+      report_fatal_error("Cannot encode generic code object version " +
+                         Twine(Version) +
+                         " - no ELF flag can represent this version!");
+    Flags |= (Version << ELF::EF_AMDGPU_GENERIC_VERSION_OFFSET);
+  }
+
+  return Flags;
 }
 
 void AMDGPUTargetELFStreamer::EmitDirectiveAMDGCNTarget() {}

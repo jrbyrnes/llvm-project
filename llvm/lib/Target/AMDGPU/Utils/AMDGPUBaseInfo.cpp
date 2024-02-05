@@ -176,6 +176,8 @@ std::optional<uint8_t> getHsaAbiVersion(const MCSubtargetInfo *STI) {
     return ELF::ELFABIVERSION_AMDGPU_HSA_V4;
   case 5:
     return ELF::ELFABIVERSION_AMDGPU_HSA_V5;
+  case 6:
+    return ELF::ELFABIVERSION_AMDGPU_HSA_V6;
   default:
     report_fatal_error(Twine("Unsupported AMDHSA Code Object Version ") +
                        Twine(AmdhsaCodeObjectVersion));
@@ -213,6 +215,7 @@ unsigned getMultigridSyncArgImplicitArgPosition(unsigned CodeObjectVersion) {
   case AMDHSA_COV4:
     return 48;
   case AMDHSA_COV5:
+  case AMDHSA_COV6:
   default:
     return AMDGPU::ImplicitArg::MULTIGRID_SYNC_ARG_OFFSET;
   }
@@ -226,6 +229,7 @@ unsigned getHostcallImplicitArgPosition(unsigned CodeObjectVersion) {
   case AMDHSA_COV4:
     return 24;
   case AMDHSA_COV5:
+  case AMDHSA_COV6:
   default:
     return AMDGPU::ImplicitArg::HOSTCALL_PTR_OFFSET;
   }
@@ -236,6 +240,7 @@ unsigned getDefaultQueueImplicitArgPosition(unsigned CodeObjectVersion) {
   case AMDHSA_COV4:
     return 32;
   case AMDHSA_COV5:
+  case AMDHSA_COV6:
   default:
     return AMDGPU::ImplicitArg::DEFAULT_QUEUE_OFFSET;
   }
@@ -246,6 +251,7 @@ unsigned getCompletionActionImplicitArgPosition(unsigned CodeObjectVersion) {
   case AMDHSA_COV4:
     return 40;
   case AMDHSA_COV5:
+  case AMDHSA_COV6:
   default:
     return AMDGPU::ImplicitArg::COMPLETION_ACTION_OFFSET;
   }
@@ -834,23 +840,16 @@ std::string AMDGPUTargetID::toString() const {
 
   std::string Features;
   if (STI.getTargetTriple().getOS() == Triple::AMDHSA) {
-    switch (CodeObjectVersion) {
-    case AMDGPU::AMDHSA_COV4:
-    case AMDGPU::AMDHSA_COV5:
-      // sramecc.
-      if (getSramEccSetting() == TargetIDSetting::Off)
-        Features += ":sramecc-";
-      else if (getSramEccSetting() == TargetIDSetting::On)
-        Features += ":sramecc+";
-      // xnack.
-      if (getXnackSetting() == TargetIDSetting::Off)
-        Features += ":xnack-";
-      else if (getXnackSetting() == TargetIDSetting::On)
-        Features += ":xnack+";
-      break;
-    default:
-      break;
-    }
+    // sramecc.
+    if (getSramEccSetting() == TargetIDSetting::Off)
+      Features += ":sramecc-";
+    else if (getSramEccSetting() == TargetIDSetting::On)
+      Features += ":sramecc+";
+    // xnack.
+    if (getXnackSetting() == TargetIDSetting::Off)
+      Features += ":xnack-";
+    else if (getXnackSetting() == TargetIDSetting::On)
+      Features += ":xnack+";
   }
 
   StreamRep << Processor << Features;
