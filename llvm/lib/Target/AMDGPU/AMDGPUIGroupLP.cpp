@@ -939,7 +939,7 @@ private:
       }
 
       if (Cache->empty()) {
-        errs() << "No MFMA for pipe\n";
+        //errs() << "No MFMA for pipe\n";
         return false;
       }
 
@@ -948,7 +948,7 @@ private:
             return DAG->IsReachable(TargetSU, const_cast<SUnit *>(SU));
           }));
 
-      errs() << "IsPipeExp: " << Reaches << "\n";
+      //errs() << "IsPipeExp: " << Reaches << "\n";
       return Reaches;
     }
     IsPipeExp(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
@@ -999,12 +999,12 @@ private:
         }
       }
       if (Cache->empty()) {
-        errs() << "No " << Number << " mfma\n";
+        //errs() << "No " << Number << " mfma\n";
         return false;
       }
 
       auto X =  DAG->IsReachable((*Cache)[0], const_cast<SUnit *>(SU));
-      errs() << "Enables " << Number << "th ? " << X << "\n";
+      //errs() << "Enables " << Number << "th ? " << X << "\n";
       return X;
     }
 
@@ -1029,7 +1029,7 @@ private:
       auto DAG = SyncPipe[0].DAG;
       auto TII = SyncPipe[0].TII;
 
-      errs() << "Trying to find " << Number << " position in chain\n";
+      //errs() << "Trying to find " << Number << " position in chain\n";
       if (!SU || !TII->isMFMAorWMMA(*ChainSeed->getInstr()))
         return false;
 
@@ -1037,18 +1037,18 @@ private:
         auto TempSU = ChainSeed;
         auto Depth = Number;
         while (Depth > 0) {
-          errs() << "iter\n";
+          //errs() << "iter\n";
           --Depth;
           bool Found = false;
           for (auto &Succ : TempSU->Succs) {
             if (TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr())) {
               TempSU = Succ.getSUnit();
-              errs() << "Found MFMA succ\n";
+            //  errs() << "Found MFMA succ\n";
               Found = true;
             }
           }
           if (!Found) {
-            errs() << "Did not find\n";
+          //  errs() << "Did not find\n";
             return false;
           }
         }
@@ -1056,7 +1056,7 @@ private:
         Cache->push_back(TempSU);
        }
       if (Cache->empty()) {
-        errs() << "Nothing in cache\n";
+        //errs() << "Nothing in cache\n";
         return false;
       }
 
@@ -1141,7 +1141,7 @@ private:
         return Succ.getKind() == SDep::Data;
       });
       if (SuccSize >= Size) {
-        errs() << "Succs size\n";
+        //errs() << "Succs size\n";
         return false;
       }
       
@@ -1151,7 +1151,7 @@ private:
           return SuccSucc.getKind() == SDep::Data;
         });
         if (SuccSize >= Size) {
-          errs() << "succ succs size\n";
+          //errs() << "succ succs size\n";
           return false;
         }
       }
@@ -1205,7 +1205,7 @@ private:
     bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
       SchedGroup *OtherGroup = nullptr;
-      errs() << "Trying is Succ of PrevbNth\n";
+      //errs() << "Trying is Succ of PrevbNth\n";
       if (!SyncPipe.size())
         return false;
 
@@ -1223,7 +1223,7 @@ private:
       for (auto &OtherEle : OtherGroup->Collection) {
         for (auto &Succ : OtherEle->Succs) {
           if (Succ.getSUnit() == SU && Succ.getKind() == SDep::Data) {
-            errs() << "Is Succ of SG: " << SGID-Distance << "\n";
+            //errs() << "Is Succ of SG: " << SGID-Distance << "\n";
             return true;
           }
         }
@@ -1354,7 +1354,7 @@ private:
       auto TII = SyncPipe[0].TII;
 
       if (!SU || !TII->isMFMAorWMMA(*ChainSeed->getInstr())) {
-        errs() << "Is exact MFMA with bad SU\n";
+        //errs() << "Is exact MFMA with bad SU\n";
         return false;
       }
 
@@ -1381,7 +1381,7 @@ private:
         return false;
       }
 
-      errs() << "Have Exact MFMA: SU("<< (*Cache)[0]->NodeNum <<")\n";
+      //errs() << "Have Exact MFMA: SU("<< (*Cache)[0]->NodeNum <<")\n";
 
       return (*Cache)[0] == SU;
     }
@@ -1572,7 +1572,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     }
 
     HasChainBetweenCvt = !FoundCvtSucc;
-    errs() << "HasChainBetweenCvt: " << HasChainBetweenCvt << "\n";
+    //errs() << "HasChainBetweenCvt: " << HasChainBetweenCvt << "\n";
 
     // Count the number of MFMAs that are reached by an EXP
     for (auto &SuccSU : MFMAPipeCands) {
@@ -1624,21 +1624,21 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     }
 
     MFMAChainLength = MFMAPipeCount / MFMAChains;
-    errs() << "MFMAChainLength: " << MFMAChainLength << "\n";
+    //errs() << "MFMAChainLength: " << MFMAChainLength << "\n";
 
     if (MFMAChainSeeds.size() >= 2) {
-      errs() << "Checking lenght wise\n";
+      //errs() << "Checking lenght wise\n";
       auto Chain0 = MFMAChainSeeds[0];
       auto Chain1 = MFMAChainSeeds[1];
 
       auto Temp0 = Chain0;
-      errs() << "Chain 0: SU(" << Temp0->NodeNum << ")\n";
+      //errs() << "Chain 0: SU(" << Temp0->NodeNum << ")\n";
       while (true) {
         bool Continue = false;
         for (auto &Succ : Temp0->Succs) {
           if (TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr())) {
             Temp0 = Succ.getSUnit();
-            errs() << "Found next Chain 0 element: SU(" << Temp0->NodeNum << ")\n";
+            //errs() << "Found next Chain 0 element: SU(" << Temp0->NodeNum << ")\n";
             Continue = true;
             break;
           }
@@ -1647,9 +1647,9 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
           break;
       }
 
-      errs() << "Temp0->NodeNum, Chain1->NodeNum" << Temp0->NodeNum << ", " <<  Chain1->NodeNum << "\n";
+      //errs() << "Temp0->NodeNum, Chain1->NodeNum" << Temp0->NodeNum << ", " <<  Chain1->NodeNum << "\n";
       if (Temp0->NodeNum < Chain1->NodeNum) {
-        errs() << "Is LengthWise\n";
+        //errs() << "Is LengthWise\n";
         IsLengthWise = true;
       }
     }
@@ -1706,13 +1706,14 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
   SchedGroup *SG = nullptr;
 
   if (!(MFMAEnablement && ExpRequirement)) {
-    errs() << "no pipe mfma/exp\n";
+    //errs() << "no pipe mfma/exp\n";
     return;
   }
 
   errs() << "MFMAEnablement: " << MFMAEnablement << ", ExpRequirement: " << ExpRequirement << "\n";
   errs() << "TransCount: " << TransPipeCount << ", MFMACount: " << MFMAPipeCount << "\n";
   errs() << "HasCvt: " << HasCvt << "\n";
+  errs() << "HasChainBetweenCvt: " << HasChainBetweenCvt << "\n";
 
   if (GeneralizedExpInterleave) {
     unsigned CurrTransPosition = 0;
@@ -1725,8 +1726,8 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     auto incrementTransPosition = [&CurrTransPosition, &MFMAChain, &PositionInChain, &CurrMFMAForTransPosition]() {
       ++CurrTransPosition;
       CurrMFMAForTransPosition += MFMAEnablement;
-      errs() << "CurrTransPosition: " << CurrTransPosition << "\n";
-      errs() << "CurrMFMAForTransPosition: " << CurrMFMAForTransPosition << "\n";
+      //errs() << "CurrTransPosition: " << CurrTransPosition << "\n";
+      //errs() << "CurrMFMAForTransPosition: " << CurrMFMAForTransPosition << "\n";
         PositionInChain = (CurrMFMAForTransPosition / MFMAChains);
         MFMAChain = CurrMFMAForTransPosition % MFMAChains;
 
@@ -1746,18 +1747,18 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     };
 
 
-    errs() << "MFMAChainSeeds.size() " << MFMAChainSeeds.size() << ", MFMAChains: " << MFMAChains << "\n";
-    errs() << "MFMAChainSeeds: ";
-    for (auto &ele : MFMAChainSeeds) {
-      ele->getInstr()->dump();
-    }
+    errs() << "MFMAChainSeeds.size() " << MFMAChainSeeds.size() << "\n";//, MFMAChains: " << MFMAChains << "\n";
+    //errs() << "MFMAChainSeeds: ";
+    //for (auto &ele : MFMAChainSeeds) {
+    //  ele->getInstr()->dump();
+   // }
 
     assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, ExpRequirement, PipelineSyncID, DAG, TII);
     if (!IsPostRA && MFMAChains) {
-      errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";;
+      //errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";;
       SG->addRule(std::make_shared<EnablesNthMFMAInChain>(PositionInChain, MFMAChainSeeds[MFMAChain], TII, SG->getSGID(), true));
     }
     else 
@@ -1777,7 +1778,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1 + 2 * I, TII,
                                                            SG->getSGID()));
         else {
-          errs() << "Using SuccOfPrevNth\n";
+          //errs() << "Using SuccOfPrevNth\n";
           SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(1 + 2 * I, TII,
                                                            SG->getSGID()));
         }
@@ -1786,7 +1787,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     if (!IsPostRA && MFMAChains) {
-      errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";
+      //errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";
       SG->addRule(std::make_shared<EnablesNthMFMAInChain>(PositionInChain, MFMAChainSeeds[MFMAChain], TII, SG->getSGID(), true));
     }
     else 
@@ -1801,7 +1802,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     
     // The number of Exps per iteration
     auto ExpRatio = MFMAEnablement > ExpRequirement ? 1 : ExpRequirement / MFMAEnablement;
-    errs() << "ExpRatio " << ExpRatio << "\n";
+    //errs() << "ExpRatio " << ExpRatio << "\n";
 
     // The reamaining Exps
     auto RemainingExp = TransPipeCount - (2 * ExpRequirement -1);
@@ -1811,13 +1812,13 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     auto MFMAInLoop = MFMAPipeCount - (MFMAEnablement * 2);
     auto MFMALoopCount = MFMAInLoop / MFMARatio;
 
-    errs() << "ExpLoopCount, MFMALoopCount: " << ExpLoopCount << ", " << MFMALoopCount << "\n";
+    //errs() << "ExpLoopCount, MFMALoopCount: " << ExpLoopCount << ", " << MFMALoopCount << "\n";
     auto LoopSize = std::min(ExpLoopCount, MFMALoopCount);
 
 
-    errs() << "MFMARatio, ExpRatio: " << MFMARatio << ", " << ExpRatio << "\n";
-    errs() << "LoopSize: " << LoopSize << "\n";
-    errs() << "MFMAChains: " << MFMAChains << ", seedSize: " << MFMAChainSeeds.size() << "\n";
+    //errs() << "MFMARatio, ExpRatio: " << MFMARatio << ", " << ExpRatio << "\n";
+    //errs() << "LoopSize: " << LoopSize << "\n";
+    //errs() << "MFMAChains: " << MFMAChains << ", seedSize: " << MFMAChainSeeds.size() << "\n";
 
     // Main loop
     for (unsigned I = 0; I < LoopSize; I++) {
@@ -1826,7 +1827,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::MFMA, MFMARatio, PipelineSyncID, DAG, TII);
       if (!IsPostRA && MFMAChains) {
-        errs() << "MFMA SGID: " << SG->getSGID() << " has chain: " << MFMAChainForMFMA << " and positionInChain: " << PositionInChainForMFMA << "\n";
+        //errs() << "MFMA SGID: " << SG->getSGID() << " has chain: " << MFMAChainForMFMA << " and positionInChain: " << PositionInChainForMFMA << "\n";
         SG->addRule(std::make_shared<IsExactMFMA>(PositionInChainForMFMA,MFMAChainSeeds[MFMAChainForMFMA], TII, SG->getSGID(), true));
       }
       else
@@ -1847,12 +1848,12 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
           auto MFMAOffset = MFMARatio * (I + 1);
           auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
           auto CurrentOffset = std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
-          errs() << "SGID: " << SG->getSGID() << " has CurrentOffset: " << CurrentOffset << "\n";
+          //errs() << "SGID: " << SG->getSGID() << " has CurrentOffset: " << CurrentOffset << "\n";
         if (HasChainBetweenCvt)
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(CurrentOffset, TII,
                                                            SG->getSGID()));
         else  {
-          errs() << "Using Succ of Prev Nth\n";
+         // errs() << "Using Succ of Prev Nth\n";
           SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(CurrentOffset, TII,
                                                            SG->getSGID()));
         }
@@ -1861,7 +1862,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     if (!IsPostRA && MFMAChains) {
-      errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";
+      //errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";
       SG->addRule(std::make_shared<EnablesNthMFMAInChain>(PositionInChain, MFMAChainSeeds[MFMAChain], TII, SG->getSGID(), true));
     }
     else 
