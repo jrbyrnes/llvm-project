@@ -1193,10 +1193,12 @@ int AMDGPUCodeGenPrepareImpl::getDivNumBits(BinaryOperator &I, Value *Num,
                                             bool IsSigned) const {
   const DataLayout &DL = Mod->getDataLayout();
   unsigned LHSSignBits = ComputeNumSignBits(Num, DL, 0, AC, &I);
+  errs() << "Num: "; Num->dump(); errs() << "Sign Bits: " << LHSSignBits << "\n";
   if (LHSSignBits < AtLeast)
     return -1;
 
   unsigned RHSSignBits = ComputeNumSignBits(Den, DL, 0, AC, &I);
+  errs() << "Den: "; Den->dump(); errs() << "Sign Bits: " <<RHSSignBits << "\n";
   if (RHSSignBits < AtLeast)
     return -1;
 
@@ -1214,6 +1216,7 @@ Value *AMDGPUCodeGenPrepareImpl::expandDivRem24(IRBuilder<> &Builder,
                                                 Value *Den, bool IsDiv,
                                                 bool IsSigned) const {
   int DivBits = getDivNumBits(I, Num, Den, 9, IsSigned);
+  errs() << "ExpandDivRem24, DivBits: " << DivBits <<"\n";
   if (DivBits == -1)
     return nullptr;
   return expandDivRem24Impl(Builder, I, Num, Den, DivBits, IsDiv, IsSigned);
@@ -1394,8 +1397,9 @@ Value *AMDGPUCodeGenPrepareImpl::expandDivRem32(IRBuilder<> &Builder,
       Y = Builder.CreateZExt(Y, I32Ty);
     }
   }
-
+  errs() << "expandDivRem32\n";
   if (Value *Res = expandDivRem24(Builder, I, X, Y, IsDiv, IsSigned)) {
+    errs() << "ExpandDivRem24 worked\n";
     return IsSigned ? Builder.CreateSExtOrTrunc(Res, Ty) :
                       Builder.CreateZExtOrTrunc(Res, Ty);
   }
