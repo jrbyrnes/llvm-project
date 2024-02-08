@@ -1352,9 +1352,7 @@ private:
 
       auto DAG = SyncPipe[0].DAG;
       auto TII = SyncPipe[0].TII;
-
       if (!SU || !TII->isMFMAorWMMA(*ChainSeed->getInstr())) {
-        //errs() << "Is exact MFMA with bad SU\n";
         return false;
       }
 
@@ -1368,13 +1366,14 @@ private:
             if (TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr())) {
               TempSU = Succ.getSUnit();
               Found = true;
+              Succ.getSUnit()->getInstr()->dump();
+              break;
             }
           }
           if (!Found) {
             return false;
           }
         }
-
         Cache->push_back(TempSU);
        }
       if (Cache->empty()) {
@@ -1754,7 +1753,19 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
    // }
 
     assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
-
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, ExpRequirement, PipelineSyncID, DAG, TII);
+    if (!IsPostRA && MFMAChains) {
+      //errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";;
+      SG->addRule(std::make_shared<EnablesNthMFMAInChain>(PositionInChain, MFMAChainSeeds[MFMAChain], TII, SG->getSGID(), true));
+    }
+    else 
+      SG->addRule(std::make_shared<EnablesNthMFMA>(1, TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    
+    
+    
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, ExpRequirement, PipelineSyncID, DAG, TII);
     if (!IsPostRA && MFMAChains) {
@@ -1768,22 +1779,47 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     incrementTransPosition();
-    
+
+
+
+
+
+
+
     for (unsigned I = 0; I < ExpRequirement; I++) {
       if (HasCvt) {
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
         SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
         if (HasChainBetweenCvt)
-          SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1 + 2 * I, TII,
+          SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1 + 3 * I, TII,
                                                            SG->getSGID()));
         else {
           //errs() << "Using SuccOfPrevNth\n";
-          SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(1 + 2 * I, TII,
+          SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(1 + 3 * I, TII,
                                                            SG->getSGID()));
         }
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       }
+    
+    
+    
+    
+    
+          SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    if (!IsPostRA && MFMAChains) {
+      //errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";;
+      SG->addRule(std::make_shared<EnablesNthMFMAInChain>(PositionInChain, MFMAChainSeeds[MFMAChain], TII, SG->getSGID(), true));
+    }
+    else 
+      SG->addRule(std::make_shared<EnablesNthMFMA>(1, TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    
+    
+    
+    
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     if (!IsPostRA && MFMAChains) {
@@ -1805,7 +1841,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     //errs() << "ExpRatio " << ExpRatio << "\n";
 
     // The reamaining Exps
-    auto RemainingExp = TransPipeCount - (2 * ExpRequirement -1);
+    auto RemainingExp = TransPipeCount - (2 * ExpRequirement);
     auto ExpLoopCount = RemainingExp / ExpRatio;
 
     // In loop MFMAs
@@ -1844,7 +1880,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
           SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
               SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
           SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
-          auto BaseDiff = 2 * ExpRequirement - 1;
+          auto BaseDiff = 3 * (ExpRequirement - 1) + 1;
           auto MFMAOffset = MFMARatio * (I + 1);
           auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
           auto CurrentOffset = std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
@@ -1859,6 +1895,31 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
         }
           SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
         }
+
+
+
+
+
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
+    if (!IsPostRA && MFMAChains) {
+      //errs() << "SGID: " << SG->getSGID() << " has chain: " << MFMAChain << " and positionInChain: " << PositionInChain << "\n";;
+      SG->addRule(std::make_shared<EnablesNthMFMAInChain>(PositionInChain, MFMAChainSeeds[MFMAChain], TII, SG->getSGID(), true));
+    }
+    else 
+      SG->addRule(std::make_shared<EnablesNthMFMA>(1, TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
+
+
+
+
+
+
+
+
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     if (!IsPostRA && MFMAChains) {
