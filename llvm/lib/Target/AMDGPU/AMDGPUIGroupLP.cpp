@@ -1815,6 +1815,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
     bool UsesFMA = !IsPostRA;
     bool UsesDSRead = !IsPostRA && FirstPipeDSR;
+    HasCvt &= !IsPostRA;
 
 
     if (UsesFMA) {
@@ -1846,7 +1847,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
 
     if (UsesDSRead) {
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::DS_READ, 1, PipelineSyncID, DAG, TII);
+          SchedGroupMask::DS_READ, 2, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<OccursAfterDSR>(*FirstPipeDSR, TII, SG->getSGID()));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     }
@@ -1955,9 +1956,9 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
       incrementMFMAPosition();
 
 
-    if (UsesDSRead && !(I % 2)) {
+    if (UsesDSRead && !(I % 4)) {
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-          SchedGroupMask::DS_READ, 1, PipelineSyncID, DAG, TII);
+          SchedGroupMask::DS_READ, 2, PipelineSyncID, DAG, TII);
       SG->addRule(std::make_shared<OccursAfterDSR>(*FirstPipeDSR, TII, SG->getSGID()));
       SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     }
@@ -1973,8 +1974,8 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
           auto BaseDiff = (2 + UsesFMA) * (ExpRequirement - 1) + 1;
           auto MFMAOffset = MFMARatio * (I + 1);
           auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
-          auto DSROffset = I/2 + 1;
-          auto MaxDSROffset = MaxMFMAOffset/2;
+          auto DSROffset = I/4 + 1;
+          auto MaxDSROffset = MaxMFMAOffset/4;
           auto CurrentOffset = UsesDSRead * std::min(MaxDSROffset, DSROffset) + std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
           //errs() << "SGID: " << SG->getSGID() << " has CurrentOffset: " << CurrentOffset << "\n";
         if (HasChainBetweenCvt)
