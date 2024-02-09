@@ -943,17 +943,14 @@ private:
         }
       }
 
-      if (Cache->empty()) {
-        //errs() << "No MFMA for pipe\n";
+      if (Cache->empty())
         return false;
-      }
 
       auto Reaches = (std::any_of(
           Cache->begin(), Cache->end(), [&SU, &DAG](SUnit *TargetSU) {
             return DAG->IsReachable(TargetSU, const_cast<SUnit *>(SU));
           }));
 
-      //errs() << "IsPipeExp: " << Reaches << "\n";
       return Reaches;
     }
     IsPipeExp(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
@@ -961,7 +958,7 @@ private:
   };
 
 
-    /// Whether or not the insturction is a transitive predecessor of the same
+  /// Whether or not the insturction is a transitive predecessor of the same
   /// MFMA instruction as an instruction in a SchedGroup \p Number steps before
   class EnablesNthMFMA final : public InstructionRule {
   private:
@@ -1005,14 +1002,10 @@ private:
           }
         }
       }
-      if (Cache->empty()) {
-        //errs() << "No " << Number << " mfma\n";
+      if (Cache->empty())
         return false;
-      }
 
-      auto X =  DAG->IsReachable((*Cache)[0], const_cast<SUnit *>(SU));
-      //errs() << "Enables " << Number << "th ? " << X << "\n";
-      return X;
+      return DAG->IsReachable((*Cache)[0], const_cast<SUnit *>(SU));
     }
 
     EnablesNthMFMA(unsigned Number, const SIInstrInfo *TII,
@@ -1036,8 +1029,6 @@ private:
       auto DAG = SyncPipe[0].DAG;
       auto TII = SyncPipe[0].TII;
 
-      //errs() << "Trying to find " << Number << " position in chain\n";
-      //errs() << "For SG: " << SGID  << "\n";
       if (!SU || !TII->isMFMAorWMMA(*ChainSeed->getInstr()))
         return false;
 
@@ -1045,93 +1036,30 @@ private:
         auto TempSU = ChainSeed;
         auto Depth = Number;
         while (Depth > 0) {
-          //errs() << "iter\n";
           --Depth;
           bool Found = false;
           for (auto &Succ : TempSU->Succs) {
             if (TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr())) {
               TempSU = Succ.getSUnit();
-            //  errs() << "Found MFMA succ\n";
               Found = true;
               break;
             }
           }
-          if (!Found) {
-        //    errs() << "Did not find\n";
+          if (!Found)
             return false;
-          }
         }
 
         Cache->push_back(TempSU);
        }
-      if (Cache->empty()) {
-        //errs() << "Nothing in cache\n";
-        return false;
-      }
-
-      //errs() << "exact mfma: SU(" << SU->NodeNum << ")\n";
-      return DAG->IsReachable((*Cache)[0], const_cast<SUnit *>(SU));
-    }
-
-    EnablesNthMFMAInChain(unsigned Number, SUnit *ChainSeed, const SIInstrInfo *TII,
-                             unsigned SGID, bool NeedsCache = false)
-        : InstructionRule(TII, SGID, NeedsCache), Number(Number), ChainSeed(ChainSeed) {}
-  };
-
-
-  /// Whether or not the insturction is a transitive predecessor of the same
-  /// MFMA instruction as an instruction in a SchedGroup \p Number steps before
-  class ProduceSameMFMAWithPrevN final : public InstructionRule {
-  private:
-    unsigned Number = 1;
-
-  public:
-    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
-               SmallVectorImpl<SchedGroup> &SyncPipe) override {
-      SchedGroup *OtherGroup = nullptr;
-      for (auto &PipeSG : SyncPipe) {
-        if ((unsigned)PipeSG.getSGID() == SGID - Number) {
-          OtherGroup = &PipeSG;
-        }
-      }
-
-      if (!OtherGroup)
-        return false;
-      if (!OtherGroup->Collection.size())
-        return true;
-
-      auto DAG = SyncPipe[0].DAG;
-
-      if (Cache->empty()) {
-        auto TII = SyncPipe[0].TII;
-        SmallVector<SUnit *, 8> Worklist;
-
-        auto I = DAG->SUnits.rbegin();
-        auto E = DAG->SUnits.rend();
-        for (; I != E; I++)
-          if (TII->isMFMAorWMMA(*(I->getInstr())))
-            Worklist.push_back(&*I);
-
-        for (auto BaseSU : OtherGroup->Collection) {
-          if (!Cache->empty())
-            break;
-          for (auto CandSU : Worklist) {
-            if (DAG->IsReachable(CandSU, BaseSU)) {
-              Cache->push_back(CandSU);
-              break;
-            }
-          }
-        }
-      }
       if (Cache->empty())
         return false;
 
       return DAG->IsReachable((*Cache)[0], const_cast<SUnit *>(SU));
     }
 
-    ProduceSameMFMAWithPrevN(unsigned Number, const SIInstrInfo *TII,
+    EnablesNthMFMAInChain(unsigned Number, SUnit *ChainSeed, const SIInstrInfo *TII,
                              unsigned SGID, bool NeedsCache = false)
-        : InstructionRule(TII, SGID, NeedsCache), Number(Number) {}
+        : InstructionRule(TII, SGID, NeedsCache), Number(Number), ChainSeed(ChainSeed) {}
   };
 
   /// Whether or not the instruction has less than \p Size immediate successors
@@ -1150,20 +1078,16 @@ private:
       auto SuccSize = std::count_if(SU->Succs.begin(), SU->Succs.end(), [](const SDep &Succ) {
         return Succ.getKind() == SDep::Data;
       });
-      if (SuccSize >= Size) {
-        //errs() << "Succs size\n";
+      if (SuccSize >= Size)
         return false;
-      }
       
       if (HasIntermediary) {
       for (auto Succ : SU->Succs) {
         auto SuccSize = std::count_if(Succ.getSUnit()->Succs.begin(), Succ.getSUnit()->Succs.end(), [](const SDep &SuccSucc) {
           return SuccSucc.getKind() == SDep::Data;
         });
-        if (SuccSize >= Size) {
-          //errs() << "succ succs size\n";
+        if (SuccSize >= Size)
           return false;
-        }
       }
       }
 
@@ -1183,10 +1107,7 @@ private:
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
       auto Opc = SU->getInstr()->getOpcode();
       return Opc == AMDGPU::V_CVT_F16_F32_e32 ||
-             Opc == AMDGPU::V_CVT_F16_F32_e32_gfx10 ||
-             Opc == AMDGPU::V_CVT_I32_F32_e32 ||
-             Opc == AMDGPU::V_CVT_I32_F32_e32_gfx10 ||
-             Opc == AMDGPU::V_CVT_I32_F32_e32_gfx11;
+             Opc == AMDGPU::V_CVT_I32_F32_e32;
     }
     IsCvt(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
         : InstructionRule(TII, SGID, NeedsCache) {}
@@ -1234,10 +1155,8 @@ private:
 
       for (auto &OtherEle : OtherGroup->Collection) {
         for (auto &Succ : OtherEle->Succs) {
-          if (Succ.getSUnit() == SU && Succ.getKind() == SDep::Data) {
-            //errs() << "Is Succ of SG: " << SGID-Distance << "\n";
+          if (Succ.getSUnit() == SU && Succ.getKind() == SDep::Data)
             return true;
-          }
         }
       }
 
@@ -1302,35 +1221,6 @@ private:
         : InstructionRule(TII, SGID, NeedsCache), Number(Number) {}
   };
 
-  // Whether or not the instruction is a transitive predecessor of any TRANS
-  // instruction
-  class IsPipeMFMA final : public InstructionRule {
-  public:
-    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
-               SmallVectorImpl<SchedGroup> &SyncPipe) override {
-
-      SmallVector<SUnit *, 12> Worklist;
-      auto DAG = SyncPipe[0].DAG;
-      auto TII = SyncPipe[0].TII;
-      if (Cache->empty()) {
-        for (auto &SU : DAG->SUnits)
-          if (TII->isTRANS(SU.getInstr()->getOpcode()))
-            Cache->push_back(&SU);
-      }
-
-      if (Cache->empty())
-        return false;
-
-      return  !(std::any_of(
-          Cache->begin(), Cache->end(), [&SU, &DAG](SUnit *BaseSU) {
-            return DAG->IsReachable(BaseSU, const_cast<SUnit *>(SU));
-          }));
-    }
-
-    IsPipeMFMA(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
-        : InstructionRule(TII, SGID, NeedsCache) {}
-  };
-
 
   class IsExactMFMA final : public InstructionRule {
   private:
@@ -1367,12 +1257,10 @@ private:
           }
         }
         Cache->push_back(TempSU);
-       }
-      if (Cache->empty()) {
-        return false;
       }
 
-      //errs() << "Have Exact MFMA: SU("<< (*Cache)[0]->NodeNum <<")\n";
+      if (Cache->empty())
+        return false;
 
       return (*Cache)[0] == SU;
     }
@@ -1409,39 +1297,6 @@ private:
 
     OccursAfterExp(const SIInstrInfo *TII, unsigned SGID,
                    bool NeedsCache = false)
-        : InstructionRule(TII, SGID, NeedsCache) {}
-  };
-
-  // Whether the SU is a not a successor of any element in the previous
-  // SchedGroup
-  class IsNotSuccOfPrevGroup final : public InstructionRule {
-  public:
-    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
-               SmallVectorImpl<SchedGroup> &SyncPipe) override {
-      SchedGroup *OtherGroup = nullptr;
-      for (auto &PipeSG : SyncPipe) {
-        if ((unsigned)PipeSG.getSGID() == SGID - 1) {
-          OtherGroup = &PipeSG;
-        }
-      }
-
-      if (!OtherGroup)
-        return false;
-      if (!OtherGroup->Collection.size())
-        return true;
-
-      // Does the previous VALU have this DS_Write as a successor
-      return !(std::any_of(OtherGroup->Collection.begin(),
-                           OtherGroup->Collection.end(), [&SU](SUnit *Elt) {
-                             return std::any_of(Elt->Succs.begin(),
-                                                Elt->Succs.end(),
-                                                [&SU](SDep &Succ) {
-                                                  return Succ.getSUnit() == SU;
-                                                });
-                           }));
-    }
-    IsNotSuccOfPrevGroup(const SIInstrInfo *TII, unsigned SGID,
-                         bool NeedsCache = false)
         : InstructionRule(TII, SGID, NeedsCache) {}
   };
 
