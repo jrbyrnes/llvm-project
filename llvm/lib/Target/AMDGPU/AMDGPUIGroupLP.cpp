@@ -1612,6 +1612,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
 
     if (!MFMAChains)
       return;
+
     for (auto Pred : MFMAChainSeeds[0]->Preds) {
       if (TII->isDS(Pred.getSUnit()->getInstr()->getOpcode()) &&
           Pred.getSUnit()->getInstr()->mayLoad())
@@ -1785,7 +1786,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
 
     // First Round CVT, Second Round EXP, Third Round FMA interleaved
     for (unsigned I = 0; I < ExpRequirement; I++) {
-      // CVT
+      // First Round CVT
       if (UsesCvt) {
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
@@ -1793,15 +1794,13 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
         if (HasChainBetweenCvt)
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(1 + (2 + UsesFMA) * I, TII,
                                                            SG->getSGID()));
-        else {
-          //errs() << "Using SuccOfPrevNth\n";
+        else
           SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(1 + (2 + UsesFMA) * I, TII,
                                                            SG->getSGID()));
-        }
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       }
 
-      // FMA
+      // Second Round FMA
       if (UsesFMA) {
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
             SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
@@ -1817,7 +1816,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
       }
 
-      // EXP
+      // Third Round EXP
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
       if (!IsPostRA && MFMAChains)
