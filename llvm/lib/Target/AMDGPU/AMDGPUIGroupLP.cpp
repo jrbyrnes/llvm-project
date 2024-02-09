@@ -919,6 +919,11 @@ void MFMASmallGemmOpt::applyIGLPStrategy(
 
 class MFMAExpInterleaveOpt final : public IGLPStrategy {
 private:
+  // Compute the heuristics for the pipeline, returning whether or not the DAG
+  // is well formatted for the mutation
+  bool computeHeuristics(SmallVectorImpl<SUnit *> &MFMAChainSeeds,
+                         const SIInstrInfo *TII);
+
   /// Whether or not the instruction is a transitive predecessor of an MFMA
   /// instruction
   class IsPipeExp final : public InstructionRule {
@@ -1475,6 +1480,190 @@ static bool HasChainBetweenCvt;
 // The first occuring DS_READ which feeds an MFMA chain
 static std::optional<unsigned> FirstPipeDSR;
 
+bool MFMAExpInterleaveOpt::computeHeuristics(
+    SmallVectorImpl<SUnit *> &MFMAChainSeeds, const SIInstrInfo *TII) {
+  SmallVector<SUnit *, 10> ExpPipeCands;
+  SmallVector<SUnit *, 10> MFMAPipeCands;
+  SmallVector<SUnit *, 10> MFMAPipeSUs;
+  SmallVector<SUnit *, 10> PackSUs;
+  SmallVector<SUnit *, 10> CvtSUs;
+
+  auto isBitPack = [](unsigned Opc) {
+    return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PERM_B32_e64;
+  };
+
+  auto isCvt = [](unsigned Opc) {
+    return Opc == AMDGPU::V_CVT_F16_F32_e32 || Opc == AMDGPU::V_CVT_I32_F32_e32;
+  };
+
+  for (SUnit &SU : DAG->SUnits) {
+    auto Opc = SU.getInstr()->getOpcode();
+    if (TII->isTRANS(Opc)) {
+      // Avoid counting a potential bonus V_EXP which all the MFMA depend on
+      if (SU.Succs.size() >= 7)
+        continue;
+      for (auto &Succ : SU.Succs) {
+        if (Succ.getSUnit()->Succs.size() >= 7)
+          continue;
+      }
+      ExpPipeCands.push_back(&SU);
+    }
+
+    if (TII->isMFMAorWMMA(*SU.getInstr()))
+      MFMAPipeCands.push_back(&SU);
+
+    if (isBitPack(Opc))
+      PackSUs.push_back(&SU);
+
+    if (isCvt(Opc))
+      CvtSUs.push_back(&SU);
+  }
+
+  if (!(PackSUs.size() && MFMAPipeCands.size() && ExpPipeCands.size()))
+    return false;
+
+  TransPipeCount = 0;
+
+  std::optional<SUnit *> TempMFMA;
+  std::optional<SUnit *> TempExp;
+  // Count the number of EXPs that reach an MFMA
+  for (auto &PredSU : ExpPipeCands) {
+    for (auto &SuccSU : MFMAPipeCands) {
+      if (DAG->IsReachable(SuccSU, PredSU)) {
+        if (!TempExp.has_value()) {
+          TempExp = PredSU;
+          TempMFMA = SuccSU;
+        }
+        MFMAPipeSUs.push_back(SuccSU);
+        ++TransPipeCount;
+        break;
+      }
+    }
+  }
+
+  if (!TempExp.has_value())
+    return false;
+
+  HasChainBetweenCvt =
+      std::find_if((*TempExp)->Succs.begin(), (*TempExp)->Succs.end(),
+                   [&isCvt](SDep &Succ) {
+                     return isCvt(Succ.getSUnit()->getInstr()->getOpcode());
+                   }) == (*TempExp)->Succs.end();
+
+  // Count the number of MFMAs that are reached by an EXP
+  MFMAPipeCount = 0;
+  for (auto &SuccSU : MFMAPipeCands) {
+    if (MFMAPipeSUs.size() &&
+        std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(),
+                     [&SuccSU](SUnit *PotentialMatch) {
+                       return PotentialMatch->NodeNum == SuccSU->NodeNum;
+                     }) != MFMAPipeSUs.end()) {
+      ++MFMAPipeCount;
+      continue;
+    }
+    for (auto &PredSU : ExpPipeCands) {
+      if (DAG->IsReachable(SuccSU, PredSU)) {
+        MFMAPipeSUs.push_back(SuccSU);
+        ++MFMAPipeCount;
+        break;
+      }
+    }
+  }
+
+  if (!TempMFMA.has_value() || !TempExp.has_value())
+    return false;
+
+  std::optional<SUnit *> TempCvt;
+  for (auto &SuccSU : CvtSUs) {
+    if (DAG->IsReachable(SuccSU, *TempExp)) {
+      TempCvt = SuccSU;
+      break;
+    }
+  }
+
+  HasCvt = false;
+  if (TempCvt.has_value()) {
+    for (auto &SuccSU : MFMAPipeSUs) {
+      if (DAG->IsReachable(SuccSU, *TempCvt)) {
+        HasCvt = true;
+        break;
+      }
+    }
+  }
+
+  MFMAChains = 0;
+  for (auto &MFMAPipeSU : MFMAPipeSUs) {
+    if (MFMAChainSeeds.size() &&
+        std::find(MFMAChainSeeds.begin(), MFMAChainSeeds.end(), MFMAPipeSU) !=
+            MFMAChainSeeds.end())
+      continue;
+    if (!std::any_of(MFMAPipeSU->Preds.begin(), MFMAPipeSU->Preds.end(),
+                     [&TII](SDep &Succ) {
+                       return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());
+                     })) {
+      MFMAChainSeeds.push_back(MFMAPipeSU);
+      ++MFMAChains;
+    }
+  }
+
+  if (!MFMAChains)
+    return false;
+
+  for (auto Pred : MFMAChainSeeds[0]->Preds) {
+    if (TII->isDS(Pred.getSUnit()->getInstr()->getOpcode()) &&
+        Pred.getSUnit()->getInstr()->mayLoad())
+      FirstPipeDSR = Pred.getSUnit()->NodeNum;
+  }
+
+  MFMAChainLength = MFMAPipeCount / MFMAChains;
+
+  // The number of bit pack operations that depend on a single V_EXP
+  unsigned PackSuccCount = std::count_if(
+      PackSUs.begin(), PackSUs.end(), [this, &TempExp](SUnit *VPack) {
+        return DAG->IsReachable(VPack, *TempExp);
+      });
+
+  // The number of bit pack operations an MFMA depends on
+  unsigned PackPredCount =
+      std::count_if((*TempMFMA)->Preds.begin(), (*TempMFMA)->Preds.end(),
+                    [&isBitPack](SDep &Pred) {
+                      auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
+                      return isBitPack(Opc);
+                    });
+
+  auto PackPred =
+      std::find_if((*TempMFMA)->Preds.begin(), (*TempMFMA)->Preds.end(),
+                   [&isBitPack](SDep &Pred) {
+                     auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
+                     return isBitPack(Opc);
+                   });
+
+  if (PackPred == (*TempMFMA)->Preds.end())
+    return false;
+
+  MFMAEnablement = 0;
+  ExpRequirement = 0;
+  // How many MFMAs depend on a single bit pack operation
+  MFMAEnablement =
+      std::count_if(PackPred->getSUnit()->Succs.begin(),
+                    PackPred->getSUnit()->Succs.end(), [&TII](SDep &Succ) {
+                      return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());
+                    });
+
+  // The number of MFMAs that depend on a single V_EXP
+  MFMAEnablement *= PackSuccCount;
+
+  // The number of V_EXPs required to resolve all dependencies for an MFMA
+  ExpRequirement =
+      std::count_if(ExpPipeCands.begin(), ExpPipeCands.end(),
+                    [this, &PackPred](SUnit *ExpBase) {
+                      return DAG->IsReachable(PackPred->getSUnit(), ExpBase);
+                    });
+
+  ExpRequirement *= PackPredCount;
+  return true;
+}
+
 void MFMAExpInterleaveOpt::applyIGLPStrategy(
     DenseMap<int, SUnitsToCandidateSGsMap> &SyncedInstrs,
     DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
@@ -1484,187 +1673,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
   const SIInstrInfo *TII = ST.getInstrInfo();
 
   SmallVector<SUnit *, 4> MFMAChainSeeds;
-
-  if (!IsPostRA) {
-    SmallVector<SUnit *, 10> ExpPipeCands;
-    SmallVector<SUnit *, 10> MFMAPipeCands;
-    SmallVector<SUnit *, 10> MFMAPipeSUs;
-    SmallVector<SUnit *, 10> PackSUs;
-    SmallVector<SUnit *, 10> CvtSUs;
-
-    auto isBitPack = [](unsigned Opc) {
-      return Opc == AMDGPU::V_PACK_B32_F16_e64 || Opc == AMDGPU::V_PERM_B32_e64;
-    };
-
-    auto isCvt = [](unsigned Opc) {
-      return Opc == AMDGPU::V_CVT_F16_F32_e32 ||
-             Opc == AMDGPU::V_CVT_I32_F32_e32;
-    };
-
-    for (SUnit &SU : DAG->SUnits) {
-      auto Opc = SU.getInstr()->getOpcode();
-      if (TII->isTRANS(Opc)) {
-        // Avoid counting a potential bonus V_EXP which all the MFMA depend on
-        if (SU.Succs.size() >= 7)
-          continue;
-        for (auto &Succ : SU.Succs) {
-          if (Succ.getSUnit()->Succs.size() >= 7)
-            continue;
-        }
-        ExpPipeCands.push_back(&SU);
-      }
-
-      if (TII->isMFMAorWMMA(*SU.getInstr()))
-        MFMAPipeCands.push_back(&SU);
-
-      if (isBitPack(Opc))
-        PackSUs.push_back(&SU);
-      
-      if (isCvt(Opc))
-        CvtSUs.push_back(&SU);
-    }
-
-    if (!(PackSUs.size() && MFMAPipeCands.size() && ExpPipeCands.size()))
-      return;
-
-    TransPipeCount = 0;
-    MFMAPipeCount = 0;
-    MFMAEnablement = 0;
-    ExpRequirement = 0;
-    MFMAChains = 0;
-    HasCvt = false;
-
-    std::optional<SUnit *> TempMFMA;
-    std::optional<SUnit *> TempExp;
-    // Count the number of EXPs that reach an MFMA
-    for (auto &PredSU : ExpPipeCands) {
-      for (auto &SuccSU : MFMAPipeCands) {
-        if (DAG->IsReachable(SuccSU, PredSU)) {
-          if (!TempExp.has_value()) {
-            TempExp = PredSU;
-            TempMFMA = SuccSU;
-          }
-          MFMAPipeSUs.push_back(SuccSU);
-          ++TransPipeCount;
-          break;
-        }
-      }
-    }
-
-    if (!TempExp.has_value())
-      return;
-
-    bool FoundCvtSucc = false;
-    HasChainBetweenCvt =
-        std::find_if((*TempExp)->Succs.begin(), (*TempExp)->Succs.end(),
-                     [&isCvt](SDep &Succ) {
-                       return isCvt(Succ.getSUnit()->getInstr()->getOpcode());
-                     }) == (*TempExp)->Succs.end();
-
-    // Count the number of MFMAs that are reached by an EXP
-    for (auto &SuccSU : MFMAPipeCands) {
-      if (MFMAPipeSUs.size() && std::find_if(MFMAPipeSUs.begin(), MFMAPipeSUs.end(),
-                       [&SuccSU](SUnit *PotentialMatch) {
-                         return PotentialMatch->NodeNum == SuccSU->NodeNum;
-                       }) != MFMAPipeSUs.end()) {
-        ++MFMAPipeCount;
-        continue;
-      }
-      for (auto &PredSU : ExpPipeCands) {
-        if (DAG->IsReachable(SuccSU, PredSU)) {
-          MFMAPipeSUs.push_back(SuccSU);
-          ++MFMAPipeCount;
-          break;
-        }
-      }
-    }
-
-    if (!TempMFMA.has_value() || !TempExp.has_value())
-      return;
-    
-    std::optional<SUnit *> TempCvt;
-    for (auto &SuccSU : CvtSUs) {
-      if (DAG->IsReachable(SuccSU, *TempExp)) {
-        TempCvt = SuccSU;
-        break;
-      }
-    }
-
-    if (TempCvt.has_value()) {
-      for (auto &SuccSU : MFMAPipeSUs) {
-        if (DAG->IsReachable(SuccSU, *TempCvt)) {
-          HasCvt = true;
-          break;
-        }
-      }
-    }
-
-    for (auto &MFMAPipeSU : MFMAPipeSUs) {
-      if (MFMAChainSeeds.size() && std::find(MFMAChainSeeds.begin(), MFMAChainSeeds.end(), MFMAPipeSU) != MFMAChainSeeds.end()) 
-        continue;
-      if (!std::any_of(MFMAPipeSU->Preds.begin(), MFMAPipeSU->Preds.end(), [&TII](SDep &Succ) {
-        return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());
-      })) {
-        MFMAChainSeeds.push_back(MFMAPipeSU);
-        ++MFMAChains;
-      }
-    }
-
-    if (!MFMAChains)
-      return;
-
-    for (auto Pred : MFMAChainSeeds[0]->Preds) {
-      if (TII->isDS(Pred.getSUnit()->getInstr()->getOpcode()) &&
-          Pred.getSUnit()->getInstr()->mayLoad())
-        FirstPipeDSR = Pred.getSUnit()->NodeNum;
-    }
-
-    MFMAChainLength = MFMAPipeCount / MFMAChains;
-
-    // The number of bit pack operations that depend on a single V_EXP
-    unsigned PackSuccCount = std::count_if(
-        PackSUs.begin(), PackSUs.end(), [this, &TempExp](SUnit *VPack) {
-          return DAG->IsReachable(VPack, *TempExp);
-        });
-
-    // The number of bit pack operations an MFMA depends on
-    unsigned PackPredCount =
-        std::count_if((*TempMFMA)->Preds.begin(), (*TempMFMA)->Preds.end(),
-                      [&isBitPack](SDep &Pred) {
-                        auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
-                        return isBitPack(Opc);
-                      });
-
-    auto PackPred =
-        std::find_if((*TempMFMA)->Preds.begin(), (*TempMFMA)->Preds.end(),
-                     [&isBitPack](SDep &Pred) {
-                       auto Opc = Pred.getSUnit()->getInstr()->getOpcode();
-                       return isBitPack(Opc);
-                     });
-
-    if (PackPred == (*TempMFMA)->Preds.end())
-      return;
-
-    // How many MFMAs depend on a single bit pack operation
-    MFMAEnablement =
-        std::count_if(PackPred->getSUnit()->Succs.begin(),
-                      PackPred->getSUnit()->Succs.end(), [&TII](SDep &Succ) {
-                        return TII->isMFMAorWMMA(*Succ.getSUnit()->getInstr());
-                      });
-
-    // The number of MFMAs that depend on a single V_EXP
-    MFMAEnablement *= PackSuccCount;
-
-    // The number of V_EXPs required to resolve all dependencies for an MFMA
-    ExpRequirement =
-        std::count_if(ExpPipeCands.begin(), ExpPipeCands.end(),
-                      [this, &PackPred](SUnit *ExpBase) {
-                        return DAG->IsReachable(PackPred->getSUnit(), ExpBase);
-                      });
-
-    ExpRequirement *= PackPredCount;
-  }
-  if (!(MFMAEnablement && ExpRequirement))
+  if (!computeHeuristics(MFMAChainSeeds, TII))
     return;
 
   bool IsSmallKernelType =
