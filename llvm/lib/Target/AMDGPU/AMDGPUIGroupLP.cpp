@@ -1310,6 +1310,25 @@ private:
         : InstructionRule(TII, SGID, NeedsCache), Number(Number) {}
   };
 
+
+    /// Whether or not the instruction is the \p Number th occuring DS_READ
+  /// instruciton
+  class OccursAfterDSR final : public InstructionRule {
+  private:
+    unsigned Number = 1;
+
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+
+      return SU->NodeNum >= Number;
+
+    }
+    OccursAfterDSR(unsigned Number, const SIInstrInfo *TII, unsigned SGID,
+             bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache), Number(Number) {}
+  };
+
   // Whether or not the instruction is a transitive predecessor of any TRANS
   // instruction
   class IsPipeMFMA final : public InstructionRule {
@@ -1473,6 +1492,7 @@ static unsigned MFMAEnablement = 0;
 static unsigned ExpRequirement = 0;
 static unsigned MFMAChains = 0;
 static unsigned MFMAChainLength = 0;
+static unsigned DSRCount = 0;
 static bool HasCvt = false;
 bool IsLengthWise = false;
 bool HasChainBetweenCvt;
@@ -1509,6 +1529,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
              Opc == AMDGPU::V_CVT_I32_F32_e32_gfx10 ||
              Opc == AMDGPU::V_CVT_I32_F32_e32_gfx11;
     };
+    DSRCount = 0;
     for (SUnit &SU : DAG->SUnits) {
       auto Opc = SU.getInstr()->getOpcode();
       if (TII->isTRANS(Opc)) {
@@ -1521,6 +1542,10 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
         }
         ExpPipeCands.push_back(&SU);
       }
+
+      if (TII->isDS(Opc) && SU.getInstr()->mayLoad())
+        ++DSRCount;
+
 
       if (TII->isMFMAorWMMA(*SU.getInstr()))
         MFMAPipeCands.push_back(&SU);
@@ -1722,6 +1747,20 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     //unsigned MFMAChain = CurrTransPosition % MFMAChains;
     //unsigned PositionInChain = CurrTransPosition / MFMAChains;
 
+    errs() << "DSRCount: " << DSRCount << "\n";
+    std::optional<unsigned> FirstPipeDSR;
+    if (!IsPostRA) {
+
+    errs() << "We have chain : SU(" << MFMAChainSeeds[0]->NodeNum << ")\n";
+    errs() << "With DSR preds: \n";
+
+    for (auto Pred : MFMAChainSeeds[0]->Preds) {
+      if (TII->isDS(Pred.getSUnit()->getInstr()->getOpcode()) && Pred.getSUnit()->getInstr()->mayLoad()) {
+        FirstPipeDSR = Pred.getSUnit()->NodeNum;
+      }
+    }
+    }
+
     auto incrementTransPosition = [&CurrTransPosition, &MFMAChain, &PositionInChain, &CurrMFMAForTransPosition]() {
       ++CurrTransPosition;
       CurrMFMAForTransPosition += MFMAEnablement;
@@ -1775,6 +1814,8 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
 
     assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
     bool UsesFMA = !IsPostRA;
+    bool UsesDSRead = !IsPostRA && FirstPipeDSR;
+
 
     if (UsesFMA) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1801,7 +1842,14 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     }    
-    
+
+
+    if (UsesDSRead) {
+      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+          SchedGroupMask::DS_READ, 1, PipelineSyncID, DAG, TII);
+      SG->addRule(std::make_shared<OccursAfterDSR>(*FirstPipeDSR, TII, SG->getSGID()));
+      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    }
     
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
         SchedGroupMask::TRANS, ExpRequirement, PipelineSyncID, DAG, TII);
@@ -1820,9 +1868,6 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
 
 
 
-
-
-
     for (unsigned I = 0; I < ExpRequirement; I++) {
       if (HasCvt) {
         SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -1833,7 +1878,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
                                                            SG->getSGID()));
         else {
           //errs() << "Using SuccOfPrevNth\n";
-          SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(1 + 3 * I, TII,
+          SG->addRule(std::make_shared<IsSuccOfPrevNthGroup>(1 + (2 + UsesFMA) * I, TII,
                                                            SG->getSGID()));
         }
         SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
@@ -1910,6 +1955,14 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
       incrementMFMAPosition();
 
 
+    if (UsesDSRead && !(I % 2)) {
+      SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+          SchedGroupMask::DS_READ, 1, PipelineSyncID, DAG, TII);
+      SG->addRule(std::make_shared<OccursAfterDSR>(*FirstPipeDSR, TII, SG->getSGID()));
+      SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    }
+
+
 
 
       for (unsigned J = 0; J < ExpRatio; J++) {
@@ -1920,7 +1973,9 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
           auto BaseDiff = (2 + UsesFMA) * (ExpRequirement - 1) + 1;
           auto MFMAOffset = MFMARatio * (I + 1);
           auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
-          auto CurrentOffset = std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
+          auto DSROffset = I/2 + 1;
+          auto MaxDSROffset = MaxMFMAOffset/2;
+          auto CurrentOffset = UsesDSRead * std::min(MaxDSROffset, DSROffset) + std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
           //errs() << "SGID: " << SG->getSGID() << " has CurrentOffset: " << CurrentOffset << "\n";
         if (HasChainBetweenCvt)
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(CurrentOffset, TII,
