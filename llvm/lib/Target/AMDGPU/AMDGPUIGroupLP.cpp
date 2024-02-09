@@ -967,6 +967,8 @@ private:
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
       SchedGroup *OtherGroup = nullptr;
 
+      //errs() << "Enables NthMFMA\n";
+
       bool FoundTrans = false;
       unsigned Counter = 1;
 
@@ -1030,6 +1032,7 @@ private:
       auto TII = SyncPipe[0].TII;
 
       //errs() << "Trying to find " << Number << " position in chain\n";
+      //errs() << "For SG: " << SGID  << "\n";
       if (!SU || !TII->isMFMAorWMMA(*ChainSeed->getInstr()))
         return false;
 
@@ -1045,10 +1048,11 @@ private:
               TempSU = Succ.getSUnit();
             //  errs() << "Found MFMA succ\n";
               Found = true;
+              break;
             }
           }
           if (!Found) {
-          //  errs() << "Did not find\n";
+        //    errs() << "Did not find\n";
             return false;
           }
         }
@@ -1060,6 +1064,7 @@ private:
         return false;
       }
 
+      //errs() << "exact mfma: SU(" << SU->NodeNum << ")\n";
       return DAG->IsReachable((*Cache)[0], const_cast<SUnit *>(SU));
     }
 
@@ -1188,6 +1193,7 @@ private:
   public:
     bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
                SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      //errs() << "Is Fma\n";
       return SU->getInstr()->getOpcode() == AMDGPU::V_FMA_F32_e64;
     }
     IsFMA(unsigned Val, const SIInstrInfo *TII, unsigned SGID,
@@ -1739,7 +1745,9 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
   errs() << "HasCvt: " << HasCvt << "\n";
   errs() << "HasChainBetweenCvt: " << HasChainBetweenCvt << "\n";
 
-  if (GeneralizedExpInterleave) {
+  errs() << "Is postRA, MFMAChainSeedsSize " << IsPostRA << ", " << MFMAChainSeeds.size() << "\n";
+  bool ShouldBypass = IsSmallKernelType && IsPostRA;
+  if (GeneralizedExpInterleave && !ShouldBypass) {
     unsigned CurrTransPosition = 0;
     unsigned MFMAChain = 0;
     unsigned PositionInChain = 0;
@@ -1813,9 +1821,9 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
    // }
 
     assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
-    bool UsesFMA = !IsPostRA;
-    bool UsesDSRead = !IsPostRA && FirstPipeDSR;
-    HasCvt &= !IsPostRA;
+    bool UsesFMA = !IsLargeKernelType || !IsPostRA;
+    bool UsesDSRead = IsLargeKernelType && !IsPostRA && FirstPipeDSR;
+    HasCvt &= (!IsLargeKernelType || !IsPostRA);
 
 
     if (UsesFMA) {
@@ -1839,7 +1847,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
       SG->addRule(std::make_shared<EnablesNthMFMAInChain>(getNextTransPositionInChain(), MFMAChainSeeds[getNextTransMFMAChain()], TII, SG->getSGID(), true));
     }
     else 
-      SG->addRule(std::make_shared<EnablesNthMFMA>(1, TII, SG->getSGID(), true));
+      SG->addRule(std::make_shared<EnablesNthMFMA>(2, TII, SG->getSGID(), true));
     SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     }    
@@ -1896,7 +1904,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
       SG->addRule(std::make_shared<EnablesNthMFMAInChain>(getNextTransPositionInChain(), MFMAChainSeeds[getNextTransMFMAChain()], TII, SG->getSGID(), true));
     }
     else 
-      SG->addRule(std::make_shared<EnablesNthMFMA>(1, TII, SG->getSGID(), true));
+      SG->addRule(std::make_shared<EnablesNthMFMA>(3, TII, SG->getSGID(), true));
     SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     }
@@ -1967,13 +1975,13 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
 
 
       for (unsigned J = 0; J < ExpRatio; J++) {
+           auto MFMAOffset = MFMARatio * (I + 1);
+          auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
         if (HasCvt) {
           SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
               SchedGroupMask::VALU, 1, PipelineSyncID, DAG, TII);
           SG->addRule(std::make_shared<IsCvt>(TII, SG->getSGID()));
           auto BaseDiff = (2 + UsesFMA) * (ExpRequirement - 1) + 1;
-          auto MFMAOffset = MFMARatio * (I + 1);
-          auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
           auto DSROffset = I/4 + 1;
           auto MaxDSROffset = MaxMFMAOffset/4;
           auto CurrentOffset = UsesDSRead * std::min(MaxDSROffset, DSROffset) + std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
@@ -2002,7 +2010,7 @@ if (UsesFMA) {
     }
     else 
       SG->addRule(std::make_shared<EnablesNthMFMA>(1, TII, SG->getSGID(), true));
-    SG->addRule(std::make_shared<IsFMA>(1, TII, SG->getSGID()));
+    SG->addRule(std::make_shared<IsFMA>(3 + std::min(MaxMFMAOffset, MFMAOffset), TII, SG->getSGID()));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 }
 
