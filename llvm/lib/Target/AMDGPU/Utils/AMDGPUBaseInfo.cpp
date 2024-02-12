@@ -207,7 +207,7 @@ unsigned getCodeObjectVersion(const Module &M) {
   }
 
   // Default code object version.
-  return AMDHSA_COV5;
+  return AmdhsaCodeObjectVersion;
 }
 
 unsigned getMultigridSyncArgImplicitArgPosition(unsigned CodeObjectVersion) {
