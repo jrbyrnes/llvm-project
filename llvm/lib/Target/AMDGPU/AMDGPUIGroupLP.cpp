@@ -1505,7 +1505,7 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
   const SIInstrInfo *TII = ST.getInstrInfo();
 
   SmallVector<SUnit *, 4> MFMAChainSeeds;
-  if (!analyzeDAG(MFMAChainSeeds, TII))
+  if (!IsPostRA && !analyzeDAG(MFMAChainSeeds, TII))
     return;
 
   bool IsSmallKernelType =
@@ -1521,10 +1521,17 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
   errs() << "HasChainBetweenCvt: " << HasChainBetweenCvt << "\n";
 
   errs() << "Is postRA, MFMAChainSeedsSize " << IsPostRA << ", " << MFMAChainSeeds.size() << "\n";
+  
+  bool IsNewMediumKernelType = MFMAEnablement == 2 && ExpRequirement == 4 && TransPipeCount == 16;
+  bool IsNewLargeKernelType =  MFMAEnablement == 4 && ExpRequirement == 4 && TransPipeCount == 48;
 
 
-  if (!(IsSmallKernelType || IsLargeKernelType || IsTinyKernelType))
-    return;
+  errs() << "IsSmallKernelType: " << IsSmallKernelType << "\n";
+  errs() << "IsNew: Medium, Large: " << IsNewMediumKernelType << ", " << IsNewLargeKernelType << "\n"; 
+
+  if (!(IsSmallKernelType || IsLargeKernelType || IsTinyKernelType || IsNewMediumKernelType || IsNewLargeKernelType))
+     return;
+
   
   unsigned PipelineSyncID = 0;
   SchedGroup *SG = nullptr;
@@ -1561,9 +1568,9 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     };
 
     assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
-    bool UsesFMA = !IsLargeKernelType || !IsPostRA;
+    bool UsesFMA = !IsPostRA;
     bool UsesDSRead = IsLargeKernelType && !IsPostRA && FirstPipeDSR;
-    bool UsesCvt = HasCvt && (!IsLargeKernelType || !IsPostRA);
+    bool UsesCvt = HasCvt && !IsPostRA;
 
     // PHASE 1: "Prefetch"
     if (UsesFMA) {
