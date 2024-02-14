@@ -11,6 +11,7 @@
 
 #include "llvm/CodeGen/ScheduleDAGMutation.h"
 #include <memory>
+#include <vector>
 
 namespace llvm {
 
@@ -18,7 +19,9 @@ namespace llvm {
 // classified into a SchedGroup.
 enum class IGLPPhase { Initial = 0u, PreRAReentry = 1u << 0, PostRA = 1u << 1 };
 
-std::unique_ptr<ScheduleDAGMutation> createIGroupLPDAGMutation(IGLPPhase Phase);
+std::unique_ptr<ScheduleDAGMutation> createIGroupLPDAGMutation(
+    IGLPPhase Phase,
+    std::vector<std::unique_ptr<ScheduleDAGMutation>> *SavedMutations);
 
 } // namespace llvm
 
