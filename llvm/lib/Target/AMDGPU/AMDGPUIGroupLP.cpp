@@ -1090,6 +1090,44 @@ private:
           HasIntermediary(HasIntermediary) {}
   };
 
+
+  class GreaterThanNSuccs final : public InstructionRule {
+  private:
+    unsigned Size = 1;
+    bool HasIntermediary = false;
+
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      if (!SyncPipe.size())
+        return false;
+
+      auto SuccSize = std::count_if(
+          SU->Succs.begin(), SU->Succs.end(),
+          [](const SDep &Succ) { return Succ.getKind() == SDep::Data; });
+      if (SuccSize >= Size)
+        return true;
+
+      if (HasIntermediary) {
+        for (auto Succ : SU->Succs) {
+          auto SuccSize = std::count_if(
+              Succ.getSUnit()->Succs.begin(), Succ.getSUnit()->Succs.end(),
+              [](const SDep &SuccSucc) {
+                return SuccSucc.getKind() == SDep::Data;
+              });
+          if (SuccSize >= Size)
+            return true;
+        }
+      }
+
+      return false;
+    }
+    GreaterThanNSuccs(unsigned Size, const SIInstrInfo *TII, unsigned SGID,
+                   bool HasIntermediary = false, bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache), Size(Size),
+          HasIntermediary(HasIntermediary) {}
+  };
+
   // Whether or not the instruction is an V_CVT instruction.
   class IsCvt final : public InstructionRule {
   private:
@@ -1685,6 +1723,15 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
   auto MFMALoopCount = MFMAInLoop / MFMARatio;
   auto LoopSize = std::min(ExpLoopCount, MFMALoopCount);
 
+  errs() << "ExpRatio, LoopSize: " << ExpRatio << ", " << LoopSize << "\n";
+
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsPipeExp>(TII, SG->getSGID(), true));
+    SG->addRule(std::make_shared<GreaterThanNSuccs>(8, TII, SG->getSGID(),
+                                                 HasChainBetweenCvt));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+
   for (unsigned I = 0; I < LoopSize; I++) {
     if (!(I * ExpRatio % ExpRequirement))
       incrementTransPosition();
@@ -1722,8 +1769,10 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
         auto BaseDiff = (2 + UsesFMA) * (ExpRequirement - 1) + 1;
         auto DSROffset = I / 4 + 1;
         auto MaxDSROffset = MaxMFMAOffset / 4;
+        auto EXPOffset = I * ExpRatio + J > ExpRequirement ? 0 : 1;
         auto CurrentOffset = UsesDSRead * std::min(MaxDSROffset, DSROffset) +
-                             std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff;
+                             std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff + EXPOffset;
+        errs() << "CVT SGID: " << SG->getSGID() << " has Offset: " << CurrentOffset << "\n";
         if (HasChainBetweenCvt)
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(
               CurrentOffset, TII, SG->getSGID()));
