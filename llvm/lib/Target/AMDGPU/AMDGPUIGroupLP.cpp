@@ -1501,6 +1501,8 @@ void MFMAExpInterleaveOpt::applyIGLPStrategy(
     DenseMap<int, SmallVector<SchedGroup, 4>> &SyncedSchedGroups,
     bool IsPostRA) {
 
+  return;
+
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
 
@@ -2488,6 +2490,8 @@ void IGroupLPDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
       addSchedBarrierEdges(*R);
       foundSB = true;
     } else if (Opc == AMDGPU::SCHED_GROUP_BARRIER) {
+      errs() << "SGB applied to: \n";
+      DAG->dump();
       initSchedGroupBarrierPipelineStage(R);
       foundSB = true;
     } else if (Opc == AMDGPU::IGLP_OPT) {

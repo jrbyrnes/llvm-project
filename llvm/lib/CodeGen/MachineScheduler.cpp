@@ -803,6 +803,9 @@ void ScheduleDAGMI::schedule() {
   // Build the DAG.
   buildSchedGraph(AA);
 
+  errs() << "After building graph: \n";
+  dump();
+
   postProcessDAG();
 
   SmallVector<SUnit*, 8> TopRoots, BotRoots;

@@ -706,7 +706,7 @@ bool UnclusteredHighRPStage::initGCNSchedStage() {
   if (DAG.RegionsWithHighRP.none() && DAG.RegionsWithExcessRP.none())
     return false;
 
-  SavedMutations.swap(DAG.Mutations);
+  //SavedMutations.swap(DAG.Mutations);
   DAG.addMutation(createIGroupLPDAGMutation(/*IsPostRA=*/false));
 
   InitialOccupancy = DAG.MinOccupancy;
@@ -840,8 +840,8 @@ bool GCNSchedStage::initGCNRegion() {
 
   if (DAG.RegionsWithIGLPInstrs[RegionIdx] &&
       StageID != GCNSchedStageID::UnclusteredHighRPReschedule) {
-    SavedMutations.clear();
-    SavedMutations.swap(DAG.Mutations);
+    //SavedMutations.clear();
+    //SavedMutations.swap(DAG.Mutations);
     DAG.addMutation(createIGroupLPDAGMutation(/*IsPostRA=*/false));
   }
   return true;
@@ -1553,8 +1553,8 @@ GCNPostScheduleDAGMILive::GCNPostScheduleDAGMILive(
 void GCNPostScheduleDAGMILive::schedule() {
   HasIGLPInstrs = hasIGLPInstrs(this);
   if (HasIGLPInstrs) {
-    SavedMutations.clear();
-    SavedMutations.swap(Mutations);
+    //SavedMutations.clear();
+    //SavedMutations.swap(Mutations);
     addMutation(createIGroupLPDAGMutation(/*IsPostRA=*/true));
   }
 
