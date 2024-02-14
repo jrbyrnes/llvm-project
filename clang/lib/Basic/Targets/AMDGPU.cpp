@@ -285,7 +285,6 @@ void AMDGPUTargetInfo::getTargetDefines(const LangOptions &Opts,
     // e.g. gfx10-1-generic -> gfx10_1_generic
     if (GPUKind >= llvm::AMDGPU::GK_AMDGCN_GENERIC_FIRST &&
         GPUKind <= llvm::AMDGPU::GK_AMDGCN_GENERIC_LAST) {
-      std::replace(CanonName.begin(), CanonName.end(), '.', '_');
       std::replace(CanonName.begin(), CanonName.end(), '-', '_');
     }
 

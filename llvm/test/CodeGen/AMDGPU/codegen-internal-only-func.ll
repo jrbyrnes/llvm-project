@@ -1,8 +1,8 @@
 ; REQUIRES: asserts
 ; RUN: sed 's/CODE_OBJECT_VERSION/400/g' %s | llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx900 | FileCheck -check-prefixes=OPT,COV4 %s
 ; RUN: not llc --crash -O0 -mtriple=amdgcn-amd-amdhsa -mcpu=gfx900 -filetype=null %s
-; RUN: sed 's/CODE_OBJECT_VERSION/500/g' %s | llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx900 | FileCheck -check-prefixes=OPT,COV5,COV56 %s
-; RUN: sed 's/CODE_OBJECT_VERSION/600/g' %s | llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx900 | FileCheck -check-prefixes=OPT,COV6,COV56 %s
+; RUN: sed 's/CODE_OBJECT_VERSION/500/g' %s | llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx900 | FileCheck -check-prefixes=OPT,COV56 %s
+; RUN: sed 's/CODE_OBJECT_VERSION/600/g' %s | llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx900 | FileCheck -check-prefixes=OPT,COV56 %s
 
 ; AMDGPUAttributor deletes the function "by accident" so it's never
 ; codegened with optimizations.
