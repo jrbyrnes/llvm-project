@@ -1606,7 +1606,7 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
   assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
   bool UsesFMA = !IsLargeKernelType || !IsPostRA;
   bool UsesDSRead = IsLargeKernelType && !IsPostRA && FirstPipeDSR;
-  bool UsesCvt = HasCvt && (!IsLargeKernelType || !IsPostRA);
+  bool UsesCvt = !IsSmallKernelType && HasCvt && (!IsLargeKernelType || !IsPostRA);
 
   // PHASE 1: "Prefetch"
   if (UsesFMA) {
@@ -1769,10 +1769,11 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
         auto BaseDiff = (2 + UsesFMA) * (ExpRequirement - 1) + 1;
         auto DSROffset = I / 4 + 1;
         auto MaxDSROffset = MaxMFMAOffset / 4;
-        auto EXPOffset = I * ExpRatio + J > ExpRequirement ? 0 : 1;
+        auto EXPOffset = I * ExpRatio + J >= ExpRequirement ? 0 : 1;
         auto CurrentOffset = UsesDSRead * std::min(MaxDSROffset, DSROffset) +
                              std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff + EXPOffset;
         errs() << "CVT SGID: " << SG->getSGID() << " has Offset: " << CurrentOffset << "\n";
+        errs() << "EXPoffset " << EXPOffset << "\n";
         if (HasChainBetweenCvt)
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(
               CurrentOffset, TII, SG->getSGID()));
