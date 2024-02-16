@@ -932,7 +932,7 @@ public:
       DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
     DAG->addMutation(ST.createFillMFMAShadowMutation(DAG->TII));
     DAG->addMutation(createIGroupLPDAGMutation(IGLPPhase::PostRA, nullptr));
-    if (isPassEnabled(EnableVOPD, CodeGenOptLevel::Less))
+    if (isPassEnabled(EnableVOPD, CodeGenOpt::Less))
       DAG->addMutation(createVOPDPairingMutation());
     return DAG;
   }
