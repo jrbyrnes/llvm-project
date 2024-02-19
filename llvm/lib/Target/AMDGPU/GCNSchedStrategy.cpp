@@ -1555,6 +1555,7 @@ GCNPostScheduleDAGMILive::GCNPostScheduleDAGMILive(
     : ScheduleDAGMI(C, std::move(S), RemoveKillFlags) {}
 
 void GCNPostScheduleDAGMILive::schedule() {
+  return;
   HasIGLPInstrs = hasIGLPInstrs(this);
   if (HasIGLPInstrs) {
     SavedMutations.clear();
