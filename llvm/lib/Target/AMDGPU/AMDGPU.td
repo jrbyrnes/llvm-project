@@ -1199,7 +1199,6 @@ def FeatureISAVersion9_4_Common : FeatureSet<
    FeatureAtomicDsPkAdd16Insts,
    FeatureAtomicFlatPkAdd16Insts,
    Feature64BitDPP,
-   FeaturePackedFP32Ops,
    FeatureMAIInsts,
    FeatureFP8Insts,
    FeaturePkFmacF16Inst,

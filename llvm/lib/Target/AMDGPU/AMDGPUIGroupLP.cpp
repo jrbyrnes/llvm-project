@@ -488,11 +488,7 @@ int PipelineSolver::linkSUnit(
       continue;
     }
     auto Group = *I;
-    auto TempCost = Group.link(*SU, MakePred, AddedEdges);
-    AddedCost += TempCost;
-    if (TempCost) {
-      errs() << "Adding Cost " << AddedCost << " for SG: " << I->getSGID() << "\n";
-    }
+    AddedCost += Group.link(*SU, MakePred, AddedEdges);
     assert(AddedCost >= 0);
   }
   return AddedCost;
@@ -1471,7 +1467,6 @@ bool MFMAExpInterleaveOpt::analyzeDAG(const SIInstrInfo *TII) {
 
   for (auto &ExpSU : ExpPipeCands) {
     if (std::find(ExpPipeSUs.begin(), ExpPipeSUs.end(), ExpSU) == ExpPipeSUs.end()) {
-      errs() << "Independt exp, SU(" << ExpSU->NodeNum << ")\n";
       ++IndependentTransCount;
      }
   }
@@ -1854,7 +1849,7 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
       SG->addRule(std::make_shared<OccursAfterExp>(TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
-    errs() << "MFMA SG: " << SG->getSGID() << " uses MFMA: SU(" << MFMAChainSeeds[MFMAChainForMFMA]->NodeNum << "), " << PositionInChainForMFMA << "\n";
+    //errs() << "MFMA SG: " << SG->getSGID() << " uses MFMA: SU(" << MFMAChainSeeds[MFMAChainForMFMA]->NodeNum << "), " << PositionInChainForMFMA << "\n";
     incrementMFMAPosition();
 
     if (UsesIndp) {
@@ -1898,8 +1893,8 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
         auto EXPOffset = I * ExpRatio + J >= ExpRequirement ? 0 : UsesEnabler;
         auto CurrentOffset = UsesDSRead * std::min(MaxDSROffset, DSROffset) +
                              std::min(MaxMFMAOffset, MFMAOffset) + BaseDiff + EXPOffset;
-        errs() << "CVT SGID: " << SG->getSGID() << " has Offset: " << CurrentOffset << "\n";
-        errs() << "EXPoffset " << EXPOffset << "\n";
+        //errs() << "CVT SGID: " << SG->getSGID() << " has Offset: " << CurrentOffset << "\n";
+        //errs() << "EXPoffset " << EXPOffset << "\n";
         if (HasChainBetweenCvt && UsesDepRules)
           SG->addRule(std::make_shared<IsReachableFromPrevNthGroup>(
               CurrentOffset, TII, SG->getSGID()));
@@ -2606,12 +2601,8 @@ int SchedGroup::link(SUnit &SU, bool MakePred,
     bool Added = tryAddEdge(A, B);
     if (Added)
       AddedEdges.push_back(std::pair(A, B));
-    else {
-      errs() << "Missed addEdge: SU(" << A->NodeNum << ") -> SU(" << B->NodeNum << ")\n";
-      DAG->dump();
-      assert(false);
+    else
       ++MissedEdges;
-    }
   }
 
   return MissedEdges;
@@ -2820,7 +2811,6 @@ bool IGroupLPDAGMutation::initIGLPOpt(SUnit &SU) {
       (IGLPStrategyID)SU.getInstr()->getOperand(0).getImm();
   auto S = createIGLPStrategy(StrategyID, DAG, TII);
   if (!S->shouldApplyStrategy(DAG, Phase)) {
-    errs() << "!ShouldApply\n";
     return false;
   }
 
