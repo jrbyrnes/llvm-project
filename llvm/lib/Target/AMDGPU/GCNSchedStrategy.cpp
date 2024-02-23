@@ -632,17 +632,19 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
 
 void GCNScheduleDAGMILive::runSchedStages() {
   LLVM_DEBUG(dbgs() << "All regions recorded, starting actual scheduling.\n");
-
+  errs() << "Run Sched Stages\n";
   if (!Regions.empty())
     BBLiveInMap = getBBLiveInMap();
 
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
+    errs() << "Starting stage\n";
     auto Stage = createSchedStage(S.getCurrentStage());
     if (!Stage->initGCNSchedStage())
       continue;
 
     for (auto Region : Regions) {
+      errs() << "New REgion\n";
       RegionBegin = Region.first;
       RegionEnd = Region.second;
       // Setup for scheduling the region and check whether it should be skipped.
@@ -654,9 +656,11 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
       ScheduleDAGMILive::schedule();
       Stage->finalizeGCNRegion();
+      errs() << "After Region, DAG.MinOcccupancy: " << MinOccupancy << "\n";
     }
 
     Stage->finalizeGCNSchedStage();
+    errs() << "After Stage, DAG.MinOcccupancy: " << MinOccupancy << "\n";
   }
 }
 

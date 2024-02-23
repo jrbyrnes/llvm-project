@@ -935,6 +935,9 @@ private:
   static bool HasChainBetweenCvt;
   // The first occuring DS_READ which feeds an MFMA chain
   static std::optional<unsigned> FirstPipeDSR;
+  // The count of relevant add instructions
+  static unsigned AddCount;
+
   SmallVector<SUnit *, 4> MFMAChainSeeds;
   // Compute the heuristics for the pipeline, returning whether or not the DAG
   // is well formatted for the mutation
@@ -1156,6 +1159,19 @@ private:
         : InstructionRule(TII, SGID, NeedsCache) {}
   };
 
+  // Whether or not the instruction is an V_FMA_F32 instruction.
+  class IsAddOrMul final : public InstructionRule {
+  private:
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      return //SU->getInstr()->getOpcode() == AMDGPU::V_MUL_F32_e32 ||
+             SU->getInstr()->getOpcode() == AMDGPU::V_ADD_F32_e32;
+    }
+    IsAddOrMul(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
   // Whether or not the instruction is V_FMA_F32.
   class IsFMA final : public InstructionRule {
   private:
@@ -1352,6 +1368,7 @@ unsigned MFMAExpInterleaveOpt::MFMAEnablement = 0;
 unsigned MFMAExpInterleaveOpt::ExpRequirement = 0;
 unsigned MFMAExpInterleaveOpt::MFMAChains = 0;
 unsigned MFMAExpInterleaveOpt::MFMAChainLength = 0;
+unsigned MFMAExpInterleaveOpt::AddCount = 0;
 bool MFMAExpInterleaveOpt::HasCvt = false;
 bool MFMAExpInterleaveOpt::HasChainBetweenCvt = false;
 std::optional<unsigned> MFMAExpInterleaveOpt::FirstPipeDSR = std::nullopt;
@@ -1392,6 +1409,10 @@ bool MFMAExpInterleaveOpt::analyzeDAG(const SIInstrInfo *TII) {
 
     if (isCvt(Opc))
       CvtSUs.push_back(&SU);
+
+    if (SU.getInstr()->getOpcode() == AMDGPU::V_ADD_F32_e32)
+      ++AddCount;
+
   }
 
   if (!(PackSUs.size() && MFMAPipeCands.size() && ExpPipeCands.size()))
@@ -1732,6 +1753,10 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
   auto MFMALoopCount = MFMAInLoop / MFMARatio;
   auto LoopSize = std::min(ExpLoopCount, MFMALoopCount);
 
+  auto VALUOps = AddCount < MFMAPipeCount ? 1 : AddCount  / MFMAPipeCount;
+  errs() << "AddCOunt, MFMAPipeCount, VALUOps: " << AddCount << ", " << MFMAPipeCount << ", " << VALUOps << "\n";
+  bool UsesAdd = IsSmallKernelType && !IsPostRA;
+
   for (unsigned I = 0; I < LoopSize; I++) {
     if (!(I * ExpRatio % ExpRequirement))
       incrementTransPosition();
@@ -1748,6 +1773,13 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
     incrementMFMAPosition();
 
+    if (UsesAdd) {
+    SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
+        SchedGroupMask::VALU, VALUOps, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<IsAddOrMul>(TII, SG->getSGID()));
+    SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
+    }
+
     if (UsesDSRead && !(I % 4)) {
       SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
           SchedGroupMask::DS_READ, 2, PipelineSyncID, DAG, TII);
@@ -1758,8 +1790,8 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
 
     // CVT, EXP, FMA Interleaving
     for (unsigned J = 0; J < ExpRatio; J++) {
-      auto MFMAOffset = MFMARatio * (I + 1);
-      auto MaxMFMAOffset = ExpRequirement * MFMARatio / ExpRatio;
+      auto MFMAOffset = (1 + UsesAdd) * MFMARatio * (I + 1);
+      auto MaxMFMAOffset = (1 + UsesAdd) * ExpRequirement * MFMARatio / ExpRatio;
 
       // Round N + 1 CVT
       if (UsesCvt) {
@@ -2419,9 +2451,9 @@ bool SchedGroup::canAddMI(const MachineInstr &MI) const {
             TII->isTRANS(MI.getOpcode()))
     Result = true;
 
-  LLVM_DEBUG(
-      dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10, true)
-             << (Result ? " could classify " : " unable to classify ") << MI);
+//  LLVM_DEBUG(
+  //    dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10, true)
+    //         << (Result ? " could classify " : " unable to classify ") << MI);
 
   return Result;
 }
