@@ -132,6 +132,7 @@ static bool resultDependsOnExec(const MachineInstr &MI) {
   // Ignore comparisons which are only used masked with exec.
   // This allows some hoisting/sinking of VALU comparisons.
   if (MI.isCompare()) {
+    errs() << "Found compare: "; MI.dump();
     const MachineRegisterInfo &MRI = MI.getParent()->getParent()->getRegInfo();
     Register DstReg = MI.getOperand(0).getReg();
     if (!DstReg.isVirtual())

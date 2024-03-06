@@ -38,6 +38,20 @@ static cl::opt<bool> EnableExactSolver(
              "possible."),
     cl::init(false));
 
+static cl::opt<bool> DeferVALU(
+    "amdgpu-igrouplp-defer-valu", cl::Hidden,
+    cl::desc("Whether to use the exponential time solver to fit "
+             "the instructions to the pipeline as closely as "
+             "possible."),
+    cl::init(false));
+
+static cl::opt<bool> VALUArePredsOfNext(
+    "amdgpu-igrouplp-VALU-preds", cl::Hidden,
+    cl::desc("Whether to use the exponential time solver to fit "
+             "the instructions to the pipeline as closely as "
+             "possible."),
+    cl::init(false));
+
 static cl::opt<unsigned> CutoffForExact(
     "amdgpu-igrouplp-exact-solver-cutoff", cl::init(0), cl::Hidden,
     cl::desc("The maximum number of scheduling group conflicts "
@@ -452,13 +466,16 @@ void PipelineSolver::makePipeline() {
   // Preserve the order of barrier for subsequent SchedGroupBarrier mutations
   for (auto &SyncPipeline : BestPipeline) {
     LLVM_DEBUG(dbgs() << "Printing SchedGroups\n");
+    errs() << "Printing SchedGroups\n";
     for (auto &SG : SyncPipeline) {
       LLVM_DEBUG(dbgs() << "SchedGroup with SGID " << SG.getSGID()
                         << " has: \n");
+      errs() << "SchedGroup with SGID " << SG.getSGID() << " and mask: " << (int)SG.getMask() << " has: \n";
       SUnit *SGBarr = nullptr;
       for (auto &SU : SG.Collection) {
         if (SU->getInstr()->getOpcode() == AMDGPU::SCHED_GROUP_BARRIER)
           SGBarr = SU;
+          errs() << "SU( " << SU->NodeNum << ")\n";
         LLVM_DEBUG(dbgs() << "SU(" << SU->NodeNum << ")\n");
       }
       // Command line requested IGroupLP doesn't have SGBarr
@@ -783,6 +800,7 @@ void PipelineSolver::greedyFind(
 }
 
 bool PipelineSolver::solveGreedy() {
+  DAG->dump();
   BestCost = 0;
   std::vector<std::pair<SUnit *, SUnit *>> AddedEdges;
 
@@ -792,6 +810,50 @@ bool PipelineSolver::solveGreedy() {
         ? greedyFind(AddedEdges, CurrSU.second.rbegin(), CurrSU.second.rend())
         : greedyFind(AddedEdges, CurrSU.second.begin(), CurrSU.second.end());
     advancePosition();
+  }
+  if (DeferVALU) {
+    unsigned MaxPipelineSize = 0;
+    SmallVector<SchedGroup, 4> &ThePipe = CurrPipeline[0];
+
+    SmallVector<SUnit *, 8> CollectedVALUs;
+    const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
+    const SIInstrInfo *TII = ST.getInstrInfo();
+
+    for (auto &SU : DAG->SUnits) {
+      MachineInstr &MI = *SU.getInstr();
+      if (TII->isVALU(MI) && !TII->isMFMAorWMMA(MI) && !TII->isTRANS(MI)) {
+        CollectedVALUs.push_back(&SU);
+        //errs() << "Deferring: "; MI.dump();
+        //errs() << "SU(" << SU.NodeNum << ")\n";
+      }
+    }
+    bool IsFirst = true;
+    SmallVector<SUnit *, 8> VALUsCopy;
+    for (auto SG = ThePipe.begin(); SG != ThePipe.end(); SG++) {
+      errs() << "Trying SG: " << SG->getSGID() << "\n";
+
+      for (auto VALUSU : CollectedVALUs) {
+        errs() << "Trying SU( " << VALUSU->NodeNum << ")\n";
+        unsigned CandSGID = SG->getSGID();
+        std::vector<std::pair<SUnit *, SUnit *>> AddedEdges;
+        auto TempCost = addEdges(ThePipe, VALUSU, CandSGID, AddedEdges);
+        removeEdges(AddedEdges);
+        errs() << "TempCost: " << TempCost << "\n";
+        if (TempCost <= 10) {
+          unsigned BestGroupID = CandSGID;
+          SchedGroup *Match = &*SG;
+          errs() << "Adding SU(" << VALUSU->NodeNum << ") to SGID: " << BestGroupID << "\n";
+          Match->add(*VALUSU);
+          addEdges(ThePipe, VALUSU, BestGroupID, AddedEdges);
+        }
+        else {
+          VALUsCopy.push_back(VALUSU);
+        }
+
+      }
+      std::swap(VALUsCopy, CollectedVALUs);
+      VALUsCopy.clear();
+    }
   }
   BestPipeline = CurrPipeline;
   removeEdges(AddedEdges);
@@ -2343,6 +2405,78 @@ private:
 
   ScheduleDAGMI *DAG;
 
+
+  /// Whether or not the instruction is an immediate RAW successor
+  /// of the SchedGroup \p Distance steps before.
+  class IsPredOfPrevGroup final : public InstructionRule {
+  private:
+    unsigned Distance = 1;
+
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      SchedGroup *OtherGroup = nullptr;
+      if (!SyncPipe.size())
+        return false;
+
+      for (auto &PipeSG : SyncPipe) {
+        if ((unsigned)PipeSG.getSGID() == SGID - 1)
+          OtherGroup = &PipeSG;
+      }
+
+      errs() << "CandGroup has SGID and Mask: " << OtherGroup->getSGID()  << ", " << (int)OtherGroup->getMask() << "\n";
+
+      if (!OtherGroup)
+        return false;
+      if (!OtherGroup->Collection.size()) {
+        errs() << "Other Group has no elements\n";
+        return false;
+      }
+
+      errs() << "Have SU: "; SU->getInstr()->dump();
+
+      for (auto &OtherEle : OtherGroup->Collection) {
+        errs() << "Checking against: "; OtherEle->getInstr()->dump();
+
+        for (auto &Pred : OtherEle->Preds) {
+          if (Pred.getSUnit() == SU && Pred.getKind() == SDep::Data)
+            return true;
+        }
+      }
+
+      return false;
+    }
+    IsPredOfPrevGroup(const SIInstrInfo *TII,
+                         unsigned SGID, bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache), Distance(Distance) {}
+  };
+
+
+
+  /// Whether or not the instruction has less than \p Size immediate successors.
+  /// If \p HasIntermediary is true, this tests also whether all successors of
+  /// the SUnit have less than \p Size successors.
+  class LessThanNPreds final : public InstructionRule {
+  private:
+    unsigned Size = 1;
+    bool HasIntermediary = false;
+
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      if (!SyncPipe.size())
+        return false;
+
+      if (SU->Preds.size() >= Size)
+        return false;
+
+
+      return true;
+    }
+    LessThanNPreds(unsigned Size, const SIInstrInfo *TII, unsigned SGID,
+                   bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache), Size(Size) {}
+  };
   // Organize lists of SchedGroups by their SyncID. SchedGroups /
   // SCHED_GROUP_BARRIERs with different SyncIDs will have no edges added
   // between then.
@@ -2370,6 +2504,7 @@ private:
       std::vector<SUnit>::reverse_iterator RIter);
 
   bool initIGLPOpt(SUnit &SU);
+
 
 public:
   void apply(ScheduleDAGInstrs *DAGInstrs) override;
@@ -2664,6 +2799,8 @@ IGroupLPDAGMutation::invertSchedBarrierMask(SchedGroupMask Mask) const {
   return InvertedMask;
 }
 
+static unsigned Counter = 0;
+
 void IGroupLPDAGMutation::initSchedGroupBarrierPipelineStage(
     std::vector<SUnit>::reverse_iterator RIter) {
   // Remove all existing edges from the SCHED_GROUP_BARRIER that were added due
@@ -2678,6 +2815,18 @@ void IGroupLPDAGMutation::initSchedGroupBarrierPipelineStage(
   auto &SG = SyncedSchedGroups[SyncID].emplace_back((SchedGroupMask)SGMask,
                                                     Size, SyncID, DAG, TII);
 
+
+  if ((int)SGMask == (int)SchedGroupMask::VMEM_READ) {
+    ++Counter;
+    if (Counter > 8) {
+      SG.addRule(std::make_shared<LessThanNPreds>(8, TII, SG.getSGID()));
+    }
+  }
+
+
+  if (VALUArePredsOfNext && ((int)SGMask == (int)SchedGroupMask::VALU)) {
+    SG.addRule(std::make_shared<IsPredOfPrevGroup>(TII, SG.getSGID()));
+  }
   SG.initSchedGroup(RIter, SyncedInstrs[SG.getSyncID()]);
 }
 
