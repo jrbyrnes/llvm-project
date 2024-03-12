@@ -27,6 +27,15 @@ bool SemaAMDGPU::CheckAMDGCNBuiltinFunctionCall(unsigned BuiltinID,
   // position of memory order and scope arguments in the builtin
   unsigned OrderIndex, ScopeIndex;
   switch (BuiltinID) {
+  case AMDGPU::BI__builtin_amdgcn_sched_group_barrier: {
+        auto NumArgs = TheCall->getNumArgs();
+    if (TheCall->getNumArgs() > 4)
+      return Diag(TheCall->getEndLoc(),
+                  diag::err_typecheck_call_too_many_args_at_most)
+             << 0 /*function call*/ << 4 << NumArgs << /*is non object*/ 0
+             << TheCall->getSourceRange();
+    return false;
+  }
   case AMDGPU::BI__builtin_amdgcn_global_load_lds: {
     constexpr const int SizeIdx = 2;
     llvm::APSInt Size;
