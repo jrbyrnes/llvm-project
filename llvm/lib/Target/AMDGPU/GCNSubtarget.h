@@ -216,6 +216,8 @@ protected:
   bool HasVALUTransUseHazard = false;
   bool HasForceStoreSC0SC1 = false;
 
+  bool FeaturePermCombine = true;
+
   // Dummy feature to use for assembler in tablegen.
   bool FeatureDisable = false;
 
@@ -826,6 +828,8 @@ public:
   }
 
   bool hasInstPrefetch() const { return getGeneration() >= GFX10; }
+
+  bool enablesPermCombines() const { return FeaturePermCombine; }
 
   // Scratch is allocated in 256 dword per wave blocks for the entire
   // wavefront. When viewed from the perspective of an arbitrary workitem, this

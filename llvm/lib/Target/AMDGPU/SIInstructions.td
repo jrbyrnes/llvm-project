@@ -2820,6 +2820,7 @@ def : GCNPat <
   (V_FMAC_F16_e64 SRCMODS.NONE, $src0, SRCMODS.NONE, $src1,
                   SRCMODS.NONE, $src2)
 >;
+
 let OtherPredicates = [HasTrue16BitInsts] in
 def : GCNPat <
   (fma (f16 (VOP3NoMods f32:$src0)),
@@ -2942,7 +2943,7 @@ def : GCNPat <
 >;
 
 
-
+let OtherPredicates = [EnablesPermCombines] in
 foreach Ty = [i16, f16] in {
 
 defvar vecTy = !if(!eq(Ty, i16), v2i16, v2f16);

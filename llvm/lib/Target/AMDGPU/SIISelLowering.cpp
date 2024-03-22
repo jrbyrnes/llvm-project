@@ -11240,6 +11240,10 @@ static SDValue matchPERM(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
   if (VT != MVT::i32)
     return SDValue();
 
+  const GCNSubtarget &ST = DAG.getSubtarget<GCNSubtarget>();
+  if (!ST.enablesPermCombines())
+    return SDValue();
+
   // VT is known to be MVT::i32, so we need to provide 4 bytes.
   SmallVector<ByteProvider<SDValue>, 8> PermNodes;
   for (int i = 0; i < 4; i++) {

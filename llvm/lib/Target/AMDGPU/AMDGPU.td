@@ -1936,6 +1936,8 @@ def HasNoCvtFP8VOP1Bug : Predicate<"!Subtarget->hasCvtFP8VOP1Bug()">;
 
 def HasAtomicCSubNoRtnInsts : Predicate<"Subtarget->hasAtomicCSubNoRtnInsts()">;
 
+def EnablesPermCombines : Predicate<"Subtarget->enablesPermCombines()">;
+
 // Include AMDGPU TD files
 include "SISchedule.td"
 include "GCNProcessors.td"

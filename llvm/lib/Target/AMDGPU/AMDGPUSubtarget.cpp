@@ -46,6 +46,11 @@ static cl::opt<bool> EnablePowerSched(
   cl::desc("Enable scheduling to minimize mAI power bursts"),
   cl::init(false));
 
+static cl::opt<bool> EnableVPermCombines(
+    "amdgpu-enable-vperm-combines",
+    cl::desc("Whether or not to enable optimizations which produce v_perm"),
+    cl::init(true));
+
 static cl::opt<bool> EnableVGPRIndexMode(
   "amdgpu-vgpr-index-mode",
   cl::desc("Use GPR indexing mode instead of movrel for vector indexing"),
@@ -185,6 +190,7 @@ GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
   // clang-format on
   MaxWavesPerEU = AMDGPU::IsaInfo::getMaxWavesPerEU(this);
   EUsPerCU = AMDGPU::IsaInfo::getEUsPerCU(this);
+  FeaturePermCombine = EnableVPermCombines;
   CallLoweringInfo.reset(new AMDGPUCallLowering(*getTargetLowering()));
   InlineAsmLoweringInfo.reset(new InlineAsmLowering(getTargetLowering()));
   Legalizer.reset(new AMDGPULegalizerInfo(*this, TM));
