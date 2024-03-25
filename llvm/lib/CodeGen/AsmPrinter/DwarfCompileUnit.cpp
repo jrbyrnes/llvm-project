@@ -940,7 +940,7 @@ void DwarfCompileUnit::applyConcreteDbgVariableAttributes(
   auto AddEntry = [&](const DbgValueLocEntry &Entry,
                       DIExpressionCursor &Cursor) {
     if (Entry.isLocation()) {
-      if (!DwarfExpr.addMachineRegExpression(TRI, Cursor,
+      if (!DwarfExpr.addMachineRegExpression(TRI, Asm->MF->getRegInfo(), Cursor,
                                              Entry.getLoc().getReg()))
         return false;
     } else if (Entry.isInt()) {
@@ -1037,7 +1037,8 @@ void DwarfCompileUnit::applyConcreteDbgVariableAttributes(const Loc::MMI &MMI,
       addOpAddress(*Loc, FrameSymbol);
     else
       DwarfExpr.addMachineRegExpression(
-          *Asm->MF->getSubtarget().getRegisterInfo(), Cursor, FrameReg);
+          *Asm->MF->getSubtarget().getRegisterInfo(), Asm->MF->getRegInfo(),
+          Cursor, FrameReg);
     DwarfExpr.addExpression(std::move(Cursor));
   }
   if (Asm->TM.getTargetTriple().isNVPTX() && DD->tuneForGDB()) {
@@ -1067,7 +1068,8 @@ void DwarfCompileUnit::applyConcreteDbgVariableAttributes(
     DIExpressionCursor Cursor(Expr.getElements());
     DwarfExpr.beginEntryValueExpression(Cursor);
     DwarfExpr.addMachineRegExpression(
-        *Asm->MF->getSubtarget().getRegisterInfo(), Cursor, Register);
+        *Asm->MF->getSubtarget().getRegisterInfo(), Asm->MF->getRegInfo(),
+        Cursor, Register);
     DwarfExpr.addExpression(std::move(Cursor));
   }
   addBlock(VariableDie, dwarf::DW_AT_location, DwarfExpr.finalize());
@@ -1703,7 +1705,8 @@ void DwarfCompileUnit::addAddress(DIE &Die, dwarf::Attribute Attribute,
 
   DIExpressionCursor Cursor({});
   const TargetRegisterInfo &TRI = *Asm->MF->getSubtarget().getRegisterInfo();
-  if (!DwarfExpr.addMachineRegExpression(TRI, Cursor, Location.getReg()))
+  if (!DwarfExpr.addMachineRegExpression(TRI, Asm->MF->getRegInfo(), Cursor,
+                                         Location.getReg()))
     return;
   DwarfExpr.addExpression(std::move(Cursor));
 
@@ -1736,7 +1739,8 @@ void DwarfCompileUnit::addComplexAddress(const DIExpression *DIExpr, DIE &Die,
     DwarfExpr.beginEntryValueExpression(Cursor);
 
   const TargetRegisterInfo &TRI = *Asm->MF->getSubtarget().getRegisterInfo();
-  if (!DwarfExpr.addMachineRegExpression(TRI, Cursor, Location.getReg()))
+  if (!DwarfExpr.addMachineRegExpression(TRI, Asm->MF->getRegInfo(), Cursor,
+                                         Location.getReg()))
     return;
   DwarfExpr.addExpression(std::move(Cursor));
 

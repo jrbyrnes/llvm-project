@@ -111,6 +111,7 @@ static void insertCSRRestores(MachineBasicBlock &RestoreBlock,
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   const SIRegisterInfo *RI = ST.getRegisterInfo();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
   // Restore all registers immediately before the return and any
   // terminators that precede it.
   MachineBasicBlock::iterator I = RestoreBlock.getFirstTerminator();
@@ -120,7 +121,7 @@ static void insertCSRRestores(MachineBasicBlock &RestoreBlock,
     for (const CalleeSavedInfo &CI : reverse(CSI)) {
       Register Reg = CI.getReg();
       const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(
-          Reg, Reg == RI->getReturnAddressReg(MF) ? MVT::i64 : MVT::i32);
+          Reg, MRI, Reg == RI->getReturnAddressReg(MF) ? MVT::i64 : MVT::i32);
 
       TII.loadRegFromStackSlot(RestoreBlock, I, Reg, CI.getFrameIdx(), RC, TRI,
                                Register());
@@ -217,7 +218,7 @@ bool SILowerSGPRSpills::spillCalleeSavedRegs(
         }
 
         const TargetRegisterClass *RC =
-          TRI->getMinimalPhysRegClass(Reg, MVT::i32);
+            TRI->getMinimalPhysRegClass(Reg, MRI, MVT::i32);
         int JunkFI = MFI.CreateStackObject(TRI->getSpillSize(*RC),
                                            TRI->getSpillAlign(*RC), true);
 
@@ -231,7 +232,7 @@ bool SILowerSGPRSpills::spillCalleeSavedRegs(
     // can be emitted appropriately.
     if (SpillRetAddrReg) {
       const TargetRegisterClass *RC =
-          TRI->getMinimalPhysRegClass(RetAddrReg, MVT::i64);
+          TRI->getMinimalPhysRegClass(RetAddrReg, MRI, MVT::i64);
       int JunkFI = MFI.CreateStackObject(TRI->getSpillSize(*RC),
                                          TRI->getSpillAlign(*RC), true);
       CSI.push_back(CalleeSavedInfo(RetAddrReg, JunkFI));
