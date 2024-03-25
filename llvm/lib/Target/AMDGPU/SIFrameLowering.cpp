@@ -1838,6 +1838,17 @@ void SIFrameLowering::determinePrologEpilogSGPRSaves(
   }
 }
 
+// Mark all WWM VGPRs as BB LiveIns.
+static void addWwmRegBBLiveIn(MachineFunction &MF) {
+  SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+  for (MachineBasicBlock &MBB : MF) {
+    for (auto &Reg : MFI->getWWMReservedRegs())
+      MBB.addLiveIn(Reg);
+
+    MBB.sortUniqueLiveIns();
+  }
+}
+
 // Only report VGPRs to generic code.
 void SIFrameLowering::determineCalleeSaves(MachineFunction &MF,
                                            BitVector &SavedVGPRs,
@@ -1850,16 +1861,15 @@ void SIFrameLowering::determineCalleeSaves(MachineFunction &MF,
   if (MFI->isChainFunction() && !MF.getFrameInfo().hasTailCall())
     return;
 
-  MFI->shiftSpillPhysVGPRsToLowestRange(MF);
-
   TargetFrameLowering::determineCalleeSaves(MF, SavedVGPRs, RS);
-  if (MFI->isEntryFunction())
-    return;
+
+  MFI->shiftSpillPhysVGPRsToLowestRange(MF, SavedVGPRs);
 
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   const SIRegisterInfo *TRI = ST.getRegisterInfo();
   const SIInstrInfo *TII = ST.getInstrInfo();
   bool NeedExecCopyReservedReg = false;
+  SmallSet<Register, 2> WWMVGPRs;
 
   MachineInstr *ReturnMI = nullptr;
   for (MachineBasicBlock &MBB : MF) {
@@ -1873,9 +1883,9 @@ void SIFrameLowering::determineCalleeSaves(MachineFunction &MF,
       // allocateWWMSpill during the regalloc pipeline whenever a physical
       // register is allocated for the intended virtual registers.
       if (MI.getOpcode() == AMDGPU::SI_SPILL_S32_TO_VGPR)
-        MFI->allocateWWMSpill(MF, MI.getOperand(0).getReg());
+        WWMVGPRs.insert(MI.getOperand(0).getReg());
       else if (MI.getOpcode() == AMDGPU::SI_RESTORE_S32_FROM_VGPR)
-        MFI->allocateWWMSpill(MF, MI.getOperand(1).getReg());
+        WWMVGPRs.insert(MI.getOperand(1).getReg());
       else if (TII->isWWMRegSpillOpcode(MI.getOpcode()))
         NeedExecCopyReservedReg = true;
       else if (MI.getOpcode() == AMDGPU::SI_RETURN ||
@@ -1891,6 +1901,20 @@ void SIFrameLowering::determineCalleeSaves(MachineFunction &MF,
     }
   }
 
+  SmallVector<Register> SortedWWMVGPRs = to_vector(WWMVGPRs);
+  sort(SortedWWMVGPRs, std::greater<Register>());
+
+  // Add the registers to WWMReservedRegs before attempting to shift them down.
+  for (auto &Reg : SortedWWMVGPRs)
+    MFI->reserveWWMRegister(Reg);
+
+  MFI->shiftWwmVGPRsToLowestRange(MF, SortedWWMVGPRs, SavedVGPRs);
+
+  if (MFI->isEntryFunction()) {
+    addWwmRegBBLiveIn(MF);
+    return;
+  }
+
   // Remove any VGPRs used in the return value because these do not need to be saved.
   // This prevents CSR restore from clobbering return VGPRs.
   if (ReturnMI) {
@@ -1899,6 +1923,10 @@ void SIFrameLowering::determineCalleeSaves(MachineFunction &MF,
         SavedVGPRs.reset(Op.getReg());
     }
   }
+
+  // Create the stack objects for WWM registers now.
+  for (auto &Reg : MFI->getWWMReservedRegs())
+    MFI->allocateWWMSpill(MF, Reg);
 
   // Ignore the SGPRs the default implementation found.
   SavedVGPRs.clearBitsNotInMask(TRI->getAllVectorRegMask());
@@ -1916,13 +1944,7 @@ void SIFrameLowering::determineCalleeSaves(MachineFunction &MF,
   for (auto &Reg : MFI->getWWMSpills())
     SavedVGPRs.reset(Reg.first);
 
-  // Mark all lane VGPRs as BB LiveIns.
-  for (MachineBasicBlock &MBB : MF) {
-    for (auto &Reg : MFI->getWWMSpills())
-      MBB.addLiveIn(Reg.first);
-
-    MBB.sortUniqueLiveIns();
-  }
+  addWwmRegBBLiveIn(MF);
 }
 
 void SIFrameLowering::determineCalleeSavesSGPR(MachineFunction &MF,

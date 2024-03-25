@@ -718,7 +718,17 @@ public:
 
   // To bring the Physical VGPRs in the highest range allocated for CSR SGPR
   // spilling into the lowest available range.
-  void shiftSpillPhysVGPRsToLowestRange(MachineFunction &MF);
+  void shiftSpillPhysVGPRsToLowestRange(MachineFunction &MF,
+                                        BitVector &SavedVGPRs);
+
+  // To bring the physical VGPRs in the highest range allocated for wwm
+  // registers into the lowest available range. The VGPRs used for CSR SGPR
+  // spills also need the registers to be updated in their CFI instructions
+  // which is determined by the optional field \p IsCSRSpill.
+  void shiftWwmVGPRsToLowestRange(MachineFunction &MF,
+                                  SmallVectorImpl<Register> &WWMVGPRs,
+                                  BitVector &SavedVGPRs,
+                                  bool IsCSRSpill = false);
 
   bool allocateSGPRSpillToVGPRLane(MachineFunction &MF, int FI,
                                    bool SpillToPhysVGPRLane = false,

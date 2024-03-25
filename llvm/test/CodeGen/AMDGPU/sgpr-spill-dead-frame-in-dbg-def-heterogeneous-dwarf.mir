@@ -43,12 +43,13 @@ body:             |
   ; CHECK-LABEL: name: test
   ; CHECK: bb.0:
   ; CHECK-NEXT:   successors: %bb.1(0x80000000)
+  ; CHECK-NEXT:   liveins: $vgpr0
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION escape 0x0f, 0x04, 0x30, 0x36, 0xe9, 0x02
   ; CHECK-NEXT:   frame-setup CFI_INSTRUCTION undefined $pc_reg
   ; CHECK-NEXT:   renamable $sgpr10 = IMPLICIT_DEF
-  ; CHECK-NEXT:   renamable $vgpr0 = IMPLICIT_DEF
-  ; CHECK-NEXT:   renamable $vgpr0 = SI_SPILL_S32_TO_VGPR killed $sgpr10, 0, killed $vgpr0
+  ; CHECK-NEXT:   $vgpr0 = IMPLICIT_DEF
+  ; CHECK-NEXT:   $vgpr0 = SI_SPILL_S32_TO_VGPR killed $sgpr10, 0, killed $vgpr0
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT: bb.1:
   ; CHECK-NEXT:   liveins: $vgpr0
