@@ -57,15 +57,9 @@ static const TargetRegisterClass *const BogusRegisterClasses[] = {
 class BogusRegisterInfo : public TargetRegisterInfo {
 public:
   BogusRegisterInfo()
-<<<<<<< HEAD
-      : TargetRegisterInfo(nullptr, BogusRegisterClasses, BogusRegisterClasses,
-                           nullptr, nullptr, nullptr, LaneBitmask(~0u), nullptr,
-                           nullptr) {
-=======
       : TargetRegisterInfo(nullptr, BogusRegisterClasses,
                            BogusRegisterClasses + 1, nullptr, nullptr,
                            LaneBitmask(~0u), nullptr, nullptr) {
->>>>>>> f18f342c78fb... [CodeGen][MRI] Introduce synthetic register classes
     InitMCRegisterInfo(nullptr, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr,
                        nullptr, nullptr, nullptr, nullptr, 0, nullptr);
   }
