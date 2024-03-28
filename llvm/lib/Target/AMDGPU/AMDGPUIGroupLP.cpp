@@ -1621,9 +1621,9 @@ bool MFMAExpInterleaveOpt::applyIGLPStrategy(
   assert(IsPostRA || MFMAChainSeeds.size() == MFMAChains);
 
   bool UsesFMA = IsSmallKernelType || !IsPostRA;
-  bool UsesDSRead = IsLargeKernelType && !IsPostRA && FirstPipeDSR;
+  bool UsesDSRead = false; // IsLargeKernelType && !IsPostRA && FirstPipeDSR;
   bool UsesCvt = HasCvt && (IsSmallKernelType || !IsPostRA);
-  bool UsesVALU = IsSmallKernelType;
+  bool UsesVALU = true; // IsSmallKernelType;
 
   // PHASE 1: "Prefetch"
   if (UsesFMA) {
