@@ -128,24 +128,24 @@ define void @issue63986(i64 %0, i64 %idxprom) {
 ; CHECK-NEXT:    ; => This Inner Loop Header: Depth=2
 ; CHECK-NEXT:    v_mov_b32_e32 v10, s10
 ; CHECK-NEXT:    v_mov_b32_e32 v11, s11
-; CHECK-NEXT:    flat_load_ubyte v12, v[10:11] offset:5
-; CHECK-NEXT:    flat_load_ubyte v13, v[10:11] offset:6
-; CHECK-NEXT:    flat_load_ubyte v14, v[10:11] offset:7
-; CHECK-NEXT:    flat_load_ubyte v15, v[10:11] offset:3
-; CHECK-NEXT:    flat_load_ubyte v16, v[10:11] offset:2
-; CHECK-NEXT:    flat_load_ubyte v17, v[10:11] offset:1
-; CHECK-NEXT:    flat_load_ubyte v18, v[10:11]
+; CHECK-NEXT:    flat_load_ubyte v12, v[10:11] offset:3
+; CHECK-NEXT:    flat_load_ubyte v13, v[10:11] offset:2
+; CHECK-NEXT:    flat_load_ubyte v14, v[10:11] offset:1
+; CHECK-NEXT:    flat_load_ubyte v15, v[10:11]
+; CHECK-NEXT:    flat_load_ubyte v16, v[10:11] offset:7
+; CHECK-NEXT:    flat_load_ubyte v17, v[10:11] offset:6
+; CHECK-NEXT:    flat_load_ubyte v18, v[10:11] offset:5
 ; CHECK-NEXT:    flat_load_ubyte v19, v[10:11] offset:4
-; CHECK-NEXT:    flat_load_ubyte v20, v[10:11] offset:13
-; CHECK-NEXT:    flat_load_ubyte v21, v[10:11] offset:14
-; CHECK-NEXT:    flat_load_ubyte v22, v[10:11] offset:15
-; CHECK-NEXT:    flat_load_ubyte v23, v[10:11] offset:11
-; CHECK-NEXT:    flat_load_ubyte v24, v[10:11] offset:10
-; CHECK-NEXT:    flat_load_ubyte v25, v[10:11] offset:9
-; CHECK-NEXT:    flat_load_ubyte v26, v[10:11] offset:8
+; CHECK-NEXT:    flat_load_ubyte v20, v[10:11] offset:11
+; CHECK-NEXT:    flat_load_ubyte v21, v[10:11] offset:10
+; CHECK-NEXT:    flat_load_ubyte v22, v[10:11] offset:9
+; CHECK-NEXT:    flat_load_ubyte v23, v[10:11] offset:8
+; CHECK-NEXT:    flat_load_ubyte v24, v[10:11] offset:15
+; CHECK-NEXT:    flat_load_ubyte v25, v[10:11] offset:14
+; CHECK-NEXT:    flat_load_ubyte v26, v[10:11] offset:13
 ; CHECK-NEXT:    flat_load_ubyte v27, v[10:11] offset:12
-; CHECK-NEXT:    s_add_u32 s14, s14, 1
 ; CHECK-NEXT:    v_add_co_u32_e32 v10, vcc, s10, v2
+; CHECK-NEXT:    s_add_u32 s14, s14, 1
 ; CHECK-NEXT:    v_addc_co_u32_e32 v11, vcc, v11, v3, vcc
 ; CHECK-NEXT:    s_addc_u32 s15, s15, 0
 ; CHECK-NEXT:    s_add_u32 s10, s10, 16
@@ -153,21 +153,21 @@ define void @issue63986(i64 %0, i64 %idxprom) {
 ; CHECK-NEXT:    s_addc_u32 s11, s11, 0
 ; CHECK-NEXT:    s_or_b64 s[12:13], vcc, s[12:13]
 ; CHECK-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
-; CHECK-NEXT:    flat_store_byte v[10:11], v15 offset:3
-; CHECK-NEXT:    flat_store_byte v[10:11], v16 offset:2
-; CHECK-NEXT:    flat_store_byte v[10:11], v17 offset:1
-; CHECK-NEXT:    flat_store_byte v[10:11], v18
-; CHECK-NEXT:    flat_store_byte v[10:11], v14 offset:7
-; CHECK-NEXT:    flat_store_byte v[10:11], v13 offset:6
-; CHECK-NEXT:    flat_store_byte v[10:11], v12 offset:5
+; CHECK-NEXT:    flat_store_byte v[10:11], v12 offset:3
+; CHECK-NEXT:    flat_store_byte v[10:11], v13 offset:2
+; CHECK-NEXT:    flat_store_byte v[10:11], v14 offset:1
+; CHECK-NEXT:    flat_store_byte v[10:11], v15
+; CHECK-NEXT:    flat_store_byte v[10:11], v16 offset:7
+; CHECK-NEXT:    flat_store_byte v[10:11], v17 offset:6
+; CHECK-NEXT:    flat_store_byte v[10:11], v18 offset:5
 ; CHECK-NEXT:    flat_store_byte v[10:11], v19 offset:4
-; CHECK-NEXT:    flat_store_byte v[10:11], v23 offset:11
-; CHECK-NEXT:    flat_store_byte v[10:11], v24 offset:10
-; CHECK-NEXT:    flat_store_byte v[10:11], v25 offset:9
-; CHECK-NEXT:    flat_store_byte v[10:11], v26 offset:8
-; CHECK-NEXT:    flat_store_byte v[10:11], v22 offset:15
-; CHECK-NEXT:    flat_store_byte v[10:11], v21 offset:14
-; CHECK-NEXT:    flat_store_byte v[10:11], v20 offset:13
+; CHECK-NEXT:    flat_store_byte v[10:11], v20 offset:11
+; CHECK-NEXT:    flat_store_byte v[10:11], v21 offset:10
+; CHECK-NEXT:    flat_store_byte v[10:11], v22 offset:9
+; CHECK-NEXT:    flat_store_byte v[10:11], v23 offset:8
+; CHECK-NEXT:    flat_store_byte v[10:11], v24 offset:15
+; CHECK-NEXT:    flat_store_byte v[10:11], v25 offset:14
+; CHECK-NEXT:    flat_store_byte v[10:11], v26 offset:13
 ; CHECK-NEXT:    flat_store_byte v[10:11], v27 offset:12
 ; CHECK-NEXT:    s_andn2_b64 exec, exec, s[12:13]
 ; CHECK-NEXT:    s_cbranch_execnz .LBB0_14
