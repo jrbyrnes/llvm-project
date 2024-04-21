@@ -8,11 +8,13 @@ define <2 x i16> @extract_2xi16(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr5
 ; GCN-NEXT:    ; implicit-def: $vgpr4
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB0_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB0_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -37,9 +39,12 @@ define <2 x i16> @extract_2xi16(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    v_lshlrev_b32_e32 v1, 16, v4
 ; GCN-NEXT:    v_or_b32_e32 v5, v0, v1
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB0_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB0_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB0_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -63,8 +68,8 @@ define <2 x i16> @extract_2xi16(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    v_lshlrev_b32_e32 v0, 16, v4
 ; GCN-NEXT:    v_or_b32_e32 v5, v2, v0
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB0_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    v_bfe_i32 v0, v5, 0, 16
 ; GCN-NEXT:    v_bfe_i32 v1, v4, 0, 16
 ; GCN-NEXT:    v_mov_b32_e32 v2, 0xffff
@@ -103,10 +108,12 @@ define <2 x i64> @extract_2xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17_vgpr18_vgpr19
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB1_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB1_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -121,9 +128,12 @@ define <2 x i64> @extract_2xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[2:3], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB1_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB1_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB1_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -138,8 +148,8 @@ define <2 x i64> @extract_2xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[0:1], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB1_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    v_mov_b32_e32 v1, 0xffff8000
 ; GCN-NEXT:    v_cmp_lt_i64_e32 vcc, -1, v[4:5]
@@ -174,10 +184,12 @@ define <4 x i64> @extract_4xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17_vgpr18_vgpr19
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB2_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB2_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -192,9 +204,12 @@ define <4 x i64> @extract_4xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[2:3], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB2_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB2_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB2_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -209,8 +224,8 @@ define <4 x i64> @extract_4xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[0:1], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB2_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    v_mov_b32_e32 v1, 0xffff8000
 ; GCN-NEXT:    v_cmp_gt_i64_e32 vcc, 0, v[4:5]
@@ -251,10 +266,12 @@ define <8 x i64> @extract_8xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17_vgpr18_vgpr19_vgpr20_vgpr21_vgpr22_vgpr23_vgpr24_vgpr25_vgpr26_vgpr27_vgpr28_vgpr29_vgpr30_vgpr31_vgpr32_vgpr33_vgpr34_vgpr35
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB3_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB3_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -277,9 +294,12 @@ define <8 x i64> @extract_8xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    buffer_load_dwordx4 v[16:19], v[2:3], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB3_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB3_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB3_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -301,8 +321,8 @@ define <8 x i64> @extract_8xi64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i1 %
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    buffer_load_dwordx4 v[16:19], v[0:1], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB3_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    v_mov_b32_e32 v1, 0xffff8000
 ; GCN-NEXT:    v_cmp_gt_i64_e32 vcc, 0, v[6:7]
 ; GCN-NEXT:    v_cmp_gt_i64_e64 s[4:5], 0, v[8:9]
@@ -355,10 +375,12 @@ define <2 x double> @extract_2xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17_vgpr18_vgpr19
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB4_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB4_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -373,9 +395,12 @@ define <2 x double> @extract_2xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[2:3], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB4_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB4_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB4_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -390,8 +415,8 @@ define <2 x double> @extract_2xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[0:1], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB4_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    v_mov_b32_e32 v0, 0xbff00000
 ; GCN-NEXT:    v_cmp_lt_f64_e32 vcc, -1.0, v[4:5]
@@ -426,10 +451,12 @@ define <4 x double> @extract_4xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17_vgpr18_vgpr19
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB5_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB5_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -444,9 +471,12 @@ define <4 x double> @extract_4xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[2:3], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB5_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB5_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB5_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -461,8 +491,8 @@ define <4 x double> @extract_4xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    buffer_load_dwordx4 v[0:3], v[0:1], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB5_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    v_mov_b32_e32 v0, 0xbff00000
 ; GCN-NEXT:    v_cmp_nlt_f64_e32 vcc, -1.0, v[4:5]
@@ -503,10 +533,12 @@ define <8 x double> @extract_8xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    v_and_b32_e32 v4, 1, v4
 ; GCN-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v4
 ; GCN-NEXT:    s_xor_b64 s[4:5], vcc, -1
+; GCN-NEXT:    s_and_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_xor_b64 s[4:5], s[6:7], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[6:7], -1
 ; GCN-NEXT:    ; implicit-def: $vgpr4_vgpr5_vgpr6_vgpr7_vgpr8_vgpr9_vgpr10_vgpr11_vgpr12_vgpr13_vgpr14_vgpr15_vgpr16_vgpr17_vgpr18_vgpr19_vgpr20_vgpr21_vgpr22_vgpr23_vgpr24_vgpr25_vgpr26_vgpr27_vgpr28_vgpr29_vgpr30_vgpr31_vgpr32_vgpr33_vgpr34_vgpr35
-; GCN-NEXT:    s_and_saveexec_b64 s[6:7], s[4:5]
-; GCN-NEXT:    s_xor_b64 s[4:5], exec, s[6:7]
-; GCN-NEXT:    s_cbranch_execz .LBB6_2
+; GCN-NEXT:    s_cmov_b64 exec, s[6:7]
+; GCN-NEXT:    s_cbranch_scc0 .LBB6_2
 ; GCN-NEXT:  ; %bb.1: ; %F
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -529,9 +561,12 @@ define <8 x double> @extract_8xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    buffer_load_dwordx4 v[16:19], v[2:3], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    ; implicit-def: $vgpr0
+; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:  .LBB6_2: ; %Flow
-; GCN-NEXT:    s_andn2_saveexec_b64 s[4:5], s[4:5]
-; GCN-NEXT:    s_cbranch_execz .LBB6_4
+; GCN-NEXT:    s_xor_b64 s[6:7], s[4:5], exec
+; GCN-NEXT:    s_and_b64 s[8:9], s[4:5], -1
+; GCN-NEXT:    s_cmov_b64 exec, s[4:5]
+; GCN-NEXT:    s_cbranch_scc0 .LBB6_4
 ; GCN-NEXT:  ; %bb.3: ; %T
 ; GCN-NEXT:    s_mov_b32 s10, 0
 ; GCN-NEXT:    s_mov_b32 s11, 0xf000
@@ -553,8 +588,8 @@ define <8 x double> @extract_8xf64(ptr addrspace(1) %p0, ptr addrspace(1) %p1, i
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    buffer_load_dwordx4 v[16:19], v[0:1], s[8:11], 0 addr64 offset:48 glc
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
+; GCN-NEXT:    s_or_b64 exec, exec, s[6:7]
 ; GCN-NEXT:  .LBB6_4: ; %exit
-; GCN-NEXT:    s_or_b64 exec, exec, s[4:5]
 ; GCN-NEXT:    v_mov_b32_e32 v0, 0xbff00000
 ; GCN-NEXT:    v_cmp_nlt_f64_e32 vcc, -1.0, v[6:7]
 ; GCN-NEXT:    v_cmp_nlt_f64_e64 s[4:5], -1.0, v[8:9]
