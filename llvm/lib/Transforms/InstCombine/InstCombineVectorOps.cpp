@@ -56,6 +56,7 @@ STATISTIC(NumAggregateReconstructionsSimplified,
 ///
 /// FIXME: It's possible to create more instructions than previously existed.
 static bool cheapToScalarize(Value *V, Value *EI) {
+  return false;
   ConstantInt *CEI = dyn_cast<ConstantInt>(EI);
 
   // If we can pick a scalar constant value out of a vector, that is free.
@@ -399,8 +400,9 @@ Instruction *InstCombinerImpl::visitExtractElementInst(ExtractElementInst &EI) {
   Value *SrcVec = EI.getVectorOperand();
   Value *Index = EI.getIndexOperand();
   if (Value *V = simplifyExtractElementInst(SrcVec, Index,
-                                            SQ.getWithInstruction(&EI)))
+                                            SQ.getWithInstruction(&EI))) {
     return replaceInstUsesWith(EI, V);
+                                            }
 
   // extractelt (select %x, %vec1, %vec2), %const ->
   // select %x, %vec1[%const], %vec2[%const]
@@ -457,8 +459,9 @@ Instruction *InstCombinerImpl::visitExtractElementInst(ExtractElementInst &EI) {
     // If there's a vector PHI feeding a scalar use through this extractelement
     // instruction, try to scalarize the PHI.
     if (auto *Phi = dyn_cast<PHINode>(SrcVec))
-      if (Instruction *ScalarPHI = scalarizePHI(EI, Phi))
+      if (Instruction *ScalarPHI = scalarizePHI(EI, Phi)) {
         return ScalarPHI;
+      }
   }
 
   // TODO come up with a n-ary matcher that subsumes both unary and
@@ -852,6 +855,89 @@ static ShuffleOps collectShuffleElements(Value *V, SmallVectorImpl<int> &Mask,
     Mask.push_back(i);
   return std::make_pair(V, nullptr);
 }
+
+static ShuffleOps collectShuffleElementsPHI(Value *V, SmallVectorImpl<int> &Mask,
+                                         Value *PermittedRHS, BasicBlock *BasicBlock,
+                                         InstCombinerImpl &IC, bool &Rerun) {
+  assert(V->getType()->isVectorTy() && "Invalid shuffle!");
+  unsigned NumElts = cast<FixedVectorType>(V->getType())->getNumElements();
+  assert(BasicBlock);
+
+  if (match(V, m_Poison())) {
+    Mask.assign(NumElts, -1);
+    return std::make_pair(
+        PermittedRHS ? PoisonValue::get(PermittedRHS->getType()) : V, nullptr);
+  }
+
+  if (isa<ConstantAggregateZero>(V)) {
+    Mask.assign(NumElts, 0);
+    return std::make_pair(V, nullptr);
+  }
+
+  if (InsertElementInst *IEI = dyn_cast<InsertElementInst>(V)) {
+    // If this is an insert of an extract from some other vector, include it.
+    Value *VecOp    = IEI->getOperand(0);
+    Value *ScalarOp = IEI->getOperand(1);
+    Value *IdxOp    = IEI->getOperand(2);
+
+    if (auto *PN = dyn_cast<PHINode>(ScalarOp)) {
+      auto Val = PN->getIncomingValueForBlock(BasicBlock);
+
+      if (Val) {
+        if (ExtractElementInst *EI = dyn_cast<ExtractElementInst>(Val)) {
+          if (isa<ConstantInt>(EI->getOperand(1)) && isa<ConstantInt>(IdxOp)) {
+            unsigned ExtractedIdx =
+              cast<ConstantInt>(EI->getOperand(1))->getZExtValue();
+            unsigned InsertedIdx = cast<ConstantInt>(IdxOp)->getZExtValue();
+
+            // Either the extracted from or inserted into vector must be RHSVec,
+            // otherwise we'd end up with a shuffle of three inputs.
+            if (EI->getOperand(0) == PermittedRHS || PermittedRHS == nullptr) {
+              Value *RHS = EI->getOperand(0);
+              ShuffleOps LR = collectShuffleElementsPHI(VecOp, Mask, RHS, BasicBlock, IC, Rerun);
+              assert(LR.second == nullptr || LR.second == RHS);
+
+              if (LR.first->getType() != RHS->getType()) {
+                Mask.assign(NumElts, -1);
+                return std::make_pair(V, nullptr);
+              }
+
+              unsigned NumLHSElts =
+                  cast<FixedVectorType>(RHS->getType())->getNumElements();
+              Mask[InsertedIdx % NumElts] = NumLHSElts + ExtractedIdx;
+              return std::make_pair(LR.first, RHS);
+            }
+
+            if (VecOp == PermittedRHS) {
+              // We've gone as far as we can: anything on the other side of the
+              // extractelement will already have been converted into a shuffle.
+              unsigned NumLHSElts =
+                  cast<FixedVectorType>(EI->getOperand(0)->getType())
+                      ->getNumElements();
+              for (unsigned i = 0; i != NumElts; ++i)
+                Mask.push_back(i == InsertedIdx ? ExtractedIdx : NumLHSElts + i);
+              return std::make_pair(EI->getOperand(0), PermittedRHS);
+            }
+
+            // If this insertelement is a chain that comes from exactly these two
+            // vectors, return the vector and the effective shuffle.
+            if (EI->getOperand(0)->getType() == PermittedRHS->getType() &&
+                collectSingleShuffleElements(IEI, EI->getOperand(0), PermittedRHS,
+                                            Mask))
+              return std::make_pair(EI->getOperand(0), PermittedRHS);
+          }
+        }
+      }
+
+    }
+  }
+
+  // Otherwise, we can't do anything fancy. Return an identity vector.
+  
+  Mask.assign(NumElts, -1);
+  return std::make_pair(V, nullptr);
+}
+
 
 /// Look for chain of insertvalue's that fully define an aggregate, and trace
 /// back the values inserted, see if they are all were extractvalue'd from
@@ -1684,6 +1770,7 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
     auto isShuffleRootCandidate = [](InsertElementInst &Insert) {
       if (!Insert.hasOneUse())
         return true;
+  
       auto *InsertUser = dyn_cast<InsertElementInst>(Insert.user_back());
       if (!InsertUser)
         return true;
@@ -1706,11 +1793,60 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
           // We now have a shuffle of LHS, RHS, Mask.
           if (LR.second == nullptr)
             LR.second = PoisonValue::get(LR.first->getType());
-          return new ShuffleVectorInst(LR.first, LR.second, Mask);
+          auto V = new ShuffleVectorInst(LR.first, LR.second, Mask);
+          return V;
         }
       }
     }
   }
+
+
+  // WIP -- look through phis
+  if (isa<FixedVectorType>(IE.getType()) &&
+      match(IdxOp, m_ConstantInt(InsertedIdx)) && 
+      isa<PHINode>(ScalarOp))
+      {
+        auto *Phi = cast<PHINode>(ScalarOp);
+        SmallVector<int, 16> TheMask;
+        bool HaveMask = false;
+        auto NVal = Phi->getNumIncomingValues();
+        DenseMap<BasicBlock *, std::pair<ShuffleOps, ArrayRef<int>>> NewPHIMap;
+        int Collected = 0;
+        for (unsigned I = 0; I < NVal; I++) {
+          auto TheBlock = Phi->getIncomingBlock(I);
+          bool Rerun = true;
+            SmallVector<int, 16> Mask;
+            ShuffleOps LR =
+              collectShuffleElementsPHI(&IE, Mask, nullptr, TheBlock, *this, Rerun);
+            if (!HaveMask) {
+              TheMask = Mask;
+            }
+            bool ShouldBreak = false;
+            for (int I = 0; I != TheMask.size(); I++) {
+              if (TheMask[I] != Mask[I])
+                ShouldBreak = true;
+              if (TheMask[I] == -1)
+                ShouldBreak = true;
+            }
+            if (ShouldBreak)
+              break;
+            NewPHIMap[TheBlock] = {LR, Mask};
+            ++Collected;
+
+      }
+      if (Collected == NVal) {
+        IRBuilder<> PhiNodeBuilder(IE.getParent());
+        SmallVector<std::pair<Instruction *, BasicBlock *>, 4> NewPHIOps;
+        for (auto ele : NewPHIMap) {
+          auto NewVal = ele.second.first.first ? isa<Instruction>(ele.second.first.first) ? ele.second.first.first : ele.second.first.second : ele.second.first.second;
+          NewPHIOps.push_back({cast<Instruction>(NewVal), ele.first});
+        }
+        auto NPHI = Builder.CreatePHI(NewPHIOps[0].first->getType(),
+                                      NewPHIOps.size());
+         return new ShuffleVectorInst(NPHI, NPHI, TheMask);
+
+      }
+    }
 
   if (auto VecTy = dyn_cast<FixedVectorType>(VecOp->getType())) {
     unsigned VWidth = VecTy->getNumElements();
