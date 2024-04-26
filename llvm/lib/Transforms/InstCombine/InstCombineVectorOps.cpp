@@ -880,6 +880,7 @@ static ShuffleOps collectShuffleElementsPHI(Value *V, SmallVectorImpl<int> &Mask
     Value *IdxOp    = IEI->getOperand(2);
 
     if (auto *PN = dyn_cast<PHINode>(ScalarOp)) {
+      if (PN->getBasicBlockIndex(BasicBlock) != -1) {
       auto Val = PN->getIncomingValueForBlock(BasicBlock);
 
       if (Val) {
@@ -924,10 +925,10 @@ static ShuffleOps collectShuffleElementsPHI(Value *V, SmallVectorImpl<int> &Mask
                 collectSingleShuffleElements(IEI, EI->getOperand(0), PermittedRHS,
                                             Mask))
               return std::make_pair(EI->getOperand(0), PermittedRHS);
+            }
           }
         }
       }
-
     }
   }
 
@@ -1785,15 +1786,22 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
         SmallVector<int, 16> Mask;
         ShuffleOps LR =
             collectShuffleElements(&IE, Mask, nullptr, *this, Rerun);
-
+        
         // The proposed shuffle may be trivial, in which case we shouldn't
         // perform the combine.
         if (LR.first != &IE && LR.second != &IE) {
           // We now have a shuffle of LHS, RHS, Mask.
+          bool ShouldLower = true;
+          if (LR.second != nullptr)
+            ShouldLower = true;
+          if (ShouldLower) {
           if (LR.second == nullptr)
             LR.second = PoisonValue::get(LR.first->getType());
           auto V = new ShuffleVectorInst(LR.first, LR.second, Mask);
           return V;
+          }
+          //else
+          //errs() << "Not lowering\n";
         }
       }
     }
@@ -1809,8 +1817,7 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
         SmallVector<int, 16> TheMask;
         bool HaveMask = false;
         auto NVal = Phi->getNumIncomingValues();
-        DenseMap<BasicBlock *, std::pair<ShuffleOps, ArrayRef<int>>> NewPHIMap;
-        unsigned Collected = 0;
+        SmallVector<std::pair<Value *, BasicBlock *>, 4> NewPHIOps;
         for (unsigned I = 0; I < NVal; I++) {
           auto TheBlock = Phi->getIncomingBlock(I);
           bool Rerun = true;
@@ -1821,7 +1828,7 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
               TheMask = Mask;
             }
             bool ShouldBreak = false;
-            for (unsigned I = 0; I != TheMask.size(); I++) {
+            for (int I = 0; I != TheMask.size(); I++) {
               if (TheMask[I] != Mask[I])
                 ShouldBreak = true;
               if (TheMask[I] == -1)
@@ -1829,17 +1836,24 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
             }
             if (ShouldBreak)
               break;
-            NewPHIMap[TheBlock] = {LR, Mask};
-            ++Collected;
+            
+
+            auto FirstInst = dyn_cast<Instruction>(LR.first);
+            auto SecondInst = dyn_cast<Instruction>(LR.second);
+            
+            if (!FirstInst && !SecondInst)
+              break;
+            // TODO -- support multiple values;
+            if (FirstInst && SecondInst && FirstInst != SecondInst)
+              break;
+
+            auto TheInst = FirstInst ? FirstInst : SecondInst;           
+            NewPHIOps.push_back({TheInst, TheBlock});
 
       }
-      if (Collected == NVal) {
+      if (NewPHIOps.size() == NVal) {
         IRBuilder<> PhiNodeBuilder(IE.getParent());
-        SmallVector<std::pair<Instruction *, BasicBlock *>, 4> NewPHIOps;
-        for (auto ele : NewPHIMap) {
-          auto NewVal = ele.second.first.first ? isa<Instruction>(ele.second.first.first) ? ele.second.first.first : ele.second.first.second : ele.second.first.second;
-          NewPHIOps.push_back({cast<Instruction>(NewVal), ele.first});
-        }
+
         auto NPHI = Builder.CreatePHI(NewPHIOps[0].first->getType(),
                                       NewPHIOps.size());
          return new ShuffleVectorInst(NPHI, NPHI, TheMask);
