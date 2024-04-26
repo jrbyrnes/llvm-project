@@ -1811,7 +1811,7 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
         bool HaveMask = false;
         auto NVal = Phi->getNumIncomingValues();
         DenseMap<BasicBlock *, std::pair<ShuffleOps, ArrayRef<int>>> NewPHIMap;
-        int Collected = 0;
+        unsigned Collected = 0;
         for (unsigned I = 0; I < NVal; I++) {
           auto TheBlock = Phi->getIncomingBlock(I);
           bool Rerun = true;
@@ -1822,7 +1822,7 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
               TheMask = Mask;
             }
             bool ShouldBreak = false;
-            for (int I = 0; I != TheMask.size(); I++) {
+            for (unsigned I = 0; I != TheMask.size(); I++) {
               if (TheMask[I] != Mask[I])
                 ShouldBreak = true;
               if (TheMask[I] == -1)
