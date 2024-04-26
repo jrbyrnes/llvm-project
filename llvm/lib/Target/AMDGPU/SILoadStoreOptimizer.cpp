@@ -66,6 +66,12 @@
 
 using namespace llvm;
 
+static cl::opt<bool> DisableLoadStoreOpt(
+    "amdgpu-disable-load-store-optimizations", cl::Hidden,
+    cl::desc("Disable load store optimization "
+             "pass."),
+    cl::init(false));
+
 #define DEBUG_TYPE "si-load-store-opt"
 
 namespace {
@@ -2487,7 +2493,7 @@ SILoadStoreOptimizer::optimizeInstsWithSameBaseAddr(
 }
 
 bool SILoadStoreOptimizer::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(MF.getFunction()))
+  if (skipFunction(MF.getFunction()) || DisableLoadStoreOpt)
     return false;
 
   STM = &MF.getSubtarget<GCNSubtarget>();
