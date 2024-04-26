@@ -369,6 +369,8 @@ namespace llvm {
     void addVRegDefDeps(SUnit *SU, unsigned OperIdx);
     void addVRegUseDeps(SUnit *SU, unsigned OperIdx);
 
+    virtual bool isGlobalMemoryObject(MachineInstr *MI);
+
     /// Returns a mask for which lanes get read/written by the given (register)
     /// machine operand.
     LaneBitmask getLaneMaskForMO(const MachineOperand &MO) const;

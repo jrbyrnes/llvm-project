@@ -246,20 +246,7 @@ public:
 
 // Remove all existing edges from a SCHED_BARRIER or SCHED_GROUP_BARRIER.
 static void resetEdges(SUnit &SU, ScheduleDAGInstrs *DAG) {
-  assert(SU.getInstr()->getOpcode() == AMDGPU::SCHED_BARRIER ||
-         SU.getInstr()->getOpcode() == AMDGPU::SCHED_GROUP_BARRIER ||
-         SU.getInstr()->getOpcode() == AMDGPU::SCHED_GROUP_BARRIER_RULE ||
-         SU.getInstr()->getOpcode() == AMDGPU::IGLP_OPT);
 
-  while (!SU.Preds.empty())
-    for (auto &P : SU.Preds)
-      SU.removePred(P);
-
-  while (!SU.Succs.empty())
-    for (auto &S : SU.Succs)
-      for (auto &SP : S.getSUnit()->Preds)
-        if (SP.getSUnit() == &SU)
-          S.getSUnit()->removePred(SP);
 }
 
 typedef std::pair<SUnit *, SmallVector<int, 4>> SUToCandSGsPair;
