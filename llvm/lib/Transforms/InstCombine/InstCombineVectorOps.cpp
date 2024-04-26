@@ -56,7 +56,6 @@ STATISTIC(NumAggregateReconstructionsSimplified,
 ///
 /// FIXME: It's possible to create more instructions than previously existed.
 static bool cheapToScalarize(Value *V, Value *EI) {
-  return false;
   ConstantInt *CEI = dyn_cast<ConstantInt>(EI);
 
   // If we can pick a scalar constant value out of a vector, that is free.
