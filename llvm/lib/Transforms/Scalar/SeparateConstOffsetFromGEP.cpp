@@ -972,22 +972,17 @@ SeparateConstOffsetFromGEP::lowerToArithmetics(GetElementPtrInst *Variadic,
 
 bool SeparateConstOffsetFromGEP::reorderGEP(GetElementPtrInst *GEP,
                                             TargetTransformInfo &TTI) {
-  Type *GEPType = GEP->getResultElementType();
+  Type *GEPType = GEP->getSourceElementType();
   // TODO: support reordering for non-trivial GEP chains
-  if (GEPType->isAggregateType() || GEP->getNumIndices() != 1)
+  if (GEP->getNumIndices() != 1)
     return false;
 
   auto PtrGEP = dyn_cast<GetElementPtrInst>(GEP->getPointerOperand());
   if (!PtrGEP)
     return false;
-  Type *PtrGEPType = PtrGEP->getResultElementType();
+  Type *PtrGEPType = PtrGEP->getSourceElementType();
   // TODO: support reordering for non-trivial GEP chains
-  if (PtrGEPType->isAggregateType() || PtrGEP->getNumIndices() != 1)
-    return false;
-
-  // TODO: support reordering for non-trivial GEP chains
-  if (PtrGEPType != GEPType ||
-      PtrGEP->getSourceElementType() != GEP->getSourceElementType())
+  if (PtrGEP->getNumIndices() != 1)
     return false;
 
   bool NestedNeedsExtraction;
@@ -1002,8 +997,6 @@ bool SeparateConstOffsetFromGEP::reorderGEP(GetElementPtrInst *GEP,
                                  /*HasBaseReg=*/true, /*Scale=*/0, AddrSpace))
     return false;
 
-  IRBuilder<> Builder(GEP);
-  Builder.SetCurrentDebugLocation(GEP->getDebugLoc());
   bool GEPInBounds = GEP->isInBounds();
   bool PtrGEPInBounds = PtrGEP->isInBounds();
   bool IsChainInBounds = GEPInBounds && PtrGEPInBounds;
@@ -1018,13 +1011,14 @@ bool SeparateConstOffsetFromGEP::reorderGEP(GetElementPtrInst *GEP,
     }
   }
 
+  IRBuilder<> Builder(GEP);
   // For trivial GEP chains, we can swap the indicies.
-  auto NewSrc = Builder.CreateGEP(PtrGEPType, PtrGEP->getPointerOperand(),
-                                  SmallVector<Value *, 4>(GEP->indices()));
-  cast<GetElementPtrInst>(NewSrc)->setIsInBounds(IsChainInBounds);
-  auto NewGEP = Builder.CreateGEP(GEPType, NewSrc,
-                                  SmallVector<Value *, 4>(PtrGEP->indices()));
-  cast<GetElementPtrInst>(NewGEP)->setIsInBounds(IsChainInBounds);
+  Value *NewSrc = Builder.CreateGEP(GEPType, PtrGEP->getPointerOperand(),
+                                    SmallVector<Value *, 4>(GEP->indices()), "",
+                                    IsChainInBounds);
+  Value *NewGEP = Builder.CreateGEP(PtrGEPType, NewSrc,
+                                    SmallVector<Value *, 4>(PtrGEP->indices()),
+                                    "", IsChainInBounds);
   GEP->replaceAllUsesWith(NewGEP);
   RecursivelyDeleteTriviallyDeadInstructions(GEP);
   return true;
