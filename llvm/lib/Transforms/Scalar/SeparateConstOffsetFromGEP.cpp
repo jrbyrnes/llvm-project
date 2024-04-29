@@ -985,9 +985,10 @@ bool SeparateConstOffsetFromGEP::reorderGEP(GetElementPtrInst *GEP,
   if (PtrGEPType->isAggregateType() || PtrGEP->getNumIndices() != 1)
     return false;
 
-  // TODO: support reordering for non-trivial GEP chains
-  if (PtrGEPType != GEPType ||
-      PtrGEP->getSourceElementType() != GEP->getSourceElementType())
+  bool GEPIsPtr = GEPType->getScalarType()->isPointerTy();
+  bool PtrGEPIsPtr = PtrGEPType->getScalarType()->isPointerTy();
+
+  if (GEPIsPtr != PtrGEPIsPtr)
     return false;
 
   bool NestedNeedsExtraction;
@@ -1017,6 +1018,41 @@ bool SeparateConstOffsetFromGEP::reorderGEP(GetElementPtrInst *GEP,
       IsChainInBounds &= KnownPtrGEPIdx.isNonNegative();
     }
   }
+  TypeSize GEPSize =   DL->getTypeSizeInBits(GEP->getSourceElementType());
+  TypeSize PtrGEPSize = DL->getTypeSizeInBits(PtrGEP->getSourceElementType());
+  if (GEPSize > PtrGEPSize) {
+    if (GEPSize % PtrGEPSize)
+      return false;
+    unsigned Ratio = GEPSize/PtrGEPSize;
+    if (NestedByteOffset % Ratio)
+      return false;
+
+
+    auto NewGEPOffset = Builder.CreateUDiv(*PtrGEP->indices().begin(), Builder.getIntN(PtrGEP->indices().begin()->get()->getType()->getScalarSizeInBits(),Ratio));
+    auto NewSrc = Builder.CreateGEP(GEPType, PtrGEP->getPointerOperand(),
+                                  SmallVector<Value *, 4>(GEP->indices()));
+    auto NewGEP = Builder.CreateGEP(GEPType, NewSrc,
+                                  NewGEPOffset);
+    GEP->replaceAllUsesWith(NewGEP);
+    RecursivelyDeleteTriviallyDeadInstructions(GEP);
+    return true;
+  }
+
+  if (GEPSize < PtrGEPSize) {
+    if (PtrGEPSize % GEPSize)
+      return false;
+    unsigned Ratio = PtrGEPSize / GEPSize;
+
+    auto NewGEPOffset = Builder.CreateMul(*PtrGEP->indices().begin(), Builder.getIntN(PtrGEP->indices().begin()->get()->getType()->getScalarSizeInBits(),Ratio));
+    auto NewSrc = Builder.CreateGEP(GEPType, PtrGEP->getPointerOperand(),
+                                  SmallVector<Value *, 4>(GEP->indices()));
+    auto NewGEP = Builder.CreateGEP(GEPType, NewSrc,
+                                  NewGEPOffset);
+    GEP->replaceAllUsesWith(NewGEP);
+    RecursivelyDeleteTriviallyDeadInstructions(GEP);
+    return true;
+  }
+
 
   // For trivial GEP chains, we can swap the indicies.
   auto NewSrc = Builder.CreateGEP(PtrGEPType, PtrGEP->getPointerOperand(),
