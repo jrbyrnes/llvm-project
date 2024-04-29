@@ -49,3 +49,37 @@ entry:
   %idx1 = getelementptr <2 x i8>, ptr %const1, i32 %in.idx1.nneg
   ret void
 }
+
+define void @inboundsNonNegativeType_i16i8(ptr %in.ptr, i32 %in.idx1) {
+; CHECK-LABEL: define void @inboundsNonNegativeType_i16i8(
+; CHECK-SAME: ptr [[IN_PTR:%.*]], i32 [[IN_IDX1:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[IN_IDX1_NNEG:%.*]] = and i32 [[IN_IDX1]], 2147483647
+; CHECK-NEXT:    [[IDXPROM:%.*]] = sext i32 [[IN_IDX1_NNEG]] to i64
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr inbounds i8, ptr [[IN_PTR]], i64 [[IDXPROM]]
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i16, ptr [[TMP0]], i32 1024
+; CHECK-NEXT:    ret void
+;
+entry:
+  %in.idx1.nneg = and i32 %in.idx1, 2147483647
+  %const1 = getelementptr inbounds i16, ptr %in.ptr, i32 1024
+  %idx1 = getelementptr inbounds i8, ptr %const1, i32 %in.idx1.nneg
+  ret void
+}
+
+define void @inboundsNonNegative_i8i16(ptr %in.ptr, i32 %in.idx1) {
+; CHECK-LABEL: define void @inboundsNonNegative_i8i16(
+; CHECK-SAME: ptr [[IN_PTR:%.*]], i32 [[IN_IDX1:%.*]]) #[[ATTR0]] {
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    [[IN_IDX1_NNEG:%.*]] = and i32 [[IN_IDX1]], 2147483647
+; CHECK-NEXT:    [[IDXPROM:%.*]] = sext i32 [[IN_IDX1_NNEG]] to i64
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr inbounds i16, ptr [[IN_PTR]], i64 [[IDXPROM]]
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i8, ptr [[TMP0]], i32 1024
+; CHECK-NEXT:    ret void
+;
+entry:
+  %in.idx1.nneg = and i32 %in.idx1, 2147483647
+  %const1 = getelementptr inbounds i8, ptr %in.ptr, i32 1024
+  %idx1 = getelementptr inbounds i16, ptr %const1, i32 %in.idx1.nneg
+  ret void
+}
