@@ -1192,11 +1192,6 @@ InstructionCost GCNTTIImpl::getShuffleCost(TTI::ShuffleKind Kind,
     }
   }
 
-
-  // Restore optimal kind.
-  if (IsExtractSubvector)
-    Kind = TTI::SK_ExtractSubvector;
-
   return BaseT::getShuffleCost(Kind, VT, Mask, CostKind, Index, SubTp);
 }
 

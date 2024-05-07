@@ -7984,7 +7984,7 @@ BoUpSLP::getEntryCost(const TreeEntry *E, ArrayRef<Value *> VectorizedVals,
             ScalarCost += TTI::TCC_Basic * (OpTE->ReuseShuffleIndices.size() -
                                             OpTE->Scalars.size());
     }
-    ScalarCost += TTI->getPHIScalarizationOverhead(OrigScalarTy, VecTy);
+    ScalarCost += TTI->getPHIScalarizationOverhead(ScalarTy, VecTy);
     return CommonCost - ScalarCost;
   }
   case Instruction::ExtractValue:

@@ -414,7 +414,9 @@ void LiveRegOptimizer::convertFromOptType(ConversionCandidateInfo &LRC) {
 
   unsigned NarrowElementCount = NewVTy->getElementCount().getFixedValue();
   SmallVector<int, 8> ShuffleMask(NarrowElementCount);
-  std::iota(ShuffleMask.begin(), ShuffleMask.end(), 0);
+  for (int I = 0; I < NarrowElementCount; I++) {
+    ShuffleMask[I] = I;
+  }
 
   Instruction *NarrowVec =
       cast<Instruction>(Builder.CreateShuffleVector(Converted, ShuffleMask));
