@@ -46,6 +46,10 @@
 using namespace llvm;
 using namespace PatternMatch;
 
+static cl::opt<bool>
+    BypassIncorrectOptimization("disable-instcombine-bug", cl::init(true), cl::Hidden,
+                        cl::desc("Bypass the code with known correctness issue"));
+
 STATISTIC(NumAggregateReconstructionsSimplified,
           "Number of aggregate reconstructions turned into reuse of the "
           "original aggregate");
@@ -1809,57 +1813,59 @@ Instruction *InstCombinerImpl::visitInsertElementInst(InsertElementInst &IE) {
 
 
   // WIP -- look through phis
-  if (isa<FixedVectorType>(IE.getType()) &&
-      match(IdxOp, m_ConstantInt(InsertedIdx)) && 
-      isa<PHINode>(ScalarOp))
-      {
-        auto *Phi = cast<PHINode>(ScalarOp);
-        SmallVector<int, 16> TheMask;
-        bool HaveMask = false;
-        auto NVal = Phi->getNumIncomingValues();
-        SmallVector<std::pair<Value *, BasicBlock *>, 4> NewPHIOps;
-        for (unsigned I = 0; I < NVal; I++) {
-          auto TheBlock = Phi->getIncomingBlock(I);
-          bool Rerun = true;
-            SmallVector<int, 16> Mask;
-            ShuffleOps LR =
-              collectShuffleElementsPHI(&IE, Mask, nullptr, TheBlock, *this, Rerun);
-            if (!HaveMask) {
-              TheMask = Mask;
-            }
-            bool ShouldBreak = false;
-            for (int I = 0; I != TheMask.size(); I++) {
-              if (TheMask[I] != Mask[I])
-                ShouldBreak = true;
-              if (TheMask[I] == -1)
-                ShouldBreak = true;
-            }
-            if (ShouldBreak)
-              break;
-            
+  if (!BypassIncorrectOptimization) {
+    if (isa<FixedVectorType>(IE.getType()) &&
+        match(IdxOp, m_ConstantInt(InsertedIdx)) && 
+        isa<PHINode>(ScalarOp))
+        {
+          auto *Phi = cast<PHINode>(ScalarOp);
+          SmallVector<int, 16> TheMask;
+          bool HaveMask = false;
+          auto NVal = Phi->getNumIncomingValues();
+          SmallVector<std::pair<Value *, BasicBlock *>, 4> NewPHIOps;
+          for (unsigned I = 0; I < NVal; I++) {
+            auto TheBlock = Phi->getIncomingBlock(I);
+            bool Rerun = true;
+              SmallVector<int, 16> Mask;
+              ShuffleOps LR =
+                collectShuffleElementsPHI(&IE, Mask, nullptr, TheBlock, *this, Rerun);
+              if (!HaveMask) {
+                TheMask = Mask;
+              }
+              bool ShouldBreak = false;
+              for (int I = 0; I != TheMask.size(); I++) {
+                if (TheMask[I] != Mask[I])
+                  ShouldBreak = true;
+                if (TheMask[I] == -1)
+                  ShouldBreak = true;
+              }
+              if (ShouldBreak)
+                break;
+              
 
-            auto FirstInst = dyn_cast<Instruction>(LR.first);
-            auto SecondInst = dyn_cast<Instruction>(LR.second);
-            
-            if (!FirstInst && !SecondInst)
-              break;
-            // TODO -- support multiple values;
-            if (FirstInst && SecondInst && FirstInst != SecondInst)
-              break;
+              auto FirstInst = dyn_cast<Instruction>(LR.first);
+              auto SecondInst = dyn_cast<Instruction>(LR.second);
+              
+              if (!FirstInst && !SecondInst)
+                break;
+              // TODO -- support multiple values;
+              if (FirstInst && SecondInst && FirstInst != SecondInst)
+                break;
 
-            auto TheInst = FirstInst ? FirstInst : SecondInst;           
-            NewPHIOps.push_back({TheInst, TheBlock});
+              auto TheInst = FirstInst ? FirstInst : SecondInst;           
+              NewPHIOps.push_back({TheInst, TheBlock});
 
+        }
+        if (NewPHIOps.size() == NVal) {
+          IRBuilder<> PhiNodeBuilder(IE.getParent());
+
+          auto NPHI = Builder.CreatePHI(NewPHIOps[0].first->getType(),
+                                        NewPHIOps.size());
+          return new ShuffleVectorInst(NPHI, NPHI, TheMask);
+
+        }
       }
-      if (NewPHIOps.size() == NVal) {
-        IRBuilder<> PhiNodeBuilder(IE.getParent());
-
-        auto NPHI = Builder.CreatePHI(NewPHIOps[0].first->getType(),
-                                      NewPHIOps.size());
-         return new ShuffleVectorInst(NPHI, NPHI, TheMask);
-
-      }
-    }
+  }
 
   if (auto VecTy = dyn_cast<FixedVectorType>(VecOp->getType())) {
     unsigned VWidth = VecTy->getNumElements();
