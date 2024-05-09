@@ -302,6 +302,7 @@ void SILowerSGPRSpills::extendWWMVirtRegLiveness(MachineFunction &MF,
 }
 
 bool SILowerSGPRSpills::runOnMachineFunction(MachineFunction &MF) {
+  errs() << "SGPRSpill on: " << MF.getName() << "\n";
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   TII = ST.getInstrInfo();
   TRI = &TII->getRegisterInfo();
@@ -351,8 +352,8 @@ bool SILowerSGPRSpills::runOnMachineFunction(MachineFunction &MF) {
 
         int FI = TII->getNamedOperand(MI, AMDGPU::OpName::addr)->getIndex();
         assert(MFI.getStackID(FI) == TargetStackID::SGPRSpill);
-
-        bool IsCalleeSaveSGPRSpill = llvm::is_contained(CalleeSavedFIs, FI);
+        errs() << "Found SGPRSpill: "; MI.dump();
+;        bool IsCalleeSaveSGPRSpill = llvm::is_contained(CalleeSavedFIs, FI);
         if (IsCalleeSaveSGPRSpill) {
           // Spill callee-saved SGPRs into physical VGPR lanes.
 
@@ -387,6 +388,7 @@ bool SILowerSGPRSpills::runOnMachineFunction(MachineFunction &MF) {
     }
 
     if (SpilledToVirtVGPRLanes) {
+      errs() << "Spilled to virt VGPR\n";
       extendWWMVirtRegLiveness(MF, LIS);
       if (LIS) {
         // Compute the LiveInterval for the newly created virtual registers.
