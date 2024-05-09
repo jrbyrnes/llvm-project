@@ -32,6 +32,10 @@
 
 using namespace llvm;
 
+static unsigned Counter = 0;
+static unsigned Limit = 10;
+static unsigned LowerLimit = 9;
+
 static cl::opt<bool> DisableUnclusterHighRP(
     "amdgpu-disable-unclustered-high-rp-reschedule", cl::Hidden,
     cl::desc("Disable unclustered high register pressure "
@@ -704,6 +708,7 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
 
 void GCNScheduleDAGMILive::runSchedStages() {
   LLVM_DEBUG(dbgs() << "All regions recorded, starting actual scheduling.\n");
+  GCNTrackers = (Counter < Limit) && (Counter >= LowerLimit);
 
   if (!Regions.empty()) {
     BBLiveInMap = getBBLiveInMap();
@@ -712,7 +717,18 @@ void GCNScheduleDAGMILive::runSchedStages() {
       BBLiveOutMap = getBBLiveOutMap();
     }
   }
-
+  errs() << "GCNTrackers, Counter, Likmit, LowerLimit, Counter < Limit, Counter >= LowerLimit: " <<GCNTrackers << ", " << Counter << ", " << Limit << ", " << LowerLimit << ", " << (Counter < Limit) << ", " << (Counter >= LowerLimit) << "\n";
+  if (Regions.size() && GCNTrackers) {
+    auto MF = Regions.begin()->first->getMF();
+    errs() << "NewTrackers: " << MF->getName() << "\n";
+  }
+  else if (Regions.size()) {
+   auto MF = Regions.begin()->first->getMF();
+   errs() << "Default Trackers: " << MF->getName() << "\n";
+  }
+  if (Regions.size()) {
+    Counter++;
+  }
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
