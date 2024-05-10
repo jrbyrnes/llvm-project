@@ -554,7 +554,7 @@ class VOPProfileMAI<VOPProfile P, RegisterOperand _SrcRC, RegisterOperand _DstRC
   // and with the earlyclobber flag on the dst. This is stricter than the
   // actual HW restriction. In particular earlyclobber also affects src0 and
   // src1 allocation which is not required.
-  bit NoDstOverlap = !gt(DstVT.Size, 128);
+  bit NoDstOverlap = 1;
 }
 
 class VOPProfileSMFMAC<VOPProfile P, RegisterOperand _DstRC,
@@ -676,7 +676,7 @@ class MAIInst<string OpName, VOPProfile P, SDPatternOperator node>
 }
 
 multiclass MAIInst<string OpName, string P, SDPatternOperator node,
-                   bit NoDstOverlap = !cast<VOPProfileMAI>("VOPProfileMAI_" # P).NoDstOverlap> {
+                   bit NoDstOverlap = 1> {
   let isConvergent = 1, mayRaiseFPException = 0, ReadsModeReg = 1 in {
     // FP32 denorm mode is respected, rounding mode is not. Exceptions are not supported.
     let Constraints = !if(NoDstOverlap, "@earlyclobber $vdst", "") in {

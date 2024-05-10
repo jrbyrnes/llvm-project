@@ -237,12 +237,14 @@ define amdgpu_kernel void @test_mfma_f64_4x4x4f64(ptr addrspace(1) %arg, double 
 ; GCN:       ; %bb.0: ; %bb
 ; GCN-NEXT:    s_load_dwordx4 s[4:7], s[0:1], 0x24
 ; GCN-NEXT:    s_load_dwordx2 s[2:3], s[0:1], 0x34
+; GCN-NEXT:    s_mov_b64 s[0:1], 0
+; GCN-NEXT:    v_accvgpr_write_b32 a0, s0
+; GCN-NEXT:    v_accvgpr_write_b32 a1, s1
 ; GCN-NEXT:    s_waitcnt lgkmcnt(0)
 ; GCN-NEXT:    v_pk_mov_b32 v[0:1], s[6:7], s[6:7] op_sel:[0,1]
 ; GCN-NEXT:    v_pk_mov_b32 v[2:3], s[2:3], s[2:3] op_sel:[0,1]
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_f64_4x4x4f64 a[0:1], v[0:1], v[2:3], 0
-; GCN-NEXT:    s_nop 3
+; GCN-NEXT:    v_mfma_f64_4x4x4f64 a[0:1], v[0:1], v[2:3], a[0:1]
 ; GCN-NEXT:    v_mfma_f64_4x4x4f64 a[0:1], v[0:1], v[2:3], a[0:1] cbsz:1 abid:2 blgp:3
 ; GCN-NEXT:    v_mov_b32_e32 v0, 0
 ; GCN-NEXT:    s_nop 7

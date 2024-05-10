@@ -696,7 +696,7 @@ bool SIFoldOperands::tryToFoldACImm(
 
   uint8_t OpTy = Desc.operands()[UseOpIdx].OperandType;
   if (OpToFold.isImm() && TII->isInlineConstant(OpToFold, OpTy) &&
-      TII->isOperandLegal(*UseMI, UseOpIdx, &OpToFold)) {
+      TII->isOperandLegal(*UseMI, UseOpIdx, &OpToFold) && !TII->isMAI(*UseMI)) {
     UseMI->getOperand(UseOpIdx).ChangeToImmediate(OpToFold.getImm());
     return true;
   }
@@ -717,7 +717,7 @@ bool SIFoldOperands::tryToFoldACImm(
   if (!UseOp.getSubReg() && Def && TII->isFoldableCopy(*Def)) {
     MachineOperand &DefOp = Def->getOperand(1);
     if (DefOp.isImm() && TII->isInlineConstant(DefOp, OpTy) &&
-        TII->isOperandLegal(*UseMI, UseOpIdx, &DefOp)) {
+        TII->isOperandLegal(*UseMI, UseOpIdx, &DefOp) && !TII->isMAI(*UseMI)) {
       UseMI->getOperand(UseOpIdx).ChangeToImmediate(DefOp.getImm());
       return true;
     }
