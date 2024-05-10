@@ -1002,6 +1002,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
     Scheduler->Run(CurDAG, FuncInfo->MBB);
   }
 
+
   if (ViewSUnitDAGs && MatchFilterBB)
     Scheduler->viewGraph();
 
