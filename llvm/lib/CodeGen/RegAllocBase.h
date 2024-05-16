@@ -68,7 +68,7 @@ protected:
   LiveIntervals *LIS = nullptr;
   LiveRegMatrix *Matrix = nullptr;
   RegisterClassInfo RegClassInfo;
-  const RegClassFilterFunc ShouldAllocateClass;
+  const RegAllocFilterFunc shouldAllocateRegisterImpl;
 
   /// Inst which is a def of an original reg and whose defs are already all
   /// dead after remat is saved in DeadRemats. The deletion of such inst is
@@ -76,13 +76,18 @@ protected:
   /// always available for the remat of all the siblings of the original reg.
   SmallPtrSet<MachineInstr *, 32> DeadRemats;
 
-  RegAllocBase(const RegClassFilterFunc F = allocateAllRegClasses) :
-    ShouldAllocateClass(F) {}
+  RegAllocBase(const RegAllocFilterFunc F = allocateAllRegClasses)
+      : shouldAllocateRegisterImpl(F) {}
 
   virtual ~RegAllocBase() = default;
 
   // A RegAlloc pass should call this before allocatePhysRegs.
   void init(VirtRegMap &vrm, LiveIntervals &lis, LiveRegMatrix &mat);
+
+  /// Get whether a given register should be allocated.
+  bool shouldAllocateRegister(Register Reg) {
+    return shouldAllocateRegisterImpl(*TRI, *MRI, Reg);
+  }
 
   // The top-level driver. The output is a VirtRegMap that us updated with
   // physical register assignments.
