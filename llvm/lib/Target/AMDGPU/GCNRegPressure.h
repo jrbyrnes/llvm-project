@@ -164,7 +164,6 @@ protected:
 public:
   // reset tracker and set live register set to the specified value.
   void reset(const MachineRegisterInfo &MRI_, const LiveRegSet &LiveRegs_);
-
   // live regs for the current state
   const decltype(LiveRegs) &getLiveRegs() const { return LiveRegs; }
   const MachineInstr *getLastTrackedMI() const { return LastTrackedMI; }
