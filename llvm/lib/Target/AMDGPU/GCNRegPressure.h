@@ -159,10 +159,9 @@ protected:
   void reset(const MachineInstr &MI, const LiveRegSet *LiveRegsCopy,
              bool After);
 
+public:
   // reset tracker and set live register set to the specified value.
   void reset(const MachineRegisterInfo &MRI_, const LiveRegSet &LiveRegs_);
-
-public:
   // live regs for the current state
   const decltype(LiveRegs) &getLiveRegs() const { return LiveRegs; }
   const MachineInstr *getLastTrackedMI() const { return LastTrackedMI; }
@@ -200,7 +199,7 @@ public:
   }
 
   // move to the state just before the MI (in program order).
-  void recede(const MachineInstr &MI, bool ShouldTrackIt = true);
+  bool recede(const MachineInstr &MI, bool ShouldTrackIt = true);
 
   // checks whether the tracker's state after receding MI corresponds
   // to reported by LIS.
@@ -242,14 +241,14 @@ public:
 
   // Move to the state right before the next MI or after the end of MBB.
   // Returns false if reached end of the block.
-  bool advanceBeforeNext(bool ShouldTrackIt = true, MachineInstr *MI = nullptr,
+  bool advanceBeforeNext(MachineInstr *MI = nullptr, bool ShouldTrackIt = true,
                          LiveIntervals *TheLIS = nullptr);
 
   // Move to the state at the MI, advanceBeforeNext has to be called first.
-  void advanceToNext(bool ShouldTrackIt = true, MachineInstr *MI = nullptr);
+  void advanceToNext(MachineInstr *MI = nullptr, bool ShouldTrackIt = true);
 
   // Move to the state at the next MI. Returns false if reached end of block.
-  bool advance(bool ShouldTrackIt = true, MachineInstr *MI = nullptr,
+  bool advance(MachineInstr *MI = nullptr, bool ShouldTrackIt = true,
                LiveIntervals *TheLIS = nullptr);
 
   // Advance instructions until before End.

@@ -354,14 +354,14 @@ void GCNRPTracker::reset(const MachineRegisterInfo &MRI_,
 ////////////////////////////////////////////////////////////////////////////////
 // GCNUpwardRPTracker
 
-void GCNUpwardRPTracker::recede(const MachineInstr &MI, bool ShouldTrackIt) {
+bool GCNUpwardRPTracker::recede(const MachineInstr &MI, bool ShouldTrackIt) {
   assert(MRI && "call reset first");
 
   if (ShouldTrackIt)
     LastTrackedMI = &MI;
 
   if (MI.isDebugInstr())
-    return;
+    return false;
 
   // Kill all defs.
   GCNRegPressure DefPressure, ECDefPressure;
@@ -413,6 +413,8 @@ void GCNUpwardRPTracker::recede(const MachineInstr &MI, bool ShouldTrackIt) {
                           : max(CurPressure, MaxPressure);
 
   assert(CurPressure == getRegPressure(*MRI, LiveRegs));
+
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -431,8 +433,8 @@ bool GCNDownwardRPTracker::reset(const MachineInstr &MI,
   return true;
 }
 
-bool GCNDownwardRPTracker::advanceBeforeNext(bool ShouldTrackIt,
-                                             MachineInstr *MI,
+bool GCNDownwardRPTracker::advanceBeforeNext(MachineInstr *MI,
+                                             bool ShouldTrackIt, 
                                              LiveIntervals *TheLIS) {
   assert(MRI && "call reset first");
   SlotIndex SI;
@@ -501,7 +503,7 @@ bool GCNDownwardRPTracker::advanceBeforeNext(bool ShouldTrackIt,
   return ShouldTrackIt && (NextMI == MBBEnd);
 }
 
-void GCNDownwardRPTracker::advanceToNext(bool ShouldTrackIt, MachineInstr *MI) {
+void GCNDownwardRPTracker::advanceToNext(MachineInstr *MI, bool ShouldTrackIt) {
   LastTrackedMI = &*NextMI++;
   NextMI = skipDebugInstructionsForward(NextMI, MBBEnd);
 
@@ -522,12 +524,12 @@ void GCNDownwardRPTracker::advanceToNext(bool ShouldTrackIt, MachineInstr *MI) {
   MaxPressure = max(MaxPressure, CurPressure);
 }
 
-bool GCNDownwardRPTracker::advance(bool ShouldTrackIt, MachineInstr *MI,
+bool GCNDownwardRPTracker::advance(MachineInstr *MI, bool ShouldTrackIt,
                                    LiveIntervals *TheLIS) {
   if (ShouldTrackIt && NextMI == MBBEnd)
     return false;
-  advanceBeforeNext(ShouldTrackIt, MI, TheLIS);
-  advanceToNext(ShouldTrackIt, MI);
+  advanceBeforeNext(MI, ShouldTrackIt, TheLIS);
+  advanceToNext(MI, ShouldTrackIt);
   return true;
 }
 

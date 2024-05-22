@@ -70,6 +70,12 @@ protected:
   // Pointer to the current SchedStageID.
   SmallVectorImpl<GCNSchedStageID>::iterator CurrentStage = nullptr;
 
+  // GCN RP Tracker for top-down scheduling
+  mutable GCNDownwardRPTracker TheTracker;
+
+  // GCN RP Tracker for botttom-up scheduling
+  mutable GCNUpwardRPTracker TheUpwardTracker;
+
 public:
   // schedule() have seen register pressure over the critical limits and had to
   // track register pressure for actual scheduling heuristics.
@@ -102,6 +108,8 @@ public:
 
   SUnit *pickNode(bool &IsTopNode) override;
 
+  void schedNode(SUnit *SU, bool IsTopNode) override;
+
   void initialize(ScheduleDAGMI *DAG) override;
 
   unsigned getTargetOccupancy() { return TargetOccupancy; }
@@ -116,13 +124,19 @@ public:
   bool hasNextStage() const;
 
   GCNSchedStageID getNextStage() const;
+
+  GCNDownwardRPTracker *getTracker() { return &TheTracker; }
+
+  GCNUpwardRPTracker *getUpwardTracker() { return &TheUpwardTracker; }
+
 };
 
 /// The goal of this scheduling strategy is to maximize kernel occupancy (i.e.
 /// maximum number of waves per simd).
 class GCNMaxOccupancySchedStrategy final : public GCNSchedStrategy {
 public:
-  GCNMaxOccupancySchedStrategy(const MachineSchedContext *C);
+  GCNMaxOccupancySchedStrategy(const MachineSchedContext *C,
+                               bool IsLegacyScheduler = false);
 };
 
 /// The goal of this scheduling strategy is to maximize ILP for a single wave
@@ -317,6 +331,9 @@ public:
   bool isRegionWithExcessRP() const {
     return DAG.RegionsWithExcessRP[RegionIdx];
   }
+  
+  // The region number this stage is currently working on
+  unsigned getRegionIdx() { return RegionIdx; }
 
   // Returns true if the new schedule may result in more spilling.
   bool mayCauseSpilling(unsigned WavesAfter);
