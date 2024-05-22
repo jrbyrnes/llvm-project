@@ -66,7 +66,7 @@ static cl::opt<bool> GCNTrackers(
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
 bool MyDebug = false;
-bool MyLog = false;
+bool MyLog = true;
 
 GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
     : GenericScheduler(C), TargetOccupancy(0), MF(nullptr),
@@ -760,7 +760,11 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
     if (MyLog) errs() << "Running stage: " << S.getCurrentStage() << "\n";
     for (auto Region : Regions) {
-      if (MyLog) errs() << "Advance region\n";
+      if (MyLog) {
+        errs() << "Advance region ";
+        auto B = Region.first;
+        errs() << "To: " << B->getParent()->getName() << "\n";
+      }
       RegionBegin = Region.first;
       RegionEnd = Region.second;
       // Setup for scheduling the region and check whether it should be skipped.
