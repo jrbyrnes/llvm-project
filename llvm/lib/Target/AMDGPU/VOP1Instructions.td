@@ -240,8 +240,7 @@ defm V_MOV_B64 : VOP1Inst <"v_mov_b64", VOP_I64_I64>;
 def V_READFIRSTLANE_B32 :
   InstSI <(outs SReg_32:$vdst),
     (ins VRegOrLdsSrc_32:$src0),
-    "v_readfirstlane_b32 $vdst, $src0",
-    [(set i32:$vdst, (int_amdgcn_readfirstlane (i32 VRegOrLdsSrc_32:$src0)))]>,
+    "v_readfirstlane_b32 $vdst, $src0", []>,
   Enc32 {
 
   let isCodeGenOnly = 0;
@@ -264,6 +263,12 @@ def V_READFIRSTLANE_B32 :
   let Inst{16-9}  = 0x2;
   let Inst{24-17} = vdst;
   let Inst{31-25} = 0x3f; //encoding
+}
+
+foreach vt = Reg32Types.types in {
+  def : GCNPat<(vt (int_amdgcn_readfirstlane (vt VRegOrLdsSrc_32:$src0))),
+        (V_READFIRSTLANE_B32 (vt VRegOrLdsSrc_32:$src0))
+  >;
 }
 
 let isReMaterializable = 1 in {

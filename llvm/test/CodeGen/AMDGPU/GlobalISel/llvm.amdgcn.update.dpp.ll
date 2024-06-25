@@ -313,7 +313,7 @@ define amdgpu_kernel void @update_dpp_p0_test(ptr addrspace(1) %arg, ptr %in1, p
   %id = tail call i32 @llvm.amdgcn.workitem.id.x()
   %gep = getelementptr inbounds ptr, ptr addrspace(1) %arg, i32 %id
   %load = load ptr, ptr addrspace(1) %gep
-  %tmp0 = call ptr @llvm.amdgcn.update.dpp.v2f32(ptr %in1, ptr %load, i32 1, i32 1, i32 1, i1 false) #1
+  %tmp0 = call ptr @llvm.amdgcn.update.dpp.p0(ptr %in1, ptr %load, i32 1, i32 1, i32 1, i1 false) #1
   store ptr %tmp0, ptr addrspace(1) %gep
   ret void
 }
@@ -430,6 +430,7 @@ define amdgpu_kernel void @update_dpp_p5_test(ptr addrspace(5) %arg, ptr addrspa
 declare i32 @llvm.amdgcn.workitem.id.x() #0
 declare i32 @llvm.amdgcn.update.dpp.i32(i32, i32, i32 immarg, i32 immarg, i32 immarg, i1 immarg) #1
 declare i64 @llvm.amdgcn.update.dpp.i64(i64, i64, i32 immarg, i32 immarg, i32 immarg, i1 immarg) #1
+declare <2 x float> @llvm.amdgcn.update.dpp.v2f32(<2 x float>, <2 x float>, i32 immarg, i32 immarg, i32 immarg, i1 immarg) #1
 
 attributes #0 = { nounwind readnone speculatable }
 attributes #1 = { convergent nounwind readnone }
