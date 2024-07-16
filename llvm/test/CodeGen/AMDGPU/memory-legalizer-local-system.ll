@@ -11864,4 +11864,3 @@ entry:
   store i32 %val0, ptr addrspace(3) %out, align 4
   ret void
 }
-
