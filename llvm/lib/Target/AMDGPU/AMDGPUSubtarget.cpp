@@ -62,7 +62,7 @@ static cl::opt<unsigned> NSAThreshold("amdgpu-nsa-threshold",
 static cl::opt<bool>
     CoerceIllegal("amdgpu-coerce-illegal-types",
                   cl::desc("Whether or not to coerce illegal types"),
-                  cl::ReallyHidden, cl::init(false));
+                  cl::ReallyHidden, cl::init(true));
 
 GCNSubtarget::~GCNSubtarget() = default;
 
