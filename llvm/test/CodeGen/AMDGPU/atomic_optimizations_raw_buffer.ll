@@ -625,17 +625,18 @@ define amdgpu_kernel void @add_i32_varying_vdata(ptr addrspace(1) %out, ptr addr
 ; GFX6-NEXT:    v_mbcnt_lo_u32_b32_e64 v0, exec_lo, 0
 ; GFX6-NEXT:    v_mbcnt_hi_u32_b32_e32 v0, exec_hi, v0
 ; GFX6-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v0
+; GFX6-NEXT:    s_xor_b64 s[2:3], vcc, exec
+; GFX6-NEXT:    s_and_b64 s[6:7], vcc, -1
 ; GFX6-NEXT:    ; implicit-def: $vgpr0
-; GFX6-NEXT:    s_and_saveexec_b64 s[2:3], vcc
-; GFX6-NEXT:    s_xor_b64 s[2:3], exec, s[2:3]
-; GFX6-NEXT:    s_cbranch_execz .LBB2_4
+; GFX6-NEXT:    s_cmov_b64 exec, vcc
+; GFX6-NEXT:    s_cbranch_scc0 .LBB2_4
 ; GFX6-NEXT:  ; %bb.3:
 ; GFX6-NEXT:    s_load_dwordx4 s[8:11], s[0:1], 0xd
 ; GFX6-NEXT:    v_mov_b32_e32 v0, s4
 ; GFX6-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX6-NEXT:    buffer_atomic_add v0, off, s[8:11], 0 glc
-; GFX6-NEXT:  .LBB2_4:
 ; GFX6-NEXT:    s_or_b64 exec, exec, s[2:3]
+; GFX6-NEXT:  .LBB2_4:
 ; GFX6-NEXT:    s_load_dwordx2 s[0:1], s[0:1], 0x9
 ; GFX6-NEXT:    s_mov_b32 s3, 0xf000
 ; GFX6-NEXT:    s_mov_b32 s2, -1
@@ -1703,17 +1704,18 @@ define amdgpu_kernel void @sub_i32_varying_vdata(ptr addrspace(1) %out, ptr addr
 ; GFX6-NEXT:    v_mbcnt_lo_u32_b32_e64 v0, exec_lo, 0
 ; GFX6-NEXT:    v_mbcnt_hi_u32_b32_e32 v0, exec_hi, v0
 ; GFX6-NEXT:    v_cmp_eq_u32_e32 vcc, 0, v0
+; GFX6-NEXT:    s_xor_b64 s[2:3], vcc, exec
+; GFX6-NEXT:    s_and_b64 s[6:7], vcc, -1
 ; GFX6-NEXT:    ; implicit-def: $vgpr0
-; GFX6-NEXT:    s_and_saveexec_b64 s[2:3], vcc
-; GFX6-NEXT:    s_xor_b64 s[2:3], exec, s[2:3]
-; GFX6-NEXT:    s_cbranch_execz .LBB6_4
+; GFX6-NEXT:    s_cmov_b64 exec, vcc
+; GFX6-NEXT:    s_cbranch_scc0 .LBB6_4
 ; GFX6-NEXT:  ; %bb.3:
 ; GFX6-NEXT:    s_load_dwordx4 s[8:11], s[0:1], 0xd
 ; GFX6-NEXT:    v_mov_b32_e32 v0, s4
 ; GFX6-NEXT:    s_waitcnt lgkmcnt(0)
 ; GFX6-NEXT:    buffer_atomic_sub v0, off, s[8:11], 0 glc
-; GFX6-NEXT:  .LBB6_4:
 ; GFX6-NEXT:    s_or_b64 exec, exec, s[2:3]
+; GFX6-NEXT:  .LBB6_4:
 ; GFX6-NEXT:    s_load_dwordx2 s[0:1], s[0:1], 0x9
 ; GFX6-NEXT:    s_mov_b32 s3, 0xf000
 ; GFX6-NEXT:    s_mov_b32 s2, -1
