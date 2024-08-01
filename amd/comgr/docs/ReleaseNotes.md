@@ -172,6 +172,7 @@ New Targets
  - gfx10-1-generic
  - gfx10-3-generic
  - gfx11-generic
+ - gfx12-generic
 
 Removed Targets
 ---------------
