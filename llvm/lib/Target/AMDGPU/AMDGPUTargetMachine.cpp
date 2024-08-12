@@ -469,6 +469,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUCodeGenPreparePass(*PR);
   initializeAMDGPULateCodeGenPreparePass(*PR);
   initializeAMDGPURemoveIncompatibleFunctionsPass(*PR);
+  initializeAMDGPUSwLowerLDSLegacyPass(*PR);
   initializeAMDGPULowerModuleLDSLegacyPass(*PR);
   initializeAMDGPUReserveWWMRegsPass(*PR);
   initializeAMDGPURewriteOutArgumentsPass(*PR);
@@ -699,6 +700,10 @@ void AMDGPUTargetMachine::registerPassBuilderCallbacks(
         }
         if (PassName == "amdgpu-always-inline") {
           PM.addPass(AMDGPUAlwaysInlinePass());
+          return true;
+        }
+        if (PassName == "amdgpu-sw-lower-lds") {
+          PM.addPass(AMDGPUSwLowerLDSPass(*this));
           return true;
         }
         if (PassName == "amdgpu-lower-module-lds") {
