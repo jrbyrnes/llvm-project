@@ -14,11 +14,11 @@ define amdgpu_kernel void @atomicrmw_kernel(ptr addrspace(1) %arg0) sanitize_add
 ; CHECK-SAME: ptr addrspace(1) [[ARG0:%.*]]) #[[ATTR0:[0-9]+]] {
 ; CHECK-NEXT:  WId:
 ; CHECK-NEXT:    [[TMP0:%.*]] = call i32 @llvm.amdgcn.workitem.id.x()
-; CHECK-NEXT:    [[TMP26:%.*]] = call i32 @llvm.amdgcn.workitem.id.y()
-; CHECK-NEXT:    [[TMP45:%.*]] = call i32 @llvm.amdgcn.workitem.id.z()
-; CHECK-NEXT:    [[TMP64:%.*]] = or i32 [[TMP0]], [[TMP26]]
-; CHECK-NEXT:    [[TMP65:%.*]] = or i32 [[TMP64]], [[TMP45]]
-; CHECK-NEXT:    [[TMP5:%.*]] = icmp eq i32 [[TMP65]], 0
+; CHECK-NEXT:    [[TMP1:%.*]] = call i32 @llvm.amdgcn.workitem.id.y()
+; CHECK-NEXT:    [[TMP2:%.*]] = call i32 @llvm.amdgcn.workitem.id.z()
+; CHECK-NEXT:    [[TMP3:%.*]] = or i32 [[TMP0]], [[TMP1]]
+; CHECK-NEXT:    [[TMP4:%.*]] = or i32 [[TMP3]], [[TMP2]]
+; CHECK-NEXT:    [[TMP5:%.*]] = icmp eq i32 [[TMP4]], 0
 ; CHECK-NEXT:    br i1 [[TMP5]], label [[MALLOC:%.*]], label [[TMP20:%.*]]
 ; CHECK:       Malloc:
 ; CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr addrspace(1) getelementptr inbounds ([[LLVM_AMDGCN_SW_LDS_ATOMICRMW_KERNEL_MD_TYPE:%.*]], ptr addrspace(1) @llvm.amdgcn.sw.lds.atomicrmw_kernel.md, i32 0, i32 2, i32 0), align 4
@@ -48,95 +48,143 @@ define amdgpu_kernel void @atomicrmw_kernel(ptr addrspace(1) %arg0) sanitize_add
 ; CHECK-NEXT:    [[TMP23:%.*]] = getelementptr inbounds i8, ptr addrspace(3) @llvm.amdgcn.sw.lds.atomicrmw_kernel, i32 [[TMP22]]
 ; CHECK-NEXT:    [[TMP24:%.*]] = load i32, ptr addrspace(1) getelementptr inbounds ([[LLVM_AMDGCN_SW_LDS_ATOMICRMW_KERNEL_MD_TYPE]], ptr addrspace(1) @llvm.amdgcn.sw.lds.atomicrmw_kernel.md, i32 0, i32 2, i32 0), align 4
 ; CHECK-NEXT:    [[TMP25:%.*]] = getelementptr inbounds i8, ptr addrspace(3) @llvm.amdgcn.sw.lds.atomicrmw_kernel, i32 [[TMP24]]
-; CHECK-NEXT:    [[TMP1:%.*]] = load volatile i32, ptr addrspace(1) [[ARG0]], align 4
+; CHECK-NEXT:    [[TMP26:%.*]] = load volatile i32, ptr addrspace(1) [[ARG0]], align 4
 ; CHECK-NEXT:    [[TMP27:%.*]] = ptrtoint ptr addrspace(3) [[TMP23]] to i32
 ; CHECK-NEXT:    [[TMP28:%.*]] = getelementptr inbounds i8, ptr addrspace(1) [[TMP21]], i32 [[TMP27]]
 ; CHECK-NEXT:    [[TMP29:%.*]] = ptrtoint ptr addrspace(1) [[TMP28]] to i64
-; CHECK-NEXT:    [[TMP30:%.*]] = lshr i64 [[TMP29]], 3
-; CHECK-NEXT:    [[TMP31:%.*]] = add i64 [[TMP30]], 2147450880
-; CHECK-NEXT:    [[TMP32:%.*]] = inttoptr i64 [[TMP31]] to ptr
-; CHECK-NEXT:    [[TMP33:%.*]] = load i8, ptr [[TMP32]], align 1
-; CHECK-NEXT:    [[TMP34:%.*]] = icmp ne i8 [[TMP33]], 0
-; CHECK-NEXT:    [[TMP35:%.*]] = and i64 [[TMP29]], 7
-; CHECK-NEXT:    [[TMP36:%.*]] = add i64 [[TMP35]], 3
-; CHECK-NEXT:    [[TMP37:%.*]] = trunc i64 [[TMP36]] to i8
-; CHECK-NEXT:    [[TMP38:%.*]] = icmp sge i8 [[TMP37]], [[TMP33]]
-; CHECK-NEXT:    [[TMP39:%.*]] = and i1 [[TMP34]], [[TMP38]]
-; CHECK-NEXT:    [[TMP40:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP39]])
-; CHECK-NEXT:    [[TMP41:%.*]] = icmp ne i64 [[TMP40]], 0
-; CHECK-NEXT:    br i1 [[TMP41]], label [[ASAN_REPORT:%.*]], label [[TMP44:%.*]], !prof [[PROF1:![0-9]+]]
+; CHECK-NEXT:    [[TMP30:%.*]] = add i64 [[TMP29]], 3
+; CHECK-NEXT:    [[TMP31:%.*]] = inttoptr i64 [[TMP30]] to ptr addrspace(1)
+; CHECK-NEXT:    [[TMP32:%.*]] = ptrtoint ptr addrspace(1) [[TMP28]] to i64
+; CHECK-NEXT:    [[TMP33:%.*]] = lshr i64 [[TMP32]], 3
+; CHECK-NEXT:    [[TMP34:%.*]] = add i64 [[TMP33]], 2147450880
+; CHECK-NEXT:    [[TMP35:%.*]] = inttoptr i64 [[TMP34]] to ptr
+; CHECK-NEXT:    [[TMP36:%.*]] = load i8, ptr [[TMP35]], align 1
+; CHECK-NEXT:    [[TMP37:%.*]] = icmp ne i8 [[TMP36]], 0
+; CHECK-NEXT:    [[TMP38:%.*]] = and i64 [[TMP32]], 7
+; CHECK-NEXT:    [[TMP39:%.*]] = trunc i64 [[TMP38]] to i8
+; CHECK-NEXT:    [[TMP40:%.*]] = icmp sge i8 [[TMP39]], [[TMP36]]
+; CHECK-NEXT:    [[TMP41:%.*]] = and i1 [[TMP37]], [[TMP40]]
+; CHECK-NEXT:    [[TMP42:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP41]])
+; CHECK-NEXT:    [[TMP43:%.*]] = icmp ne i64 [[TMP42]], 0
+; CHECK-NEXT:    br i1 [[TMP43]], label [[ASAN_REPORT:%.*]], label [[TMP46:%.*]], !prof [[PROF2:![0-9]+]]
 ; CHECK:       asan.report:
-; CHECK-NEXT:    br i1 [[TMP39]], label [[TMP42:%.*]], label [[TMP43:%.*]]
-; CHECK:       42:
-; CHECK-NEXT:    call void @__asan_report_store4(i64 [[TMP29]]) #[[ATTR6:[0-9]+]]
-; CHECK-NEXT:    call void @llvm.amdgcn.unreachable()
-; CHECK-NEXT:    br label [[TMP43]]
-; CHECK:       43:
-; CHECK-NEXT:    br label [[TMP44]]
+; CHECK-NEXT:    br i1 [[TMP41]], label [[TMP44:%.*]], label [[TMP45:%.*]]
 ; CHECK:       44:
-; CHECK-NEXT:    [[TMP2:%.*]] = atomicrmw umin ptr addrspace(1) [[TMP28]], i32 [[TMP1]] seq_cst, align 4
-; CHECK-NEXT:    [[TMP46:%.*]] = ptrtoint ptr addrspace(3) [[TMP23]] to i32
-; CHECK-NEXT:    [[TMP47:%.*]] = getelementptr inbounds i8, ptr addrspace(1) [[TMP21]], i32 [[TMP46]]
-; CHECK-NEXT:    [[TMP48:%.*]] = ptrtoint ptr addrspace(1) [[TMP47]] to i64
-; CHECK-NEXT:    [[TMP49:%.*]] = lshr i64 [[TMP48]], 3
-; CHECK-NEXT:    [[TMP50:%.*]] = add i64 [[TMP49]], 2147450880
-; CHECK-NEXT:    [[TMP51:%.*]] = inttoptr i64 [[TMP50]] to ptr
-; CHECK-NEXT:    [[TMP52:%.*]] = load i8, ptr [[TMP51]], align 1
-; CHECK-NEXT:    [[TMP53:%.*]] = icmp ne i8 [[TMP52]], 0
-; CHECK-NEXT:    [[TMP54:%.*]] = and i64 [[TMP48]], 7
-; CHECK-NEXT:    [[TMP55:%.*]] = add i64 [[TMP54]], 3
-; CHECK-NEXT:    [[TMP56:%.*]] = trunc i64 [[TMP55]] to i8
-; CHECK-NEXT:    [[TMP57:%.*]] = icmp sge i8 [[TMP56]], [[TMP52]]
-; CHECK-NEXT:    [[TMP58:%.*]] = and i1 [[TMP53]], [[TMP57]]
-; CHECK-NEXT:    [[TMP59:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP58]])
-; CHECK-NEXT:    [[TMP60:%.*]] = icmp ne i64 [[TMP59]], 0
-; CHECK-NEXT:    br i1 [[TMP60]], label [[ASAN_REPORT1:%.*]], label [[TMP63:%.*]], !prof [[PROF1]]
-; CHECK:       asan.report1:
-; CHECK-NEXT:    br i1 [[TMP58]], label [[TMP61:%.*]], label [[TMP62:%.*]]
-; CHECK:       61:
-; CHECK-NEXT:    call void @__asan_report_store4(i64 [[TMP48]]) #[[ATTR6]]
+; CHECK-NEXT:    call void @__asan_report_store1(i64 [[TMP32]]) #[[ATTR6:[0-9]+]]
 ; CHECK-NEXT:    call void @llvm.amdgcn.unreachable()
-; CHECK-NEXT:    br label [[TMP62]]
-; CHECK:       62:
-; CHECK-NEXT:    br label [[TMP63]]
-; CHECK:       63:
-; CHECK-NEXT:    [[TMP3:%.*]] = atomicrmw umax ptr addrspace(1) [[TMP47]], i32 [[TMP1]] seq_cst, align 4
-; CHECK-NEXT:    [[TMP4:%.*]] = add i32 [[TMP2]], [[TMP3]]
-; CHECK-NEXT:    [[TMP66:%.*]] = ptrtoint ptr addrspace(3) [[TMP25]] to i32
-; CHECK-NEXT:    [[TMP67:%.*]] = getelementptr inbounds i8, ptr addrspace(1) [[TMP21]], i32 [[TMP66]]
-; CHECK-NEXT:    [[TMP68:%.*]] = ptrtoint ptr addrspace(1) [[TMP67]] to i64
+; CHECK-NEXT:    br label [[TMP45]]
+; CHECK:       45:
+; CHECK-NEXT:    br label [[TMP46]]
+; CHECK:       46:
+; CHECK-NEXT:    [[TMP47:%.*]] = ptrtoint ptr addrspace(1) [[TMP31]] to i64
+; CHECK-NEXT:    [[TMP48:%.*]] = lshr i64 [[TMP47]], 3
+; CHECK-NEXT:    [[TMP49:%.*]] = add i64 [[TMP48]], 2147450880
+; CHECK-NEXT:    [[TMP50:%.*]] = inttoptr i64 [[TMP49]] to ptr
+; CHECK-NEXT:    [[TMP51:%.*]] = load i8, ptr [[TMP50]], align 1
+; CHECK-NEXT:    [[TMP52:%.*]] = icmp ne i8 [[TMP51]], 0
+; CHECK-NEXT:    [[TMP53:%.*]] = and i64 [[TMP47]], 7
+; CHECK-NEXT:    [[TMP54:%.*]] = trunc i64 [[TMP53]] to i8
+; CHECK-NEXT:    [[TMP55:%.*]] = icmp sge i8 [[TMP54]], [[TMP51]]
+; CHECK-NEXT:    [[TMP56:%.*]] = and i1 [[TMP52]], [[TMP55]]
+; CHECK-NEXT:    [[TMP57:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP56]])
+; CHECK-NEXT:    [[TMP58:%.*]] = icmp ne i64 [[TMP57]], 0
+; CHECK-NEXT:    br i1 [[TMP58]], label [[ASAN_REPORT1:%.*]], label [[TMP61:%.*]], !prof [[PROF2]]
+; CHECK:       asan.report1:
+; CHECK-NEXT:    br i1 [[TMP56]], label [[TMP59:%.*]], label [[TMP60:%.*]]
+; CHECK:       59:
+; CHECK-NEXT:    call void @__asan_report_store1(i64 [[TMP47]]) #[[ATTR6]]
+; CHECK-NEXT:    call void @llvm.amdgcn.unreachable()
+; CHECK-NEXT:    br label [[TMP60]]
+; CHECK:       60:
+; CHECK-NEXT:    br label [[TMP61]]
+; CHECK:       61:
+; CHECK-NEXT:    [[TMP62:%.*]] = atomicrmw umin ptr addrspace(1) [[TMP28]], i32 [[TMP26]] seq_cst, align 4
+; CHECK-NEXT:    [[TMP63:%.*]] = ptrtoint ptr addrspace(3) [[TMP23]] to i32
+; CHECK-NEXT:    [[TMP64:%.*]] = getelementptr inbounds i8, ptr addrspace(1) [[TMP21]], i32 [[TMP63]]
+; CHECK-NEXT:    [[TMP65:%.*]] = ptrtoint ptr addrspace(1) [[TMP64]] to i64
+; CHECK-NEXT:    [[TMP66:%.*]] = add i64 [[TMP65]], 3
+; CHECK-NEXT:    [[TMP67:%.*]] = inttoptr i64 [[TMP66]] to ptr addrspace(1)
+; CHECK-NEXT:    [[TMP68:%.*]] = ptrtoint ptr addrspace(1) [[TMP64]] to i64
 ; CHECK-NEXT:    [[TMP69:%.*]] = lshr i64 [[TMP68]], 3
 ; CHECK-NEXT:    [[TMP70:%.*]] = add i64 [[TMP69]], 2147450880
 ; CHECK-NEXT:    [[TMP71:%.*]] = inttoptr i64 [[TMP70]] to ptr
 ; CHECK-NEXT:    [[TMP72:%.*]] = load i8, ptr [[TMP71]], align 1
 ; CHECK-NEXT:    [[TMP73:%.*]] = icmp ne i8 [[TMP72]], 0
 ; CHECK-NEXT:    [[TMP74:%.*]] = and i64 [[TMP68]], 7
-; CHECK-NEXT:    [[TMP75:%.*]] = add i64 [[TMP74]], 3
-; CHECK-NEXT:    [[TMP76:%.*]] = trunc i64 [[TMP75]] to i8
-; CHECK-NEXT:    [[TMP77:%.*]] = icmp sge i8 [[TMP76]], [[TMP72]]
-; CHECK-NEXT:    [[TMP78:%.*]] = and i1 [[TMP73]], [[TMP77]]
-; CHECK-NEXT:    [[TMP79:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP78]])
-; CHECK-NEXT:    [[TMP80:%.*]] = icmp ne i64 [[TMP79]], 0
-; CHECK-NEXT:    br i1 [[TMP80]], label [[ASAN_REPORT2:%.*]], label [[TMP83:%.*]], !prof [[PROF1]]
+; CHECK-NEXT:    [[TMP75:%.*]] = trunc i64 [[TMP74]] to i8
+; CHECK-NEXT:    [[TMP76:%.*]] = icmp sge i8 [[TMP75]], [[TMP72]]
+; CHECK-NEXT:    [[TMP77:%.*]] = and i1 [[TMP73]], [[TMP76]]
+; CHECK-NEXT:    [[TMP78:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP77]])
+; CHECK-NEXT:    [[TMP79:%.*]] = icmp ne i64 [[TMP78]], 0
+; CHECK-NEXT:    br i1 [[TMP79]], label [[ASAN_REPORT2:%.*]], label [[TMP82:%.*]], !prof [[PROF2]]
 ; CHECK:       asan.report2:
-; CHECK-NEXT:    br i1 [[TMP78]], label [[TMP81:%.*]], label [[TMP82:%.*]]
-; CHECK:       81:
-; CHECK-NEXT:    call void @__asan_report_store4(i64 [[TMP68]]) #[[ATTR6]]
+; CHECK-NEXT:    br i1 [[TMP77]], label [[TMP80:%.*]], label [[TMP81:%.*]]
+; CHECK:       80:
+; CHECK-NEXT:    call void @__asan_report_store1(i64 [[TMP68]]) #[[ATTR6]]
 ; CHECK-NEXT:    call void @llvm.amdgcn.unreachable()
+; CHECK-NEXT:    br label [[TMP81]]
+; CHECK:       81:
 ; CHECK-NEXT:    br label [[TMP82]]
 ; CHECK:       82:
-; CHECK-NEXT:    br label [[TMP83]]
-; CHECK:       83:
-; CHECK-NEXT:    store i32 [[TMP4]], ptr addrspace(1) [[TMP67]], align 4
+; CHECK-NEXT:    [[TMP83:%.*]] = ptrtoint ptr addrspace(1) [[TMP67]] to i64
+; CHECK-NEXT:    [[TMP84:%.*]] = lshr i64 [[TMP83]], 3
+; CHECK-NEXT:    [[TMP85:%.*]] = add i64 [[TMP84]], 2147450880
+; CHECK-NEXT:    [[TMP86:%.*]] = inttoptr i64 [[TMP85]] to ptr
+; CHECK-NEXT:    [[TMP87:%.*]] = load i8, ptr [[TMP86]], align 1
+; CHECK-NEXT:    [[TMP88:%.*]] = icmp ne i8 [[TMP87]], 0
+; CHECK-NEXT:    [[TMP89:%.*]] = and i64 [[TMP83]], 7
+; CHECK-NEXT:    [[TMP90:%.*]] = trunc i64 [[TMP89]] to i8
+; CHECK-NEXT:    [[TMP91:%.*]] = icmp sge i8 [[TMP90]], [[TMP87]]
+; CHECK-NEXT:    [[TMP92:%.*]] = and i1 [[TMP88]], [[TMP91]]
+; CHECK-NEXT:    [[TMP93:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP92]])
+; CHECK-NEXT:    [[TMP94:%.*]] = icmp ne i64 [[TMP93]], 0
+; CHECK-NEXT:    br i1 [[TMP94]], label [[ASAN_REPORT3:%.*]], label [[TMP97:%.*]], !prof [[PROF2]]
+; CHECK:       asan.report3:
+; CHECK-NEXT:    br i1 [[TMP92]], label [[TMP95:%.*]], label [[TMP96:%.*]]
+; CHECK:       95:
+; CHECK-NEXT:    call void @__asan_report_store1(i64 [[TMP83]]) #[[ATTR6]]
+; CHECK-NEXT:    call void @llvm.amdgcn.unreachable()
+; CHECK-NEXT:    br label [[TMP96]]
+; CHECK:       96:
+; CHECK-NEXT:    br label [[TMP97]]
+; CHECK:       97:
+; CHECK-NEXT:    [[TMP98:%.*]] = atomicrmw umax ptr addrspace(1) [[TMP64]], i32 [[TMP26]] seq_cst, align 4
+; CHECK-NEXT:    [[TMP99:%.*]] = add i32 [[TMP62]], [[TMP98]]
+; CHECK-NEXT:    [[TMP100:%.*]] = ptrtoint ptr addrspace(3) [[TMP25]] to i32
+; CHECK-NEXT:    [[TMP101:%.*]] = getelementptr inbounds i8, ptr addrspace(1) [[TMP21]], i32 [[TMP100]]
+; CHECK-NEXT:    [[TMP102:%.*]] = ptrtoint ptr addrspace(1) [[TMP101]] to i64
+; CHECK-NEXT:    [[TMP103:%.*]] = lshr i64 [[TMP102]], 3
+; CHECK-NEXT:    [[TMP104:%.*]] = add i64 [[TMP103]], 2147450880
+; CHECK-NEXT:    [[TMP105:%.*]] = inttoptr i64 [[TMP104]] to ptr
+; CHECK-NEXT:    [[TMP106:%.*]] = load i8, ptr [[TMP105]], align 1
+; CHECK-NEXT:    [[TMP107:%.*]] = icmp ne i8 [[TMP106]], 0
+; CHECK-NEXT:    [[TMP108:%.*]] = and i64 [[TMP102]], 7
+; CHECK-NEXT:    [[TMP109:%.*]] = add i64 [[TMP108]], 3
+; CHECK-NEXT:    [[TMP110:%.*]] = trunc i64 [[TMP109]] to i8
+; CHECK-NEXT:    [[TMP111:%.*]] = icmp sge i8 [[TMP110]], [[TMP106]]
+; CHECK-NEXT:    [[TMP112:%.*]] = and i1 [[TMP107]], [[TMP111]]
+; CHECK-NEXT:    [[TMP113:%.*]] = call i64 @llvm.amdgcn.ballot.i64(i1 [[TMP112]])
+; CHECK-NEXT:    [[TMP114:%.*]] = icmp ne i64 [[TMP113]], 0
+; CHECK-NEXT:    br i1 [[TMP114]], label [[ASAN_REPORT4:%.*]], label [[TMP117:%.*]], !prof [[PROF2]]
+; CHECK:       asan.report4:
+; CHECK-NEXT:    br i1 [[TMP112]], label [[TMP115:%.*]], label [[TMP116:%.*]]
+; CHECK:       115:
+; CHECK-NEXT:    call void @__asan_report_store4(i64 [[TMP102]]) #[[ATTR6]]
+; CHECK-NEXT:    call void @llvm.amdgcn.unreachable()
+; CHECK-NEXT:    br label [[TMP116]]
+; CHECK:       116:
+; CHECK-NEXT:    br label [[TMP117]]
+; CHECK:       117:
+; CHECK-NEXT:    store i32 [[TMP99]], ptr addrspace(1) [[TMP101]], align 4
 ; CHECK-NEXT:    br label [[CONDFREE:%.*]]
 ; CHECK:       CondFree:
 ; CHECK-NEXT:    call void @llvm.amdgcn.s.barrier()
 ; CHECK-NEXT:    br i1 [[XYZCOND]], label [[FREE:%.*]], label [[END:%.*]]
 ; CHECK:       Free:
-; CHECK-NEXT:    [[TMP84:%.*]] = call ptr @llvm.returnaddress(i32 0)
-; CHECK-NEXT:    [[TMP85:%.*]] = ptrtoint ptr [[TMP84]] to i64
-; CHECK-NEXT:    [[TMP86:%.*]] = ptrtoint ptr addrspace(1) [[TMP21]] to i64
-; CHECK-NEXT:    call void @__asan_free_impl(i64 [[TMP86]], i64 [[TMP85]])
+; CHECK-NEXT:    [[TMP118:%.*]] = call ptr @llvm.returnaddress(i32 0)
+; CHECK-NEXT:    [[TMP119:%.*]] = ptrtoint ptr [[TMP118]] to i64
+; CHECK-NEXT:    [[TMP120:%.*]] = ptrtoint ptr addrspace(1) [[TMP21]] to i64
+; CHECK-NEXT:    call void @__asan_free_impl(i64 [[TMP120]], i64 [[TMP119]])
 ; CHECK-NEXT:    br label [[END]]
 ; CHECK:       End:
 ; CHECK-NEXT:    ret void
@@ -161,5 +209,6 @@ define amdgpu_kernel void @atomicrmw_kernel(ptr addrspace(1) %arg0) sanitize_add
 ; CHECK: attributes #[[ATTR6]] = { nomerge }
 ;.
 ; CHECK: [[META0]] = !{i32 0, i32 1}
-; CHECK: [[PROF1]] = !{!"branch_weights", i32 1, i32 100000}
+; CHECK: [[META1:![0-9]+]] = !{i32 4, !"nosanitize_address", i32 1}
+; CHECK: [[PROF2]] = !{!"branch_weights", i32 1, i32 100000}
 ;.

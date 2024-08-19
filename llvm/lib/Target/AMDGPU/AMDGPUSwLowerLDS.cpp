@@ -1256,7 +1256,7 @@ bool AMDGPUSwLowerLDS::run() {
     for (auto &Operand : OperandsToInstrument) {
       Value *Addr = Operand.getPtr();
       instrumentAddress(M, IRB, Operand.getInsn(), Operand.getInsn(), Addr,
-                        Operand.Alignment, Operand.TypeStoreSize,
+                        Operand.Alignment.valueOrOne(), Operand.TypeStoreSize,
                         Operand.IsWrite, nullptr, false, false, AsanInfo.Scale,
                         AsanInfo.Offset);
       Changed = true;
