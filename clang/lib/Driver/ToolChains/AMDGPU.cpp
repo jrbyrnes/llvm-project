@@ -14,6 +14,7 @@
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/InputInfo.h"
 #include "clang/Driver/Options.h"
+#include "clang/Driver/SanitizerArgs.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Error.h"
@@ -974,6 +975,12 @@ void ROCMToolChain::addClangTargetOptions(
   BCLibs.append(RocmInstallation->getCommonBitcodeLibs(
       DriverArgs, LibDeviceFile, Wave64, DAZ, FiniteOnly, UnsafeMathOpt,
       FastRelaxedMath, CorrectSqrt, ABIVer, false));
+
+  if (getSanitizerArgs(DriverArgs).needsAsanRt()) {
+    CC1Args.push_back("-mlink-bitcode-file");
+    CC1Args.push_back(
+        DriverArgs.MakeArgString(RocmInstallation->getAsanRTLPath()));
+  }
 
   for (StringRef BCFile : BCLibs) {
     CC1Args.push_back("-mlink-builtin-bitcode");
