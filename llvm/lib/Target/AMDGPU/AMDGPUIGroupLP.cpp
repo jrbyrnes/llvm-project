@@ -61,6 +61,14 @@ static cl::opt<bool> UseCostHeur(
              "Experimentally, results are mixed, so this should be set on a "
              "case-by-case basis."));
 
+static cl::opt<uint64_t> MFMASize(
+    "amdgpu-igrouplp-size-of-mfma-group", cl::init(1), cl::Hidden,
+    cl::desc("The size of the MFMA sched groups"));
+
+static cl::opt<uint64_t> DSRSize(
+    "amdgpu-igrouplp-size-of-dsr-group", cl::init(1), cl::Hidden,
+    cl::desc("The size of the MFMA sched groups"));
+
 // Components of the mask that determines which instruction types may be may be
 // classified into a SchedGroup.
 enum class SchedGroupMask {
@@ -1484,7 +1492,9 @@ bool MFMAExpInterleaveOpt::analyzeDAG(const SIInstrInfo *TII) {
 
   MFMAChains = 0;
   for (auto &MFMAPipeSU : MFMAPipeSUs) {
-    if (is_contained(MFMAChainSeeds, MFMAPipeSU))
+    if (MFMAChainSeeds.size() &&
+        std::find(MFMAChainSeeds.begin(), MFMAChainSeeds.end(), MFMAPipeSU) !=
+            MFMAChainSeeds.end())
       continue;
     if (!std::any_of(MFMAPipeSU->Preds.begin(), MFMAPipeSU->Preds.end(),
                      [&TII](SDep &Succ) {
@@ -2457,9 +2467,9 @@ bool SchedGroup::canAddMI(const MachineInstr &MI) const {
            TII->isTRANS(MI))
     Result = true;
 
-  LLVM_DEBUG(
-      dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10, true)
-             << (Result ? " could classify " : " unable to classify ") << MI);
+  //LLVM_DEBUG(
+  //    dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10, true)
+  //           << (Result ? " could classify " : " unable to classify ") << MI);
 
   return Result;
 }
@@ -2674,6 +2684,8 @@ IGroupLPDAGMutation::invertSchedBarrierMask(SchedGroupMask Mask) const {
   return InvertedMask;
 }
 
+
+unsigned DSRCounter = 1;
 void IGroupLPDAGMutation::addSchedGroupBarrierRules() {
 
   /// Whether or not the instruction has no true data predecessors
@@ -2717,6 +2729,253 @@ void IGroupLPDAGMutation::addSchedGroupBarrierRules() {
         : InstructionRule(TII, SGID, NeedsCache), Opc(Opc){};
   };
 
+
+  /// Whether or not the instruction is a transitive predecessor of the
+  /// \p Number th MFMA of the MFMAs occuring after a TRANS instruction
+  class EnablesSame final : public InstructionRule {
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      auto DAG = SyncPipe[0].DAG;
+
+      if (Collection.size() <= 1)
+        return true;
+      
+      for (auto &Ele : Collection) {
+        for (auto &Succ : Ele->Succs) {
+          auto SuccMI = Succ.getSUnit()->getInstr();
+          auto SuccOp = SuccMI->getOpcode();
+          if (TII->isMAI(SuccOp)) {
+            for (auto &ThisSucc : SU->Succs) {
+              if (ThisSucc.getSUnit()->getInstr() == SuccMI)
+                return true;
+            }
+          }
+          if (SuccOp == AMDGPU::V_PERM_B32_e64) {
+            for (auto &SecondSucc : Succ.getSUnit()->Succs) {
+              if (!TII->isMAI(SecondSucc.getSUnit()->getInstr()->getOpcode()))
+                continue;
+              for (auto &ThisSucc : SU->Succs) {
+                if (DAG->IsReachable(const_cast<SUnit *>(SecondSucc.getSUnit()), const_cast<SUnit *>(ThisSucc.getSUnit())))
+                  return true;
+              }
+            }
+          }     
+        }
+      }
+      return false;
+    }
+
+    EnablesSame(const SIInstrInfo *TII, unsigned SGID,
+                   bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
+    /// Whether or not the instruction is a transitive predecessor of the
+  /// \p Number th MFMA of the MFMAs occuring after a TRANS instruction
+  class EnabledByPrev final : public InstructionRule {
+  private:
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      SchedGroup *OtherGroup = nullptr;
+      auto DAG = SyncPipe[0].DAG;
+      if (!SyncPipe.size())
+        return false;
+
+      for (auto &PipeSG : SyncPipe) {
+        if ((unsigned)PipeSG.getSGID() == SGID + 1)
+          OtherGroup = &PipeSG;
+      }
+
+      if (!OtherGroup)
+        return false;
+      if (!OtherGroup->Collection.size())
+        return true;
+
+      for (auto &OtherEle : OtherGroup->Collection) {
+        if (DAG->IsReachable(const_cast<SUnit *>(SU), const_cast<SUnit *>(OtherEle))) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    EnabledByPrev(const SIInstrInfo *TII, unsigned SGID,
+                   bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
+
+  /// Whether or not the instruction is a transitive predecessor of the
+  /// \p Number th MFMA of the MFMAs occuring after a TRANS instruction
+  class EnablesSameAsPrev final : public InstructionRule {
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      auto DAG = SyncPipe[0].DAG;
+      SchedGroup *OtherGroup = nullptr;
+      SchedGroupMask ThisMask = SchedGroupMask::ALL;
+
+      for (auto &PipeSG : SyncPipe) {
+        if ((unsigned)PipeSG.getSGID() == SGID) {
+          ThisMask = PipeSG.getMask();
+          continue;
+        }
+        if ((unsigned)PipeSG.getSGID() > SGID + 1) {
+          auto OtherMask = PipeSG.getMask();
+          if ((OtherMask & ThisMask) == ThisMask) {
+            OtherGroup = &PipeSG;
+            break;
+          }
+        }
+      }
+      
+      for (auto &Ele : OtherGroup->Collection) {
+        for (auto &Succ : Ele->Succs) {
+          auto SuccMI = Succ.getSUnit()->getInstr();
+          auto SuccOp = SuccMI->getOpcode();
+          if (TII->isMAI(SuccOp)) {
+            if (DAG->IsReachable(const_cast<SUnit *>(Succ.getSUnit()), const_cast<SUnit *>(SU)))
+              return true;
+          }
+          if (SuccOp == AMDGPU::V_PERM_B32_e64) {
+            for (auto &SecondSucc : Succ.getSUnit()->Succs) {
+              if (!TII->isMAI(SecondSucc.getSUnit()->getInstr()->getOpcode()))
+                continue;
+              if (DAG->IsReachable(const_cast<SUnit *>(SecondSucc.getSUnit()), const_cast<SUnit *>(SU)))
+                return true;
+            }
+          }     
+        }
+      }
+      return false;
+    }
+
+    EnablesSameAsPrev(const SIInstrInfo *TII, unsigned SGID,
+                   bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
+
+  /// Whether or not the instruction is a transitive predecessor of the
+  /// \p Number th MFMA of the MFMAs occuring after a TRANS instruction
+  class EnabledByNextDSR final : public InstructionRule {
+  private:
+    unsigned Number = 0;
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      SchedGroup *OtherGroup = nullptr;
+      auto DAG = SyncPipe[0].DAG;
+      if (!SyncPipe.size())
+        return false;
+
+      int Base = 1 + SGID;
+      for (auto &PipeSG : SyncPipe) {
+        if ((PipeSG.getMask() & SchedGroupMask::DS_READ) == SchedGroupMask::DS_READ) {
+          if (PipeSG.getSGID() > Base) {
+            OtherGroup = &PipeSG;
+            break;
+          }
+        }
+      }
+
+      if (!OtherGroup)
+        return false;
+      if (!OtherGroup->Collection.size())
+        return true;
+
+      for (auto &OtherEle : OtherGroup->Collection) {
+        if (DAG->IsReachable(const_cast<SUnit *>(SU), const_cast<SUnit *>(OtherEle))) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    EnabledByNextDSR(unsigned Number, const SIInstrInfo *TII, unsigned SGID,
+                   bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache), Number(Number) {}
+  };
+
+    /// Whether or not the instruction is a transitive predecessor of the
+  /// \p Number th MFMA of the MFMAs occuring after a TRANS instruction
+  class EnabledBySameAsPrev final : public InstructionRule {
+  private:
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      SchedGroup *OtherGroup = nullptr;
+      auto DAG = SyncPipe[0].DAG;
+      if (!SyncPipe.size())
+        return false;
+
+      SchedGroupMask ThisMask = SchedGroupMask::ALL;
+
+      for (auto &PipeSG : SyncPipe) {
+        if ((unsigned)PipeSG.getSGID() == SGID) {
+          ThisMask = PipeSG.getMask();
+          continue;
+        }
+        if ((unsigned)PipeSG.getSGID() > SGID + 1) {
+          auto OtherMask = PipeSG.getMask();
+          if ((OtherMask & ThisMask) == ThisMask) {
+            OtherGroup = &PipeSG;
+            break;
+          }
+        }
+      }
+
+      if (!OtherGroup)
+        return false;
+      if (!OtherGroup->Collection.size())
+        return true;
+      
+      for (auto &OtherEle : OtherGroup->Collection) {
+        for (auto OtherPred : OtherEle->Preds) {
+          auto *OtherSU = OtherPred.getSUnit();
+          if (OtherSU->Succs.size() > 4)
+            continue;
+          if (OtherSU->getInstr()->mayLoad() && TII->isDS(*OtherSU->getInstr())) {
+            for (auto &ThisPred : SU->Preds) {
+              if (TII->isMAI(ThisPred.getSUnit()->getInstr()->getOpcode()))
+                continue;
+              if (DAG->IsReachable(const_cast<SUnit *>(ThisPred.getSUnit()), const_cast<SUnit *>(OtherSU))) {
+                return true;
+              }
+            }
+            continue;
+          }
+
+          if (OtherSU->getInstr()->getOpcode() == AMDGPU::V_PERM_B32_e64) {
+            for (auto SecondPred : OtherSU->Preds) {
+              auto *SecondSU = SecondPred.getSUnit();
+              if (SecondSU->getInstr()->mayLoad() && TII->isDS(*SecondSU->getInstr())) {
+                for (auto &ThisPred : SU->Preds) {
+                  if (TII->isMAI(ThisPred.getSUnit()->getInstr()->getOpcode()))
+                    continue;
+                  for (auto &SecondSucc : SecondSU->Succs) {
+                    if (SecondSucc.getSUnit()->getInstr() == ThisPred.getSUnit()->getInstr())
+                      return true;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return false;
+    }
+
+    EnabledBySameAsPrev(const SIInstrInfo *TII, unsigned SGID,
+                   bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
   SchedGroupBarrierRuleCallBacks = {
       [](unsigned SGID, const SIInstrInfo *TII) {
         return std::make_shared<NoOpcWARPred>(AMDGPU::V_CNDMASK_B32_e64, TII,
@@ -2733,6 +2992,22 @@ void IGroupLPDAGMutation::addSchedGroupBarrierRules() {
       [](unsigned SGID, const SIInstrInfo *TII) {
         return std::make_shared<NoOpcDataPred>(AMDGPU::V_PERM_B32_e64, TII,
                                                SGID, false);
+      },
+      [](unsigned SGID, const SIInstrInfo *TII) {
+        return std::make_shared<EnablesSame>(TII,
+                                               SGID, true);
+      },
+      [](unsigned SGID, const SIInstrInfo *TII) {
+        return std::make_shared<EnabledByPrev>(TII, SGID, false);
+      },
+      [](unsigned SGID, const SIInstrInfo *TII) {
+        return std::make_shared<EnablesSameAsPrev>(TII, SGID, false);
+      },
+      [](unsigned SGID, const SIInstrInfo *TII) {
+        return std::make_shared<EnabledByNextDSR>(DSRCounter++, TII, SGID, false);
+      },
+      [](unsigned SGID, const SIInstrInfo *TII) {
+        return std::make_shared<EnabledBySameAsPrev>(TII, SGID, false);
       }};
 }
 
