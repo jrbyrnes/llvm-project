@@ -90,8 +90,8 @@ define void @main(i1 %arg) #0 {
 ; CHECK-NEXT:    v_cmp_eq_u32_e32 vcc, 1, v0
 ; CHECK-NEXT:    s_load_dwordx8 s[4:11], s[4:5], 0x0
 ; CHECK-NEXT:    s_nop 0
-; CHECK-NEXT:    s_load_dwordx16 s[52:67], s[28:29], 0x0
-; CHECK-NEXT:    s_load_dwordx16 s[36:51], s[30:31], 0x0
+; CHECK-NEXT:    s_load_dwordx16 s[36:51], s[28:29], 0x0
+; CHECK-NEXT:    s_load_dwordx16 s[52:67], s[30:31], 0x0
 ; CHECK-NEXT:    s_xor_b64 s[24:25], vcc, -1
 ; CHECK-NEXT:    s_and_b64 vcc, s[24:25], exec
 ; CHECK-NEXT:    s_xor_b64 s[26:27], vcc, exec
@@ -158,9 +158,9 @@ define void @main(i1 %arg) #0 {
 ; CHECK-NEXT:    s_mov_b32 s21, s20
 ; CHECK-NEXT:    s_mov_b32 s22, s20
 ; CHECK-NEXT:    s_mov_b32 s23, s20
-; CHECK-NEXT:    image_sample_lz v4, v[1:2], s[60:67], s[8:11] dmask:0x1
+; CHECK-NEXT:    image_sample_lz v4, v[1:2], s[44:51], s[8:11] dmask:0x1
 ; CHECK-NEXT:    s_nop 0
-; CHECK-NEXT:    image_sample_lz v1, v[1:2], s[44:51], s[20:23] dmask:0x1
+; CHECK-NEXT:    image_sample_lz v1, v[1:2], s[60:67], s[20:23] dmask:0x1
 ; CHECK-NEXT:    s_waitcnt vmcnt(0)
 ; CHECK-NEXT:    v_sub_f32_e32 v1, v1, v4
 ; CHECK-NEXT:    v_mul_f32_e32 v1, v1, v0
@@ -261,8 +261,8 @@ define void @main(i1 %arg) #0 {
 ; CHECK-NEXT:    s_mov_b32 s10, s8
 ; CHECK-NEXT:    s_mov_b32 s11, s8
 ; CHECK-NEXT:    v_mov_b32_e32 v2, s7
-; CHECK-NEXT:    image_sample_lz v3, v[1:2], s[52:59], s[8:11] dmask:0x1
-; CHECK-NEXT:    image_sample_lz v4, v[1:2], s[36:43], s[8:11] dmask:0x1
+; CHECK-NEXT:    image_sample_lz v3, v[1:2], s[36:43], s[8:11] dmask:0x1
+; CHECK-NEXT:    image_sample_lz v4, v[1:2], s[52:59], s[8:11] dmask:0x1
 ; CHECK-NEXT:    s_and_b64 vcc, exec, 0
 ; CHECK-NEXT:    s_waitcnt vmcnt(0)
 ; CHECK-NEXT:    v_sub_f32_e32 v1, v4, v3

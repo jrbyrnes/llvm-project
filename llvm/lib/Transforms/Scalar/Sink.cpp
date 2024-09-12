@@ -73,10 +73,7 @@ static bool IsAcceptableTarget(Instruction *Inst, BasicBlock *SuccToSinkTo,
   if (SuccToSinkTo->isEHPad())
     return false;
 
-    InstructionCost CostI =
-        TTI.getInstructionCost(Inst, TargetTransformInfo::TCK_SizeAndLatency);
-    if (CostI == TargetTransformInfo::TCC_Free)
-      return true;
+
 
   // If the block has multiple predecessors, this would introduce computation
   // on different code paths.  We could split the critical edge, but for now we
@@ -94,11 +91,17 @@ static bool IsAcceptableTarget(Instruction *Inst, BasicBlock *SuccToSinkTo,
     if (!DT.dominates(Inst->getParent(), SuccToSinkTo))
       return false;
 
+    InstructionCost CostI =
+        TTI.getInstructionCost(Inst, TargetTransformInfo::TCK_SizeAndLatency);
     // Don't sink instructions into a loop.
     Loop *succ = LI.getLoopFor(SuccToSinkTo);
     Loop *cur = LI.getLoopFor(Inst->getParent());
-    if (succ != nullptr && succ != cur)
+    if (CostI != TargetTransformInfo::TCC_Free && succ != nullptr && succ != cur)
       return false;
+    
+    if (succ != nullptr && succ != cur) {
+      errs() << "Allow sinking of free instruction: "; Inst->dump();
+    }
   }
 
   return true;
