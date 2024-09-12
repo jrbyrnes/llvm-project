@@ -15,9 +15,11 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar.h"
 using namespace llvm;
@@ -63,13 +65,18 @@ static bool isSafeToMove(Instruction *Inst, AliasAnalysis &AA,
 /// IsAcceptableTarget - Return true if it is possible to sink the instruction
 /// in the specified basic block.
 static bool IsAcceptableTarget(Instruction *Inst, BasicBlock *SuccToSinkTo,
-                               DominatorTree &DT, LoopInfo &LI) {
+                               DominatorTree &DT, LoopInfo &LI, TargetTransformInfo &TTI) {
   assert(Inst && "Instruction to be sunk is null");
   assert(SuccToSinkTo && "Candidate sink target is null");
 
   // It's never legal to sink an instruction into an EH-pad block.
   if (SuccToSinkTo->isEHPad())
     return false;
+
+    InstructionCost CostI =
+        TTI.getInstructionCost(Inst, TargetTransformInfo::TCK_SizeAndLatency);
+    if (CostI == TargetTransformInfo::TCC_Free)
+      return true;
 
   // If the block has multiple predecessors, this would introduce computation
   // on different code paths.  We could split the critical edge, but for now we
@@ -101,7 +108,7 @@ static bool IsAcceptableTarget(Instruction *Inst, BasicBlock *SuccToSinkTo,
 /// instruction out of its current block into a successor.
 static bool SinkInstruction(Instruction *Inst,
                             SmallPtrSetImpl<Instruction *> &Stores,
-                            DominatorTree &DT, LoopInfo &LI, AAResults &AA) {
+                            DominatorTree &DT, LoopInfo &LI, AAResults &AA, TargetTransformInfo &TTI) {
 
   // Don't sink static alloca instructions.  CodeGen assumes allocas outside the
   // entry block are dynamically sized stack objects.
@@ -153,7 +160,7 @@ static bool SinkInstruction(Instruction *Inst,
     // The nearest common dominator may be in a parent loop of BB, which may not
     // be beneficial. Find an ancestor.
     while (SuccToSinkTo != BB &&
-           !IsAcceptableTarget(Inst, SuccToSinkTo, DT, LI))
+           !IsAcceptableTarget(Inst, SuccToSinkTo, DT, LI, TTI))
       SuccToSinkTo = DT.getNode(SuccToSinkTo)->getIDom()->getBlock();
     if (SuccToSinkTo == BB)
       SuccToSinkTo = nullptr;
@@ -173,7 +180,7 @@ static bool SinkInstruction(Instruction *Inst,
 }
 
 static bool ProcessBlock(BasicBlock &BB, DominatorTree &DT, LoopInfo &LI,
-                         AAResults &AA) {
+                         AAResults &AA, TargetTransformInfo &TTI) {
   // Don't bother sinking code out of unreachable blocks. In addition to being
   // unprofitable, it can also lead to infinite looping, because in an
   // unreachable loop there may be nowhere to stop.
@@ -198,7 +205,7 @@ static bool ProcessBlock(BasicBlock &BB, DominatorTree &DT, LoopInfo &LI,
     if (Inst->isDebugOrPseudoInst())
       continue;
 
-    if (SinkInstruction(Inst, Stores, DT, LI, AA)) {
+    if (SinkInstruction(Inst, Stores, DT, LI, AA, TTI)) {
       ++NumSunk;
       MadeChange = true;
     }
@@ -210,7 +217,8 @@ static bool ProcessBlock(BasicBlock &BB, DominatorTree &DT, LoopInfo &LI,
 }
 
 static bool iterativelySinkInstructions(Function &F, DominatorTree &DT,
-                                        LoopInfo &LI, AAResults &AA) {
+                                        LoopInfo &LI, AAResults &AA,
+                                        TargetTransformInfo &TTI) {
   bool MadeChange, EverMadeChange = false;
 
   do {
@@ -218,7 +226,7 @@ static bool iterativelySinkInstructions(Function &F, DominatorTree &DT,
     LLVM_DEBUG(dbgs() << "Sinking iteration " << NumSinkIter << "\n");
     // Process all basic blocks.
     for (BasicBlock &I : F)
-      MadeChange |= ProcessBlock(I, DT, LI, AA);
+      MadeChange |= ProcessBlock(I, DT, LI, AA, TTI);
     EverMadeChange |= MadeChange;
     NumSinkIter++;
   } while (MadeChange);
@@ -230,8 +238,9 @@ PreservedAnalyses SinkingPass::run(Function &F, FunctionAnalysisManager &AM) {
   auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
   auto &LI = AM.getResult<LoopAnalysis>(F);
   auto &AA = AM.getResult<AAManager>(F);
+  auto &TTI = AM.getResult<TargetIRAnalysis>(F);
 
-  if (!iterativelySinkInstructions(F, DT, LI, AA))
+  if (!iterativelySinkInstructions(F, DT, LI, AA, TTI))
     return PreservedAnalyses::all();
 
   PreservedAnalyses PA;
@@ -251,8 +260,9 @@ namespace {
       auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
       auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
       auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+      auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
 
-      return iterativelySinkInstructions(F, DT, LI, AA);
+      return iterativelySinkInstructions(F, DT, LI, AA, TTI);
     }
 
     void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -263,6 +273,7 @@ namespace {
       AU.addRequired<LoopInfoWrapperPass>();
       AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addPreserved<LoopInfoWrapperPass>();
+      AU.addRequired<TargetTransformInfoWrapperPass>();
     }
   };
 } // end anonymous namespace
