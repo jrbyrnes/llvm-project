@@ -296,6 +296,8 @@ public:
 
   InstructionCost getBranchMispredictPenalty() const;
 
+  bool shouldSinkOperands(Instruction *I, SmallVectorImpl<Use *> &Ops) const;
+
 private:
   bool supportsGather() const;
   InstructionCost getGSVectorCost(unsigned Opcode, TTI::TargetCostKind CostKind,

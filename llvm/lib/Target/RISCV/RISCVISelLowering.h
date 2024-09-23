@@ -519,8 +519,6 @@ public:
   /// Return true if a vector instruction will lower to a target instruction
   /// able to splat the given operand.
   bool canSplatOperand(unsigned Opcode, int Operand) const;
-  bool shouldSinkOperands(Instruction *I,
-                          SmallVectorImpl<Use *> &Ops) const override;
   bool shouldScalarizeBinop(SDValue VecOp) const override;
   bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const override;
   std::pair<int, bool> getLegalZfaFPImm(const APFloat &Imm, EVT VT) const;

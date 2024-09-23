@@ -1738,6 +1738,10 @@ public:
   bool hasActiveVectorLength(unsigned Opcode, Type *DataType,
                              Align Alignment) const;
 
+  /// \return True if the operands of \p I should be sunk to \p I . The sinkable
+  /// operands are cached in \p OpsToSink
+  bool shouldSinkOperands(Instruction *I, SmallVectorImpl<Use *> &Ops) const;
+
   struct VPLegalization {
     enum VPTransform {
       // keep the predicating parameter
@@ -2175,6 +2179,8 @@ public:
   virtual bool supportsScalableVectors() const = 0;
   virtual bool hasActiveVectorLength(unsigned Opcode, Type *DataType,
                                      Align Alignment) const = 0;
+  virtual bool shouldSinkOperands(Instruction *I,
+                                  SmallVectorImpl<Use *> &OpsToSink) const = 0;
   virtual VPLegalization
   getVPLegalizationStrategy(const VPIntrinsic &PI) const = 0;
   virtual bool hasArmWideBranch(bool Thumb) const = 0;
@@ -2939,6 +2945,11 @@ public:
                              Align Alignment) const override {
     return Impl.hasActiveVectorLength(Opcode, DataType, Alignment);
   }
+
+  bool shouldSinkOperands(Instruction *I,
+                          SmallVectorImpl<Use *> &Ops) const override {
+    return Impl.shouldSinkOperands(I, Ops);
+  };
 
   VPLegalization
   getVPLegalizationStrategy(const VPIntrinsic &PI) const override {
