@@ -1063,15 +1063,12 @@ void RegPressureTracker::bumpUpwardPressure(const MachineInstr *MI) {
     // instruction, but became live afterwards. Similarly, some parts
     // may have been killed in this instruction.
     decreaseRegPressure(Reg, LiveAfter, LiveAfter & LiveBefore);
-    increaseRegPressure(Reg, LiveAfter, ~LiveAfter & LiveBefore);
   }
   // Generate liveness for uses.
   for (const RegisterMaskPair &P : RegOpers.Uses) {
     Register Reg = P.RegUnit;
     // If this register was also in a def operand, we've handled it
     // with defs.
-    if (getRegLanes(RegOpers.Defs, Reg).any())
-      continue;
     LaneBitmask LiveAfter = LiveRegs.contains(Reg);
     LaneBitmask LiveBefore = LiveAfter | P.LaneMask;
     increaseRegPressure(Reg, LiveAfter, LiveBefore);
