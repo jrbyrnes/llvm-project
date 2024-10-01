@@ -3553,6 +3553,12 @@ bool GenericScheduler::tryCandidate(SchedCandidate &Cand,
                                                TryCand, Cand, RegCritical, TRI,
                                                DAG->MF))
     return TryCand.Reason != NoCand;
+  
+  // Avoid increasing the max critical pressure in the scheduled region.
+  if (DAG->isTrackingPressure() && (TryCand.LookAhead > Cand.LookAhead)) {
+    TryCand.Reason = RegCritical;
+    return true;
+  }
 
   // We only compare a subset of features when comparing nodes between
   // Top and Bottom boundary. Some properties are simply incomparable, in many

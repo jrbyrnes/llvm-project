@@ -223,6 +223,30 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
   if (AtTop || !canUsePressureDiffs(*SU) || GCNTrackers) {
     getRegisterPressures(AtTop, RPTracker, SU, Pressure, MaxPressure,
                          DownwardTracker, UpwardTracker, DAG, SRI);
+    int LookAhead = 0;
+    int OldVP = Pressure[AMDGPU::RegisterPressureSets::VGPR_32];
+    int OldSP = Pressure[AMDGPU::RegisterPressureSets::SReg_32];
+    bool IsOk = (OldVP < VGPRExcessLimit && OldVP < VGPRCriticalLimit) && (OldSP < SGPRExcessLimit && OldSP < SGPRCriticalLimit);
+
+    if (GCNTrackers && IsOk && IsBottomUp) {     
+      for (auto &Op : SU->getInstr()->operands()) {
+        if (!Op.isReg() || !Op.isUse())
+          continue;
+        
+        if (Op.getReg().isPhysical())
+         continue;
+
+        int UseCounter = 0;
+        for (const MachineOperand &MO : DownwardTracker.MRI->use_nodbg_operands(Op.getReg())) {
+          ++UseCounter;
+        }
+        if (UseCounter <= 1)
+          continue;
+      
+        LookAhead += UseCounter;
+      }
+      Cand.LookAhead = LookAhead;
+    }
   } else {
     // Reserve 4 slots.
     Pressure.resize(4, 0);

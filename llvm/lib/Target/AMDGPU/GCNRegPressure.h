@@ -156,13 +156,13 @@ inline GCNRegPressure operator-(const GCNRegPressure &P1,
 class GCNRPTracker {
 public:
   using LiveRegSet = DenseMap<unsigned, LaneBitmask>;
+  mutable const MachineRegisterInfo *MRI = nullptr;
 
 protected:
   const LiveIntervals &LIS;
   LiveRegSet LiveRegs;
   GCNRegPressure CurPressure, MaxPressure;
   const MachineInstr *LastTrackedMI = nullptr;
-  mutable const MachineRegisterInfo *MRI = nullptr;
 
   GCNRPTracker(const LiveIntervals &LIS_) : LIS(LIS_) {}
 
