@@ -17,6 +17,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar.h"
@@ -26,6 +27,10 @@ using namespace llvm;
 
 STATISTIC(NumSunk, "Number of instructions sunk");
 STATISTIC(NumSinkIter, "Number of sinking iterations");
+
+static cl::opt<bool> SinkIntoLoops(
+    "sink-into-loops", cl::init(false), cl::Hidden,
+    cl::desc("Use this to allow code sinking into loops."));
 
 static bool isSafeToMove(Instruction *Inst, AliasAnalysis &AA,
                          SmallPtrSetImpl<Instruction *> &Stores) {
@@ -88,10 +93,12 @@ static bool IsAcceptableTarget(Instruction *Inst, BasicBlock *SuccToSinkTo,
       return false;
 
     // Don't sink instructions into a loop.
+    if (!SinkIntoLoops) {
     Loop *succ = LI.getLoopFor(SuccToSinkTo);
     Loop *cur = LI.getLoopFor(Inst->getParent());
     if (succ != nullptr && succ != cur)
       return false;
+    }
   }
 
   return true;
