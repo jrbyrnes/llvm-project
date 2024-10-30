@@ -201,6 +201,10 @@ static cl::opt<bool> DropScaledForVScale(
     "lsr-drop-scaled-reg-for-vscale", cl::Hidden, cl::init(true),
     cl::desc("Avoid using scaled registers with vscale-relative addressing"));
 
+static cl::opt<bool> DisableLSR(
+    "lsr-disable", cl::Hidden, cl::init(false),
+    cl::desc("Completely disable the LSR pass"));
+
 #ifndef NDEBUG
 // Stress test IV chain generation.
 static cl::opt<bool> StressIVChain(
@@ -7141,7 +7145,7 @@ static bool ReduceLoopStrength(Loop *L, IVUsers &IU, ScalarEvolution &SE,
 }
 
 bool LoopStrengthReduce::runOnLoop(Loop *L, LPPassManager & /*LPM*/) {
-  if (skipLoop(L))
+  if (DisableLSR || skipLoop(L))
     return false;
 
   auto &IU = getAnalysis<IVUsersWrapperPass>().getIU();
