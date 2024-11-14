@@ -895,7 +895,7 @@ bool MFMASmallGemmOpt::applyIGLPStrategy(
   SchedGroup *SG = nullptr;
   for (unsigned I = 0; I < MFMACount * 3; ++I) {
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::DS, 2, PipelineSyncID, DAG, TII);
+        SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
