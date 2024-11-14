@@ -38,6 +38,11 @@ static cl::opt<bool>
                         "AMDGPULateCodeGenPrepare"),
                cl::ReallyHidden, cl::init(true));
 
+static cl::opt<bool> SinkOuterPreheader(
+    "amdgpu-late-codegenprepare-sink-outer-preheader",
+    cl::desc("Sink from the outer preheader for kernels with nested loops"),
+    cl::ReallyHidden, cl::init(true));
+
 namespace {
 
 class AMDGPULateCodeGenPrepare
@@ -48,13 +53,15 @@ class AMDGPULateCodeGenPrepare
 
   AssumptionCache *AC = nullptr;
   UniformityInfo *UA = nullptr;
+  LoopInfo *LI = nullptr;
 
   SmallVector<WeakTrackingVH, 8> DeadInsts;
 
 public:
   AMDGPULateCodeGenPrepare(Module &M, const GCNSubtarget &ST,
-                           AssumptionCache *AC, UniformityInfo *UA)
-      : Mod(&M), DL(&M.getDataLayout()), ST(ST), AC(AC), UA(UA) {}
+                           AssumptionCache *AC, UniformityInfo *UA,
+                           LoopInfo *LI)
+      : Mod(&M), DL(&M.getDataLayout()), ST(ST), AC(AC), UA(UA), LI(LI) {}
   bool run(Function &F);
   bool visitInstruction(Instruction &) { return false; }
 
@@ -63,6 +70,8 @@ public:
     KnownBits Known = computeKnownBits(V, *DL, 0, AC);
     return Known.countMinTrailingZeros() >= 2;
   }
+
+  bool sink(Instruction *I, SmallVectorImpl<WeakTrackingVH> &DeadInsts);
 
   bool canWidenScalarExtLoad(LoadInst &LI) const;
   bool visitLoadInst(LoadInst &LI);
@@ -133,6 +142,85 @@ public:
 
 } // end anonymous namespace
 
+bool AMDGPULateCodeGenPrepare::sink(
+    Instruction *I, SmallVectorImpl<WeakTrackingVH> &DeadInsts) {
+  bool MadeChange = false;
+
+  if (SinkOuterPreheader) {
+    SmallVector<Value *, 16> Worklist;
+    Worklist.push_back(I);
+    SmallVector<BasicBlock *, 16> Preheaders;
+
+    for (auto TopLoop : LI->getTopLevelLoops())
+      Preheaders.push_back(TopLoop->getLoopPreheader());
+
+    if (!Preheaders.size())
+      return false;
+
+    while (!Worklist.empty()) {
+      Value *UseVal = Worklist.pop_back_val();
+      Instruction *UseInst = dyn_cast<Instruction>(UseVal);
+      if (!UseInst)
+        continue;
+
+      for (auto &Op : UseInst->operands()) {
+        Instruction *OpInst = dyn_cast<Instruction>(Op);
+        if (!OpInst)
+          continue;
+        if (isa<PHINode>(OpInst))
+          continue;
+        auto ParentBlock = OpInst->getParent();
+        if (std::find(Preheaders.begin(), Preheaders.end(), ParentBlock) == Preheaders.end())
+          continue;
+        if (auto AI = dyn_cast<AllocaInst>(OpInst)) {
+          if (AI->isStaticAlloca())
+            continue;
+        }
+
+        if (OpInst->mayWriteToMemory())
+          continue;
+
+        if (isa<LoadInst>(OpInst) || isa<CallBase>(OpInst))
+          continue;
+        bool PHIUse=false;
+        for (auto User : OpInst->users()) {
+          if (isa<PHINode>(User)) {
+            PHIUse = true;
+            break;
+          }
+
+        }
+
+        if (PHIUse)
+          continue;
+
+        if (OpInst->isTerminator() || OpInst->isEHPad() || OpInst->mayThrow() ||
+            !OpInst->willReturn())
+          continue;
+
+        if (OpInst->getParent() == UseInst->getParent()) {
+          Worklist.push_back(OpInst);
+          continue;
+        }
+
+        Instruction *SunkAddrInst = OpInst->clone();
+        SunkAddrInst->setName("sunkaddr");
+        SunkAddrInst->insertInto(UseInst->getParent(),
+                                 UseInst->getParent()->getFirstInsertionPt());
+
+        UseInst->replaceUsesOfWith(Op, SunkAddrInst);
+        if (OpInst->user_empty()) {
+          DeadInsts.emplace_back(OpInst);
+        }
+        MadeChange = true;
+
+        Worklist.push_back(SunkAddrInst);
+      }
+    }
+  }
+  return MadeChange;
+}
+
 bool AMDGPULateCodeGenPrepare::run(Function &F) {
   // "Optimize" the virtual regs that cross basic block boundaries. When
   // building the SelectionDAG, vectors of illegal types that cross basic blocks
@@ -149,11 +237,20 @@ bool AMDGPULateCodeGenPrepare::run(Function &F) {
 
   for (auto &BB : reverse(F))
     for (Instruction &I : make_early_inc_range(reverse(BB))) {
+      Changed |= sink(&I, DeadInsts);
+    }
+  RecursivelyDeleteTriviallyDeadInstructionsPermissive(DeadInsts);
+
+  DeadInsts.clear();
+
+  for (auto &BB : reverse(F))
+    for (Instruction &I : make_early_inc_range(reverse(BB))) {
       Changed |= !HasScalarSubwordLoads && visit(I);
       Changed |= LRO.optimizeLiveType(&I, DeadInsts);
     }
 
   RecursivelyDeleteTriviallyDeadInstructionsPermissive(DeadInsts);
+
   return Changed;
 }
 
@@ -479,8 +576,9 @@ AMDGPULateCodeGenPreparePass::run(Function &F, FunctionAnalysisManager &FAM) {
 
   AssumptionCache &AC = FAM.getResult<AssumptionAnalysis>(F);
   UniformityInfo &UI = FAM.getResult<UniformityInfoAnalysis>(F);
+  auto &LI = FAM.getResult<LoopAnalysis>(F);
 
-  AMDGPULateCodeGenPrepare Impl(*F.getParent(), ST, &AC, &UI);
+  AMDGPULateCodeGenPrepare Impl(*F.getParent(), ST, &AC, &UI, &LI);
 
   bool Changed = Impl.run(F);
 
@@ -505,7 +603,7 @@ public:
     AU.addRequired<TargetPassConfig>();
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<UniformityInfoWrapperPass>();
-    AU.setPreservesAll();
+    AU.addRequired<LoopInfoWrapperPass>();
   }
 
   bool runOnFunction(Function &F) override;
@@ -518,13 +616,14 @@ bool AMDGPULateCodeGenPrepareLegacy::runOnFunction(Function &F) {
   const TargetPassConfig &TPC = getAnalysis<TargetPassConfig>();
   const TargetMachine &TM = TPC.getTM<TargetMachine>();
   const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(F);
+  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
   AssumptionCache &AC =
       getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   UniformityInfo &UI =
       getAnalysis<UniformityInfoWrapperPass>().getUniformityInfo();
 
-  AMDGPULateCodeGenPrepare Impl(*F.getParent(), ST, &AC, &UI);
+  AMDGPULateCodeGenPrepare Impl(*F.getParent(), ST, &AC, &UI, &LI);
 
   return Impl.run(F);
 }
@@ -534,6 +633,7 @@ INITIALIZE_PASS_BEGIN(AMDGPULateCodeGenPrepareLegacy, DEBUG_TYPE,
 INITIALIZE_PASS_DEPENDENCY(TargetPassConfig)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(UniformityInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(AMDGPULateCodeGenPrepareLegacy, DEBUG_TYPE,
                     "AMDGPU IR late optimizations", false, false)
 
