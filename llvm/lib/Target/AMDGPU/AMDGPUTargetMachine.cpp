@@ -520,6 +520,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPULowerModuleLDSLegacyPass(*PR);
   initializeAMDGPULowerBufferFatPointersPass(*PR);
   initializeAMDGPUReserveWWMRegsPass(*PR);
+  initializeAMDGPURewriteAGPRCopyMFMALegacyPass(*PR);
   initializeAMDGPURewriteOutArgumentsPass(*PR);
   initializeAMDGPURewriteUndefForPHILegacyPass(*PR);
   initializeAMDGPUUnifyMetadataPass(*PR);
@@ -1555,6 +1556,8 @@ void GCNPassConfig::addOptimizedRegAlloc() {
 bool GCNPassConfig::addPreRewrite() {
   if (EnableRegReassign)
     addPass(&GCNNSAReassignID);
+
+  addPass(&AMDGPURewriteAGPRCopyMFMALegacyID);
   return true;
 }
 
