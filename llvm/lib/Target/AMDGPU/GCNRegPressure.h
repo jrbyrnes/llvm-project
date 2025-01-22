@@ -162,7 +162,7 @@ protected:
   LiveRegSet LiveRegs;
   GCNRegPressure CurPressure, MaxPressure;
   const MachineInstr *LastTrackedMI = nullptr;
-  mutable const MachineRegisterInfo *MRI = nullptr;
+//  mutable const MachineRegisterInfo *MRI = nullptr;
 
   GCNRPTracker(const LiveIntervals &LIS_) : LIS(LIS_) {}
 
@@ -188,6 +188,7 @@ public:
   decltype(LiveRegs) moveLiveRegs() {
     return std::move(LiveRegs);
   }
+  mutable const MachineRegisterInfo *MRI = nullptr;
 };
 
 GCNRPTracker::LiveRegSet getLiveRegs(SlotIndex SI, const LiveIntervals &LIS,

@@ -1129,6 +1129,8 @@ public:
     // Whether this candidate should be scheduled at top/bottom.
     bool AtTop;
 
+    unsigned LookAhead = 0;
+
     // Register pressure values for the best candidate.
     RegPressureDelta RPDelta;
 

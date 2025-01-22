@@ -100,9 +100,9 @@ public:
 
   unsigned VGPRCriticalLimit;
 
-  unsigned SGPRLimitBias = 0;
+  unsigned SGPRLimitBias = 7;
 
-  unsigned VGPRLimitBias = 0;
+  unsigned VGPRLimitBias = 7;
 
   GCNSchedStrategy(const MachineSchedContext *C);
 

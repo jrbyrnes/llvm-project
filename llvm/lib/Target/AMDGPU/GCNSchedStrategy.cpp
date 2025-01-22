@@ -188,6 +188,8 @@ static void getRegisterPressures(
   Pressure[AMDGPU::RegisterPressureSets::AGPR_32] = NewPressure.getAGPRNum();
 }
 
+bool HasMFMA = 0;
+
 void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
                                      bool AtTop,
                                      const RegPressureTracker &RPTracker,
@@ -203,6 +205,12 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
   Pressure.clear();
   MaxPressure.clear();
 
+  if (!HasMFMA && reinterpret_cast<const SIInstrInfo *>(DAG->TII)->isMFMAorWMMA(*SU->getInstr())) {
+    HasMFMA = 1;
+    errs() << "Has MFMA\n";
+    errs() << printMBBReference(*SU->getInstr()->getParent()) << "\n";
+  }
+
   // We try to use the cached PressureDiffs in the ScheduleDAG whenever
   // possible over querying the RegPressureTracker.
   //
@@ -217,6 +225,29 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
   if (AtTop || !canUsePressureDiffs(*SU) || GCNTrackers) {
     getRegisterPressures(AtTop, RPTracker, SU, Pressure, MaxPressure,
                          DownwardTracker, UpwardTracker, DAG, SRI);
+
+    auto PB = AtTop ? DownwardTracker.getPressure().getArchVGPRNum() : UpwardTracker.getPressure().getArchVGPRNum();
+    //errs() << "\t\t\t\tSpeculative VGPR Pressure: " << Pressure[AMDGPU::RegisterPressureSets::VGPR_32] << " (was: " << PB << ")\n";
+
+    if (GCNTrackers) { 
+    unsigned UseCounter = 0;
+    for (auto &Op : SU->getInstr()->operands()) {
+      if (!Op.isReg() || !Op.isUse())
+        continue;
+
+      if (Op.getReg().isPhysical())
+        continue;
+      
+      if (IsBottomUp) {
+      for (const MachineOperand &MO : DownwardTracker.MRI->use_nodbg_operands(Op.getReg())) {
+        ++UseCounter;
+      }
+      }
+
+    }
+    Cand.LookAhead = UseCounter;
+    }
+
   } else {
     // Reserve 4 slots.
     Pressure.resize(4, 0);
@@ -817,6 +848,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
+    errs() << "\n\nAdvanceToStage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
 
@@ -830,6 +862,9 @@ void GCNScheduleDAGMILive::runSchedStages() {
         continue;
       }
 
+      errs() << "Advance to region: " << Stage->getRegionIdx() << "\n";
+      HasMFMA = 0;
+      errs() << "Target Occu: " << S.getTargetOccupancy() << "\n";
       if (GCNTrackers) {
         GCNDownwardRPTracker *DownwardTracker = S.getDownwardTracker();
         GCNUpwardRPTracker *UpwardTracker = S.getUpwardTracker();
@@ -841,6 +876,39 @@ void GCNScheduleDAGMILive::runSchedStages() {
         reinterpret_cast<GCNRPTracker *>(UpwardTracker)
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
+
+        auto LiveIn = DownwardTracker->getPressure();
+        errs() << "LiveIn Pressure: \n"; LiveIn.dump();
+
+        SmallVector<Register, 16> LiveThrus;
+        for (auto LiveReg : *RegionLiveIns) {
+          auto TheReg = LiveReg.first;
+//          errs() << "LiveInReg: " << printReg(TheReg) << "\n";
+
+          bool FoundUse = false;
+          for (auto &UseI : MRI.use_nodbg_instructions(TheReg)) {
+            if (UseI.getParent() == RegionBegin->getParent()) {
+              FoundUse = true;
+              break;
+            }
+          }
+          if (!FoundUse) {
+            LiveThrus.push_back(TheReg);
+          }
+        }
+
+        for (auto LiveThru : LiveThrus) {
+  //        errs() << "LiveThruReg: " << printReg(LiveThru) << "\n";
+
+
+          const auto *const RC = MRI.getRegClass(LiveThru);
+          const auto *STI =
+            static_cast<const SIRegisterInfo *>(MRI.getTargetRegisterInfo());
+          auto Size = STI->getRegSizeInBits(*RC);
+    //      if (STI->isSGPRClass(RC)) errs() << "SGPR " << Size << "\n";
+    //      else if (STI->isAGPRClass(RC)) errs() << "AGPR " << Size << "\n";
+    //      else errs() << "VGPR " << Size << "\n";
+        }
       }
 
       ScheduleDAGMILive::schedule();
@@ -1113,7 +1181,7 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-
+  errs() << "Pressure After: "; PressureAfter.dump();
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
 
@@ -1400,6 +1468,7 @@ bool GCNSchedStage::mayCauseSpilling(unsigned WavesAfter) {
 }
 
 void GCNSchedStage::revertScheduling() {
+  errs() << "Revert Scheduling\n";
   DAG.RegionsWithMinOcc[RegionIdx] =
       PressureBefore.getOccupancy(ST) == DAG.MinOccupancy;
   LLVM_DEBUG(dbgs() << "Attempting to revert scheduling.\n");

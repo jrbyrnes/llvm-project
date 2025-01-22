@@ -3551,6 +3551,12 @@ bool GenericScheduler::tryCandidate(SchedCandidate &Cand,
                                                DAG->MF))
     return TryCand.Reason != NoCand;
 
+
+  if (DAG->isTrackingPressure() && TryCand.LookAhead > Cand.LookAhead) {
+    TryCand.Reason = RegCritical;
+    return true;
+  }
+
   // We only compare a subset of features when comparing nodes between
   // Top and Bottom boundary. Some properties are simply incomparable, in many
   // other instances we should only override the other boundary if something
