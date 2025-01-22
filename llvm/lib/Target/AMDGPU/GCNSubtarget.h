@@ -1327,6 +1327,12 @@ public:
     return HasMinimum3Maximum3F16;
   }
 
+  /// Returns the necessary reduction in number of VGPRs from using \p VGPRs
+  /// VGPRs to increase occupancy by 1. Returns 0 when using \p VGPRs VGPRs
+  /// already results in maximum occupancy.
+  unsigned getNumVGPRsToIncreaseOccupancy(unsigned VGPRs) const;
+
+
   /// \returns The maximum number of instructions that can be enclosed in an
   /// S_CLAUSE on the given subtarget, or 0 for targets that do not support that
   /// instruction.
