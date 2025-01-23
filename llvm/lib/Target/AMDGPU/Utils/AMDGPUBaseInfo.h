@@ -321,6 +321,14 @@ unsigned getNumWavesPerEUWithNumVGPRs(unsigned NumVGPRs, unsigned Granule,
                                       unsigned MaxWaves,
                                       unsigned TotalNumVGPRs);
 
+/// Returns the necessary reduction in number of VGPRs from using \p VGPRs VGPRs
+/// to increase the achievable number of waves per EU for this subtarget by 1.
+/// Returns 0 when using \p VGPRs VGPRs already results in maximum number of
+/// waves per EU.
+
+unsigned getVGPRReductionToIncreaseWavesPerEU(const MCSubtargetInfo *STI,
+                                              unsigned NumVGPRs);
+
 /// \returns Occupancy for a given \p SGPRs usage, \p MaxWaves possible, and \p
 /// Gen.
 unsigned getOccupancyWithNumSGPRs(unsigned SGPRs, unsigned MaxWaves,

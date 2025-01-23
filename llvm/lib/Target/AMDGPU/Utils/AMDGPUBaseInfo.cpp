@@ -1159,6 +1159,19 @@ unsigned getTotalNumVGPRs(const MCSubtargetInfo *STI) {
   return IsWave32 ? 1024 : 512;
 }
 
+unsigned getVGPRReductionToIncreaseWavesPerEU(const MCSubtargetInfo *STI,
+                                              unsigned NumVGPRs) {
+  unsigned Granule = getVGPRAllocGranule(STI);
+  unsigned MaxWaves = getMaxWavesPerEU(STI);
+  unsigned TotalNumVGPRs = getTotalNumVGPRs(STI);
+
+  unsigned NumWaves =
+      getNumWavesPerEUWithNumVGPRs(NumVGPRs, Granule, MaxWaves, TotalNumVGPRs);
+  if (NumWaves == MaxWaves)
+    return 0;
+  return NumVGPRs - alignDown(TotalNumVGPRs / (NumWaves + 1), Granule);
+}
+
 unsigned getAddressableNumArchVGPRs(const MCSubtargetInfo *STI) { return 256; }
 
 unsigned getAddressableNumVGPRs(const MCSubtargetInfo *STI) {
