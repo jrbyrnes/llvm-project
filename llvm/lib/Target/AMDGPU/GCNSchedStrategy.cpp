@@ -1127,8 +1127,8 @@ bool PreRARematStage::initGCNSchedStage() {
     return false;
   
   if (!createRematPlan()) {
-    errs() << "create remat plan fail\n";
-    return false;
+    errs() << "create remat plan fail, implementing anyway\n";
+//    return false;
   }
   
   if (!implementRematPlan(TII)) {
@@ -1801,19 +1801,24 @@ bool PreRARematStage::createRematPlan() {
   bool FoundAny = true;
   bool BadRP = true;
   bool DeferCands = true;
+  unsigned Stage = 0 ;
 
   // TODO -- initial check to RP reduction to bypass the while loop?
 
   RematCandidates NewCandidates = Cands;
-  while (BadRP && (FoundAny || DeferCands)) {
-    if (!FoundAny)
-      DeferCands = false;
+  while (BadRP && (FoundAny || (Stage < 3))) {
+    if (FoundAny) {
+      Stage = 0;
+    }
+    else {
+      ++Stage;
+    }
     FoundAny = false;
     RematCandidates RCCache = NewCandidates;
     NewCandidates.clear();
 
     errs() << "\n\nWhileLoopIteration\n";
-    errs() << "DeferCands: " << DeferCands << "\n";
+    errs() << "Stage: " << Stage << "\n";
 
     for (const RematCandidate &R : RCCache) {
       bool ShouldRemat = false;
@@ -1824,22 +1829,24 @@ bool PreRARematStage::createRematPlan() {
       //errs() << "\n";
       for (unsigned HighRPRegion : R.HighRPRegions) {
         if (OptRegionRPReduction[HighRPRegion] > 0) {
+          errs() << "Affects RP for relevant region\n";
           ShouldRemat = true;
           break;
         }
       }
 
       // should also check loop cycle depth
-      if (!ShouldRemat) {
+      if (!ShouldRemat && (Stage < 2)) {
+        errs() << "Does not affect RP\n";
         NewCandidates.insert(R);
         continue;
       }
 
-      if (DeferCands && (R.LoopCost >= RCCache.getDeferCostThreshold())) {
-        errs() << "Defer\n";
-        NewCandidates.insert(R);
-        continue;
-      }
+//      if (Stage < 2 && (R.LoopCost >= RCCache.getDeferCostThreshold())) {
+//        errs() << "Defer\n";
+//        NewCandidates.insert(R);
+//        continue;
+//      }
       
       RematPlan.push_back(std::make_pair(R.Def, R.InsertPt));
 
@@ -1859,11 +1866,11 @@ bool PreRARematStage::createRematPlan() {
       // also check the lives for the def lanes
       // estimate the impact on RP, if we negatively impact RP in a good region, defer the candidate.
 
-      if (DeferCands) {
+      if (Stage < 1) {
         bool ShouldDefer = false;
         for (unsigned HighRPRegion : R.HighRPRegions) {
-//          if (OptRegionRPReduction[HighRPRegion] > 0)
-//            continue;
+          if (OptRegionRPReduction[HighRPRegion] <= 0)
+            continue;
         
           GCNRPTracker::LiveRegSet &TheLiveRegs = OptRegionLiveIns[HighRPRegion];
           int RPImpact = 0;
@@ -1909,6 +1916,7 @@ bool PreRARematStage::createRematPlan() {
         }
 
         if (ShouldDefer) {
+          errs() << "Negatively impacts RP region\n";
           NewCandidates.insert(R);
           continue;
         }
@@ -1934,8 +1942,10 @@ bool PreRARematStage::createRematPlan() {
 
         NewLiveIns[Reg] = CoveredLanes;
 
-        if (!canRemat(Reg))
+        if (!canRemat(Reg)) {
+          errs() << "Cant remat\n";
           continue;
+        }
 
         MachineInstr *UseDef = DAG.MRI.getOneDef(Reg)->getParent();
         MachineBasicBlock::iterator UseRematPt;
