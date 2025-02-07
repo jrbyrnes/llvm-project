@@ -279,8 +279,7 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   void updateRegionBoundaries(
       SmallVectorImpl<std::pair<MachineBasicBlock::iterator,
                                 MachineBasicBlock::iterator>> &RegionBoundaries,
-      MachineBasicBlock::iterator MI, MachineInstr *NewMI,
-      bool Removing = false);
+      MachineBasicBlock::iterator MI, MachineInstr *NewMI);
 
   void runSchedStages();
 
@@ -535,8 +534,9 @@ public:
 
         if (RNew.InsertPt != RNew.InsertPt->getParent()->begin())
           TheMatch->InsertPt = &*std::prev(RNew.InsertPt);
-        else
+        else {
           TheMatch->InsertPt = RNew.InsertPt;
+        }
 
 
 
@@ -623,7 +623,7 @@ private:
 
   RematCandidates Cands;
 
-  SmallVector<std::pair<MachineInstr *, MachineBasicBlock::iterator>> RematPlan;
+  RematCandidates RematPlan;
     
   DenseMap<MachineInstr *, SmallPtrSet<MachineBasicBlock *, 16>> ToDelete;
 
@@ -651,6 +651,9 @@ private:
   // instructions. Returns true if we were able to sink instruction(s).
   bool sinkTriviallyRematInsts(const GCNSubtarget &ST,
                                const TargetInstrInfo *TII);
+
+  bool eliminateDeadMI();
+  bool isDead(MachineInstr *MI);
 
 public:
   bool initGCNSchedStage() override;

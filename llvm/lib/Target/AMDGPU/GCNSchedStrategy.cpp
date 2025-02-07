@@ -836,7 +836,11 @@ void GCNScheduleDAGMILive::runSchedStages() {
       FoundMFMA = false;
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+      if (RegionBegin == RegionEnd)
+        continue;
       auto BB = Region.first->getParent();
+      errs() << "Have Region.first: "; Region.first->dump();
+      errs() << "Is Debug: " << Region.first->isDebugInstr() << "\n";
       errs() << "Advance to region (" << BB->getNumber() << "): " << BB->getName() << "\n";
             errs() << "TargetOcc: " << S.getTargetOccupancy() << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
@@ -905,6 +909,14 @@ void GCNScheduleDAGMILive::runSchedStages() {
       }
       //errs() << "Calling schedule for region\n";
       ScheduleDAGMILive::schedule();
+
+      //errs() << "After SCHEDULING\n";
+      //RegionBegin->getParent()->getParent()->dump();
+
+      //for (auto &MI : *RegionBegin->getParent()) {
+       // MI.dump();
+      //}
+
       Stage->finalizeGCNRegion();
     }
     //MF.dump();
@@ -1079,6 +1091,79 @@ bool ClusteredLowOccStage::initGCNSchedStage() {
   return true;
 }
 
+bool PreRARematStage::isDead(MachineInstr *MI) {
+  //errs() << "Is Dead? "; MI->dump();
+  // Instructions without side-effects are dead iff they only define dead regs.
+  // This function is hot and this loop returns early in the common case,
+  // so only perform additional checks before this if absolutely necessary.
+  for (const MachineOperand &MO : MI->all_defs()) {
+    Register Reg = MO.getReg();
+    if (Reg.isPhysical()) {
+      return false;
+    } else {
+      if (MO.isDead()) {
+        continue;
+      }
+      for (const MachineInstr &Use : DAG.MRI.use_nodbg_instructions(Reg)) {
+        if (&Use != MI) {
+          //errs() << "Found use\n";
+          // This def has a non-debug use. Don't delete the instruction!
+          return false;
+         }
+      }
+    }
+  }
+
+  // Technically speaking inline asm without side effects and no defs can still
+  // be deleted. But there is so much bad inline asm code out there, we should
+  // let them be.
+  if (MI->isInlineAsm())
+    return false;
+
+  // FIXME: See issue #105950 for why LIFETIME markers are considered dead here.
+  if (MI->isLifetimeMarker())
+    return true;
+
+  // If there are no defs with uses, the instruction might be dead.
+  return MI->wouldBeTriviallyDead();
+  //errs() << "Ret: " << X << "\n";
+  //return X;
+}
+
+
+bool PreRARematStage::eliminateDeadMI() {
+  bool AnyChanges = false;
+
+  // Loop over all instructions in all blocks, from bottom to top, so that it's
+  // more likely that chains of dependent but ultimately dead instructions will
+  // be cleaned up.
+  for (MachineBasicBlock *MBB : post_order(&MF)) {
+
+    // Now scan the instructions and delete dead ones, tracking physreg
+    // liveness as we go.
+    for (MachineInstr &MI : make_early_inc_range(reverse(*MBB))) {
+      // If the instruction is dead, delete it!
+      if (isDead(&MI)) {
+        LLVM_DEBUG(dbgs() << "DeadMachineInstructionElim: DELETING: " << MI);
+        // It is possible that some DBG_VALUE instructions refer to this
+        // instruction. They will be deleted in the live debug variable
+        // analysis.
+        DAG.updateRegionBoundaries(DAG.Regions, MI, nullptr);
+        Register Reg = MI.getOperand(0).getReg();
+        DAG.LIS->RemoveMachineInstrFromMaps(MI);
+        MI.eraseFromParent();
+        DAG.LIS->removeInterval(Reg);
+        DAG.LIS->createAndComputeVirtRegInterval(Reg);   
+        AnyChanges = true;
+        continue;
+      }
+
+    }
+  }
+
+  return AnyChanges;
+}
+
 bool PreRARematStage::initGCNSchedStage() {
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
@@ -1122,9 +1207,13 @@ bool PreRARematStage::initGCNSchedStage() {
   CI.clear();
   CI.compute(MF);
 
+  errs() << "BEFORE REMAT: "; 
+  MF.dump();
   collectRematSeeds();
-  if (Cands.empty())
+  if (Cands.empty()) {
+    errs() << "Cands empty?\n";
     return false;
+  }
   
   if (!createRematPlan()) {
     errs() << "create remat plan fail, implementing anyway\n";
@@ -1137,10 +1226,43 @@ bool PreRARematStage::initGCNSchedStage() {
   }
   
 
+
   errs() << "Finish implement remat plan\n";
   LLVM_DEBUG(
       dbgs() << "Retrying function scheduling with improved occupancy of "
              << DAG.MinOccupancy << " from rematerializing\n");
+
+  errs() << "eliminate MI\n";
+  MF.dump();
+  eliminateDeadMI();
+   //errs() << "After eliminate deadMI: "; MF.dump();
+
+
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+            //errs() << "Finisedht eh remat\n";
+      for (const MachineOperand &MO : MI.operands()) {
+        if (!MO.isReg() || !MO.getReg() || !MO.isDef())
+          continue;
+        auto UseReg = MO.getReg();
+        if (!UseReg.isVirtual())
+          continue;
+
+        DAG.LIS->removeInterval(UseReg);
+        DAG.LIS->createAndComputeVirtRegInterval(UseReg);
+
+
+
+
+        //auto &UseLI = LIS->getInterval(UseReg);
+        //errs() << "New LI: "; UseLI.dump();
+      }
+    }
+  }
+
+  errs() << "AFTER REMAT: ";
+  DAG.LIS->dump();
+
   return true;
 }
 
@@ -1790,7 +1912,7 @@ bool PreRARematStage::createRematPlan() {
     unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
     unsigned NumToIncreaseOcc = ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
-    OptRegionRPReduction[I] = NumToIncreaseOcc ;
+    OptRegionRPReduction[I] = NumToIncreaseOcc;
     OptRegionLiveIns[I] =  DAG.LiveIns[I];
 
     errs() << "Current VGPR Pressure: " << NumVGPRs << "\n";
@@ -1848,7 +1970,6 @@ bool PreRARematStage::createRematPlan() {
 //        continue;
 //      }
       
-      RematPlan.push_back(std::make_pair(R.Def, R.InsertPt));
 
       auto DefReg = R.Def->getOperand(0).getReg();
       LiveInterval &DefLI = DAG.LIS->getInterval(DefReg);
@@ -1923,6 +2044,7 @@ bool PreRARematStage::createRematPlan() {
       }
 
       FoundAny = true;
+      RematPlan.updateOrInsert(*const_cast<RematCandidate *>(&R), DAG.LIS);
       GCNRPTracker::LiveRegSet NewLiveIns;
 
       for (const MachineOperand &MO : R.Def->operands()) {
@@ -1951,8 +2073,9 @@ bool PreRARematStage::createRematPlan() {
         MachineBasicBlock::iterator UseRematPt;
         if (R.InsertPt != R.InsertPt->getParent()->begin())
           UseRematPt = std::prev(R.InsertPt);
-        else
-          UseRematPt = R.InsertPt;
+        else {
+          UseRematPt = R.InsertPt->getParent()->begin();
+        }
 
         RematCandidate RNew(UseDef, CI.getCycleDepth(UseRematPt->getParent()), R.HighRPRegions, UseRematPt);
         NewCandidates.updateOrInsert(RNew, DAG.LIS);
@@ -2008,7 +2131,10 @@ bool PreRARematStage::createRematPlan() {
     errs() << "Finished all remat cands\n";
 
     BadRP = false;
+    errs() << "Checking RP\n";
     for (auto HighRPRegion : OptRegionRPReduction) {
+      errs() << "Region: " << HighRPRegion.first << "\n";
+      errs() << "Has Pressure: " << HighRPRegion.second << "\n";
       if (HighRPRegion.second > 0) {
         BadRP = true;
         break;
@@ -2034,6 +2160,9 @@ bool PreRARematStage::createRematPlan() {
       }
     }
 
+  if (!BadRP)
+    RematPlan.resolveSameBlockUses(&DAG.MRI, DAG.LIS);
+  
   return !BadRP;
 }
 
@@ -2054,15 +2183,57 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
   unsigned RematCount = 0;
 
 
-  for (auto &It : RematPlan) {
-      MachineInstr *Def = It.first;
+  for (const RematCandidate &R : RematPlan) {
+      MachineInstr *Def = R.Def;
 
       //errs() << "Have remat instr: "; Def->dump();
       errs() << "Trying to remat: "; Def->dump();
-      errs() << "Into Block: " << printMBBReference(*It.second->getParent()) << "\n";
+      bool Flag = false;
+      errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
       MachineBasicBlock::iterator InsertPos =
-          MachineBasicBlock::iterator(It.second);
+          MachineBasicBlock::iterator(R.InsertPt);
       Register Reg = Def->getOperand(0).getReg();
+
+      for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
+        if (UseI.getParent() == R.InsertPt->getParent()) {
+          if (SlotIndex::isEarlierInstr(DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot(), DAG.LIS->getInstructionIndex(UseI).getRegSlot()))
+            continue;
+          MachineBasicBlock::iterator UseIt = MachineBasicBlock::iterator(&UseI);
+          if (UseIt != R.InsertPt->getParent()->begin())
+            InsertPos = std::prev(UseIt);
+          else {
+            errs() << "Need to insert at new beginning: "; Def->dump();
+            errs() << "Before: "; UseI.dump();
+            Flag = true;
+            InsertPos = R.InsertPt->getParent()->begin();
+          }
+        }
+      }
+
+    
+      for (auto &Op : Def->operands()) {
+        if (!Op.isReg())
+          continue;
+        auto OpReg = Op.getReg();
+        if (!OpReg.isVirtual())
+          continue;
+        
+        for (auto &DefI : DAG.MRI.def_instructions(Reg)) {
+          if (DefI.getParent() != InsertPos->getParent())
+            continue;
+          
+          if (SlotIndex::isEarlierInstr(DAG.LIS->getInstructionIndex(DefI).getRegSlot(), DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot()))
+            continue;
+          
+          MachineBasicBlock::iterator DefIt = MachineBasicBlock::iterator(&DefI);
+          InsertPos = std::next(DefIt);
+          assert(false);
+        }
+      }
+
+
+
+
       auto InsertIdx = LIS->getSlotIndexes()->getIndexBefore(*InsertPos);
 
 
@@ -2079,9 +2250,30 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       MachineInstr *NewMI = &*std::prev(InsertPos);
       NewMI->getOperand(0).setSubReg(Def->getOperand(0).getSubReg());
       NewMI->clearRegisterDeads(Def->getOperand(0).getReg());
+
+      const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
+      Register NewReg = DAG.MRI.createVirtualRegister(RC);
+      NewMI->getOperand(0).setReg(NewReg);
+
+      for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
+        if (UseI.getParent() == NewMI->getParent()) {
+          for (MachineOperand &Op : UseI.operands()) {
+            if (!Op.isReg())
+              continue;
+            Register UseReg = Op.getReg();
+            if (UseReg == Reg)
+              Op.setReg(NewReg);
+          }
+        }
+      }
+
+
+
+
       LIS->InsertMachineInstrInMaps(*NewMI);
       LIS->removeInterval(Reg);
       LIS->createAndComputeVirtRegInterval(Reg);
+      LIS->createAndComputeVirtRegInterval(NewReg);
       InsertedMIToOldDef[NewMI] = Def;
 
       ++RematCount;
@@ -2111,12 +2303,10 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
       // Update region boundaries in scheduling region we sinked from since we
       // may sink an instruction that was at the beginning or end of its region
-      DAG.updateRegionBoundaries(Regions, Def, /*NewMI =*/nullptr,
-                                 /*Removing =*/true);
 
-      // Update region boundaries in region we sinked to.
-      DAG.updateRegionBoundaries(Regions, InsertPos, NewMI);
-
+    DAG.updateRegionBoundaries(DAG.Regions, Def, nullptr);
+    // Update region boundaries in region we sinked to.
+    DAG.updateRegionBoundaries(DAG.Regions, InsertPos, NewMI);
   }
 
   auto NewLiveIns = DAG.getRegionLiveInMap();
@@ -2530,11 +2720,9 @@ bool PreRARematStage::sinkTriviallyRematInsts(const GCNSubtarget &ST,
 
       // Update region boundaries in scheduling region we sinked from since we
       // may sink an instruction that was at the beginning or end of its region
-      DAG.updateRegionBoundaries(NewRegions, Def, /*NewMI =*/nullptr,
-                                 /*Removing =*/true);
-
+      DAG.updateRegionBoundaries(DAG.Regions, Def, nullptr);
       // Update region boundaries in region we sinked to.
-      DAG.updateRegionBoundaries(NewRegions, InsertPos, NewMI);
+      DAG.updateRegionBoundaries(DAG.Regions, InsertPos, NewMI);
 
       LaneBitmask PrevMask = NewLiveIns[I][Reg];
       // FIXME: Also update cached pressure for where the def was sinked from.
@@ -2714,38 +2902,47 @@ bool PreRARematStage::isTriviallyReMaterializable(const MachineInstr &MI) {
 void GCNScheduleDAGMILive::updateRegionBoundaries(
     SmallVectorImpl<std::pair<MachineBasicBlock::iterator,
                               MachineBasicBlock::iterator>> &RegionBoundaries,
-    MachineBasicBlock::iterator MI, MachineInstr *NewMI, bool Removing) {
+    MachineBasicBlock::iterator MI, MachineInstr *NewMI) {
   unsigned I = 0, E = RegionBoundaries.size();
-  // Search for first region of the block where MI is located
-  while (I != E && MI->getParent() != RegionBoundaries[I].first->getParent())
+  // Search for first region of the block where MI is located. We may encounter
+  // an empty region if all instructions from an initially non-empty region were
+  // removed.
+  while (I != E && RegionBoundaries[I].first != RegionBoundaries[I].second &&
+         MI->getParent() != RegionBoundaries[I].first->getParent())
     ++I;
 
   for (; I != E; ++I) {
-    if (MI->getParent() != RegionBoundaries[I].first->getParent())
+    auto &Bounds = RegionBoundaries[I];
+    assert(MI != Bounds.second && "cannot insert at region end");
+    assert(!NewMI || NewMI != Bounds.second && "cannot remove at region end");
+
+    // We may encounter an empty region if all of the region' instructions were
+    // previously removed.
+    if (Bounds.first == Bounds.second) {
+      if (MI->getParent()->end() != Bounds.second)
+        return;
+      continue;
+    }
+    if (MI->getParent() != Bounds.first->getParent())
       return;
 
-    if (Removing && MI == RegionBoundaries[I].first &&
-        MI == RegionBoundaries[I].second) {
-      // MI is in a region with size 1, after removing, the region will be
-      // size 0, set RegionBegin and RegionEnd to pass end of block iterator.
-      RegionBoundaries[I] =
-          std::pair(MI->getParent()->end(), MI->getParent()->end());
-      return;
-    }
-    if (MI == RegionBoundaries[I].first) {
-      if (Removing)
-        RegionBoundaries[I] =
-            std::pair(std::next(MI), RegionBoundaries[I].second);
+    // We only care for modifications at the beginning of the region since the
+    // upper region boundary is exclusive.
+    if (MI != Bounds.first)
+      continue;
+    if (!NewMI) {
+      // This is an MI removal, which may leave the region empty; in such cases
+      // set both boundaries to the removed instruction's MBB's end.
+      MachineBasicBlock::iterator NextMI = std::next(MI);
+      if (NextMI != Bounds.second)
+        Bounds.first = NextMI;
       else
-        // Inserted NewMI in front of region, set new RegionBegin to NewMI
-        RegionBoundaries[I] = std::pair(MachineBasicBlock::iterator(NewMI),
-                                        RegionBoundaries[I].second);
-      return;
+        Bounds.first = Bounds.second;
+    } else {
+      // This is an MI insertion at the beggining of the region.
+      Bounds.first = NewMI;
     }
-    if (Removing && MI == RegionBoundaries[I].second) {
-      RegionBoundaries[I] = std::pair(RegionBoundaries[I].first, std::prev(MI));
-      return;
-    }
+    return;
   }
 }
 

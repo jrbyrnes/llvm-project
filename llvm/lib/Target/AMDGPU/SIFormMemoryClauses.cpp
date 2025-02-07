@@ -382,10 +382,22 @@ bool SIFormMemoryClauses::runOnMachineFunction(MachineFunction &MF) {
         //
         // It's possible all of the use registers were already live past the
         // bundle.
+        errs() << "Before buildMI: ";
+        //Ind->printMIMap();
+
         Kill = BuildMI(*MI.getParent(), std::next(LastClauseInst),
                        DebugLoc(), TII->get(AMDGPU::KILL));
+        
+        errs() << "\n\n\nAfter buildMI Kill: "; Kill->dump();
+        //Ind->printMIMap();
         for (auto &Op : KillOps)
           Kill.addUse(Reg, std::get<0>(Op), std::get<1>(Op));
+
+        errs() << "\n\n\nAfter handling uses\n";
+        //Ind->printMIMap();
+
+        errs() << "GOING TO ADD\n";
+
         Ind->insertMachineInstrInMaps(*Kill);
       }
 
