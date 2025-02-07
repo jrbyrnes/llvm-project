@@ -1079,6 +1079,74 @@ bool ClusteredLowOccStage::initGCNSchedStage() {
   return true;
 }
 
+bool PreRARematStage::isDead(MachineInstr *MI) {
+  errs() << "Is Dead? "; MI->dump();
+  // Instructions without side-effects are dead iff they only define dead regs.
+  // This function is hot and this loop returns early in the common case,
+  // so only perform additional checks before this if absolutely necessary.
+  for (const MachineOperand &MO : MI->all_defs()) {
+    Register Reg = MO.getReg();
+    if (Reg.isPhysical()) {
+      return false;
+    } else {
+      if (MO.isDead()) {
+        continue;
+      }
+      for (const MachineInstr &Use : DAG.MRI.use_nodbg_instructions(Reg)) {
+        if (&Use != MI) {
+          errs() << "Found use\n";
+          // This def has a non-debug use. Don't delete the instruction!
+          return false;
+         }
+      }
+    }
+  }
+
+  // Technically speaking inline asm without side effects and no defs can still
+  // be deleted. But there is so much bad inline asm code out there, we should
+  // let them be.
+  if (MI->isInlineAsm())
+    return false;
+
+  // FIXME: See issue #105950 for why LIFETIME markers are considered dead here.
+  if (MI->isLifetimeMarker())
+    return true;
+
+  // If there are no defs with uses, the instruction might be dead.
+  auto X = MI->wouldBeTriviallyDead();
+  errs() << "Ret: " << X << "\n";
+  return X;
+}
+
+
+bool PreRARematStage::eliminateDeadMI() {
+  bool AnyChanges = false;
+
+  // Loop over all instructions in all blocks, from bottom to top, so that it's
+  // more likely that chains of dependent but ultimately dead instructions will
+  // be cleaned up.
+  for (MachineBasicBlock *MBB : post_order(&MF)) {
+
+    // Now scan the instructions and delete dead ones, tracking physreg
+    // liveness as we go.
+    for (MachineInstr &MI : make_early_inc_range(reverse(*MBB))) {
+      // If the instruction is dead, delete it!
+      if (isDead(&MI)) {
+        LLVM_DEBUG(dbgs() << "DeadMachineInstructionElim: DELETING: " << MI);
+        // It is possible that some DBG_VALUE instructions refer to this
+        // instruction. They will be deleted in the live debug variable
+        // analysis.
+        MI.eraseFromParent();
+        AnyChanges = true;
+        continue;
+      }
+
+    }
+  }
+
+  return AnyChanges;
+}
+
 bool PreRARematStage::initGCNSchedStage() {
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
@@ -1137,10 +1205,15 @@ bool PreRARematStage::initGCNSchedStage() {
   }
   
 
+
   errs() << "Finish implement remat plan\n";
   LLVM_DEBUG(
       dbgs() << "Retrying function scheduling with improved occupancy of "
              << DAG.MinOccupancy << " from rematerializing\n");
+
+  errs() << "eliminate MI\n";
+  eliminateDeadMI();
+   errs() << "After eliminate deadMI: "; MF.dump();
   return true;
 }
 
@@ -1790,7 +1863,7 @@ bool PreRARematStage::createRematPlan() {
     unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
     unsigned NumToIncreaseOcc = ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
-    OptRegionRPReduction[I] = NumToIncreaseOcc ;
+    OptRegionRPReduction[I] = NumToIncreaseOcc;
     OptRegionLiveIns[I] =  DAG.LiveIns[I];
 
     errs() << "Current VGPR Pressure: " << NumVGPRs << "\n";
@@ -1848,7 +1921,6 @@ bool PreRARematStage::createRematPlan() {
 //        continue;
 //      }
       
-      RematPlan.push_back(std::make_pair(R.Def, R.InsertPt));
 
       auto DefReg = R.Def->getOperand(0).getReg();
       LiveInterval &DefLI = DAG.LIS->getInterval(DefReg);
@@ -1923,6 +1995,7 @@ bool PreRARematStage::createRematPlan() {
       }
 
       FoundAny = true;
+      RematPlan.push_back(std::make_pair(R.Def, R.InsertPt));
       GCNRPTracker::LiveRegSet NewLiveIns;
 
       for (const MachineOperand &MO : R.Def->operands()) {

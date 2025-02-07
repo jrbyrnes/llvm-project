@@ -652,6 +652,9 @@ private:
   bool sinkTriviallyRematInsts(const GCNSubtarget &ST,
                                const TargetInstrInfo *TII);
 
+  bool eliminateDeadMI();
+  bool isDead(MachineInstr *MI);
+
 public:
   bool initGCNSchedStage() override;
 
