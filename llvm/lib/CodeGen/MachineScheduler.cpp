@@ -1807,7 +1807,6 @@ void ScheduleDAGMILive::initQueues(ArrayRef<SUnit*> TopRoots,
 void ScheduleDAGMILive::scheduleMI(SUnit *SU, bool IsTopNode) {
   // Move the instruction to its new location in the instruction stream.
   MachineInstr *MI = SU->getInstr();
-  errs() << "Scheduling (Top: " << IsTopNode << "): "; MI->dump();
 
   if (IsTopNode) {
     assert(SU->isTopReady() && "node still has unscheduled dependencies");

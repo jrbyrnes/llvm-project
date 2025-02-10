@@ -279,8 +279,7 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   void updateRegionBoundaries(
       SmallVectorImpl<std::pair<MachineBasicBlock::iterator,
                                 MachineBasicBlock::iterator>> &RegionBoundaries,
-      MachineBasicBlock::iterator MI, MachineInstr *NewMI,
-      bool Removing = false);
+      MachineBasicBlock::iterator MI, MachineInstr *NewMI);
 
   void runSchedStages();
 
@@ -623,7 +622,7 @@ private:
 
   RematCandidates Cands;
 
-  SmallVector<std::pair<MachineInstr *, MachineBasicBlock::iterator>> RematPlan;
+  RematCandidates RematPlan;
     
   DenseMap<MachineInstr *, SmallPtrSet<MachineBasicBlock *, 16>> ToDelete;
 
