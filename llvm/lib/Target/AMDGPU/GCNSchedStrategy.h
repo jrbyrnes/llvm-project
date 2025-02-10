@@ -534,8 +534,9 @@ public:
 
         if (RNew.InsertPt != RNew.InsertPt->getParent()->begin())
           TheMatch->InsertPt = &*std::prev(RNew.InsertPt);
-        else
+        else {
           TheMatch->InsertPt = RNew.InsertPt;
+        }
 
 
 

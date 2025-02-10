@@ -1227,6 +1227,7 @@ bool PreRARematStage::initGCNSchedStage() {
              << DAG.MinOccupancy << " from rematerializing\n");
 
   errs() << "eliminate MI\n";
+  MF.dump();
   eliminateDeadMI();
    //errs() << "After eliminate deadMI: "; MF.dump();
 
@@ -2066,8 +2067,9 @@ bool PreRARematStage::createRematPlan() {
         MachineBasicBlock::iterator UseRematPt;
         if (R.InsertPt != R.InsertPt->getParent()->begin())
           UseRematPt = std::prev(R.InsertPt);
-        else
-          UseRematPt = R.InsertPt;
+        else {
+          UseRematPt = R.InsertPt->getParent()->begin();
+        }
 
         RematCandidate RNew(UseDef, CI.getCycleDepth(UseRematPt->getParent()), R.HighRPRegions, UseRematPt);
         NewCandidates.updateOrInsert(RNew, DAG.LIS);
@@ -2181,6 +2183,43 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       MachineBasicBlock::iterator InsertPos =
           MachineBasicBlock::iterator(R.InsertPt);
       Register Reg = Def->getOperand(0).getReg();
+
+      for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
+        if (UseI.getParent() == R.InsertPt->getParent()) {
+          if (SlotIndex::isEarlierInstr(DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot(), DAG.LIS->getInstructionIndex(UseI).getRegSlot()))
+            continue;
+          MachineBasicBlock::iterator UseIt = MachineBasicBlock::iterator(&UseI);
+          if (UseIt != R.InsertPt->getParent()->begin())
+            InsertPos = std::prev(UseIt);
+          else {
+            InsertPos = R.InsertPt->getParent()->begin();
+          }
+        }
+      }
+
+    
+      for (auto &Op : Def->operands()) {
+        if (!Op.isReg())
+          continue;
+        auto OpReg = Op.getReg();
+        if (!OpReg.isVirtual())
+          continue;
+        
+        for (auto &DefI : DAG.MRI.def_instructions(Reg)) {
+          if (DefI.getParent() != InsertPos->getParent())
+            continue;
+          
+          if (SlotIndex::isEarlierInstr(DAG.LIS->getInstructionIndex(DefI).getRegSlot(), DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot()))
+            continue;
+          
+          MachineBasicBlock::iterator DefIt = MachineBasicBlock::iterator(&DefI);
+          InsertPos = std::next(DefIt);
+        }
+      }
+
+
+
+
       auto InsertIdx = LIS->getSlotIndexes()->getIndexBefore(*InsertPos);
 
 
@@ -2197,9 +2236,30 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       MachineInstr *NewMI = &*std::prev(InsertPos);
       NewMI->getOperand(0).setSubReg(Def->getOperand(0).getSubReg());
       NewMI->clearRegisterDeads(Def->getOperand(0).getReg());
+
+      const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
+      Register NewReg = DAG.MRI.createVirtualRegister(RC);
+      NewMI->getOperand(0).setReg(NewReg);
+
+      for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
+        if (UseI.getParent() == NewMI->getParent()) {
+          for (MachineOperand &Op : UseI.operands()) {
+            if (!Op.isReg())
+              continue;
+            Register UseReg = Op.getReg();
+            if (UseReg == Reg)
+              Op.setReg(NewReg);
+          }
+        }
+      }
+
+
+
+
       LIS->InsertMachineInstrInMaps(*NewMI);
       LIS->removeInterval(Reg);
       LIS->createAndComputeVirtRegInterval(Reg);
+      LIS->createAndComputeVirtRegInterval(NewReg);
       InsertedMIToOldDef[NewMI] = Def;
 
       ++RematCount;
