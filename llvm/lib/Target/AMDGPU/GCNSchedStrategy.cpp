@@ -1206,8 +1206,10 @@ bool PreRARematStage::initGCNSchedStage() {
   errs() << "BEFORE REMAT: "; 
   MF.dump();
   collectRematSeeds();
-  if (Cands.empty())
+  if (Cands.empty()) {
+    errs() << "Cands empty?\n";
     return false;
+  }
   
   if (!createRematPlan()) {
     errs() << "create remat plan fail, implementing anyway\n";
@@ -2125,7 +2127,10 @@ bool PreRARematStage::createRematPlan() {
     errs() << "Finished all remat cands\n";
 
     BadRP = false;
+    errs() << "Checking RP\n";
     for (auto HighRPRegion : OptRegionRPReduction) {
+      errs() << "Region: " << HighRPRegion.first << "\n";
+      errs() << "Has Pressure: " << HighRPRegion.second << "\n";
       if (HighRPRegion.second > 0) {
         BadRP = true;
         break;
@@ -2179,6 +2184,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
       //errs() << "Have remat instr: "; Def->dump();
       errs() << "Trying to remat: "; Def->dump();
+      bool Flag = false;
       errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
       MachineBasicBlock::iterator InsertPos =
           MachineBasicBlock::iterator(R.InsertPt);
@@ -2192,6 +2198,9 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
           if (UseIt != R.InsertPt->getParent()->begin())
             InsertPos = std::prev(UseIt);
           else {
+            errs() << "Need to insert at new beginning: "; Def->dump();
+            errs() << "Before: "; UseI.dump();
+            Flag = true;
             InsertPos = R.InsertPt->getParent()->begin();
           }
         }
@@ -2214,6 +2223,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
           
           MachineBasicBlock::iterator DefIt = MachineBasicBlock::iterator(&DefI);
           InsertPos = std::next(DefIt);
+          assert(false);
         }
       }
 
@@ -2290,10 +2300,9 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       // Update region boundaries in scheduling region we sinked from since we
       // may sink an instruction that was at the beginning or end of its region
 
-    //DAG.updateRegionBoundaries(DAG.Regions, Def, nullptr);
+    DAG.updateRegionBoundaries(DAG.Regions, Def, nullptr);
     // Update region boundaries in region we sinked to.
     DAG.updateRegionBoundaries(DAG.Regions, InsertPos, NewMI);
-
   }
 
   auto NewLiveIns = DAG.getRegionLiveInMap();
