@@ -534,7 +534,7 @@ GCNMaxOccupancySchedStrategy::GCNMaxOccupancySchedStrategy(
   SchedStages.push_back(GCNSchedStageID::OccInitialSchedule);
   SchedStages.push_back(GCNSchedStageID::UnclusteredHighRPReschedule);
   SchedStages.push_back(GCNSchedStageID::ClusteredLowOccupancyReschedule);
-  SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
+  //SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
   GCNTrackers = GCNTrackers & !IsLegacyScheduler;
 }
 

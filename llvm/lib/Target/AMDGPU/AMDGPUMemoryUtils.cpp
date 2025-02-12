@@ -413,6 +413,7 @@ bool isClobberedInFunction(const LoadInst *Load, MemorySSA *MSSA,
       LLVM_DEBUG(dbgs() << "  Def: " << *Def->getMemoryInst() << '\n');
 
       if (isReallyAClobber(Load->getPointerOperand(), Def, AA)) {
+        errs() << "Load is clobbered by: "; Def->getMemoryInst()->dump();
         LLVM_DEBUG(dbgs() << "      -> load is clobbered\n");
         return true;
       }
