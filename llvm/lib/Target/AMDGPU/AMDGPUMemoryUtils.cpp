@@ -380,6 +380,11 @@ bool isReallyAClobber(const Value *Ptr, MemoryDef *Def, AAResults *AA) {
   if (checkNoAlias(dyn_cast<AtomicCmpXchgInst>(DefInst)) ||
       checkNoAlias(dyn_cast<AtomicRMWInst>(DefInst)))
     return false;
+  
+  //if (checkNoAlias(dyn_cast<LoadInst>(DefInst)) || 
+  //    checkNoAlias(dyn_cast<StoreInst>(DefInst)))
+  //  return false;
+
 
   return true;
 }
@@ -412,8 +417,20 @@ bool isClobberedInFunction(const LoadInst *Load, MemorySSA *MSSA,
     if (MemoryDef *Def = dyn_cast<MemoryDef>(MA)) {
       LLVM_DEBUG(dbgs() << "  Def: " << *Def->getMemoryInst() << '\n');
 
+
+      int LoadAS = Load->getPointerAddressSpace();
+ 
+
+      auto OtherLoad = dyn_cast<LoadInst>(Def->getMemoryInst());
+      auto OtherStore = dyn_cast<StoreInst>(Def->getMemoryInst());
+
+      int ClobAS = OtherLoad ? OtherLoad->getPointerAddressSpace() : OtherStore ?  OtherStore->getPointerAddressSpace() : -1;
+
+
+
       if (isReallyAClobber(Load->getPointerOperand(), Def, AA)) {
-        errs() << "Load is clobbered by: "; Def->getMemoryInst()->dump();
+        errs() << "Load: "; Load->dump();
+        errs() <<  "is clobbered by: "; Def->getMemoryInst()->dump();
         LLVM_DEBUG(dbgs() << "      -> load is clobbered\n");
         return true;
       }

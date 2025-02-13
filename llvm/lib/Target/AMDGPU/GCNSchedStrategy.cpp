@@ -534,7 +534,7 @@ GCNMaxOccupancySchedStrategy::GCNMaxOccupancySchedStrategy(
   SchedStages.push_back(GCNSchedStageID::OccInitialSchedule);
   SchedStages.push_back(GCNSchedStageID::UnclusteredHighRPReschedule);
   SchedStages.push_back(GCNSchedStageID::ClusteredLowOccupancyReschedule);
-  //SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
+  SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
   GCNTrackers = GCNTrackers & !IsLegacyScheduler;
 }
 
@@ -1149,7 +1149,11 @@ bool PreRARematStage::eliminateDeadMI() {
         // instruction. They will be deleted in the live debug variable
         // analysis.
         DAG.updateRegionBoundaries(DAG.Regions, MI, nullptr);
+        Register Reg = MI.getOperand(0).getReg();
+        DAG.LIS->RemoveMachineInstrFromMaps(MI);
         MI.eraseFromParent();
+        DAG.LIS->removeInterval(Reg);
+        DAG.LIS->createAndComputeVirtRegInterval(Reg);   
         AnyChanges = true;
         continue;
       }
