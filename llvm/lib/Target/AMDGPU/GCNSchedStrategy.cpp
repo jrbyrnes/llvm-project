@@ -1617,12 +1617,48 @@ void GCNSchedStage::revertScheduling() {
   DAG.Regions[RegionIdx] = std::pair(DAG.RegionBegin, DAG.RegionEnd);
 }
 
+bool PreRARematStage::isOperandAvailableAt(const MachineOperand &MO, SlotIndex OriginalIdx, SlotIndex RematIdx) const {
+  if (!MO.isReg())
+    return true;
+  
+  LiveInterval &LI = DAG.LIS->getInterval(MO.getReg());
+  const VNInfo *OVNI = LI.getVNInfoAt(OriginalIdx);
+  assert(OVNI);
+
+  // Don't allow rematerialization immediately after the original def.
+  // It would be incorrect if InstToRemat redefines the register.
+  // See PR14098.
+  if (SlotIndex::isSameInstr(OriginalIdx, RematIdx))
+    return false;
+
+  if (OVNI != LI.getVNInfoAt(RematIdx))
+    return false;
+  
+  if (LI.hasSubRanges()) {
+    const TargetRegisterInfo *TRI = DAG.MRI.getTargetRegisterInfo();
+    unsigned SubReg = MO.getSubReg();
+    LaneBitmask LM = SubReg ? TRI->getSubRegIndexLaneMask(SubReg)
+                              : DAG.MRI.getMaxLaneMaskForVReg(MO.getReg());
+    for (LiveInterval::SubRange &SR : LI.subranges()) {
+      if ((SR.LaneMask & LM).none())
+        continue;
+      if (!SR.liveAt(RematIdx))
+        return false;
+
+      // Early exit if all used lanes are checked. No need to continue.
+      LM &= ~SR.LaneMask;
+      if (LM.none())
+        break;
+    }
+  }
+
+  return true;
+}
+
 bool PreRARematStage::allUsesAvailableAt(const MachineInstr *InstToRemat,
                                          SlotIndex OriginalIdx,
                                          SlotIndex RematIdx) const {
 
-  LiveIntervals *LIS = DAG.LIS;
-  MachineRegisterInfo &MRI = DAG.MRI;
   OriginalIdx = OriginalIdx.getRegSlot(true);
   RematIdx = std::max(RematIdx, RematIdx.getRegSlot(true));
   for (const MachineOperand &MO : InstToRemat->operands()) {
@@ -1640,37 +1676,8 @@ bool PreRARematStage::allUsesAvailableAt(const MachineInstr *InstToRemat,
       continue;
     }
 
-    LiveInterval &LI = LIS->getInterval(MO.getReg());
-    const VNInfo *OVNI = LI.getVNInfoAt(OriginalIdx);
-    assert(OVNI);
-
-    // Don't allow rematerialization immediately after the original def.
-    // It would be incorrect if InstToRemat redefines the register.
-    // See PR14098.
-    if (SlotIndex::isSameInstr(OriginalIdx, RematIdx))
+    if (!isOperandAvailableAt(MO, OriginalIdx, RematIdx))
       return false;
-
-    if (OVNI != LI.getVNInfoAt(RematIdx))
-      return false;
-
-    // Check that subrange is live at RematIdx.
-    if (LI.hasSubRanges()) {
-      const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
-      unsigned SubReg = MO.getSubReg();
-      LaneBitmask LM = SubReg ? TRI->getSubRegIndexLaneMask(SubReg)
-                              : MRI.getMaxLaneMaskForVReg(MO.getReg());
-      for (LiveInterval::SubRange &SR : LI.subranges()) {
-        if ((SR.LaneMask & LM).none())
-          continue;
-        if (!SR.liveAt(RematIdx))
-          return false;
-
-        // Early exit if all used lanes are checked. No need to continue.
-        LM &= ~SR.LaneMask;
-        if (LM.none())
-          break;
-      }
-    }
   }
   return true;
 }
@@ -1718,7 +1725,7 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
 
   // Maps optimizable regions (i.e., regions at minimum and VGPR-limited
   // occupancy, or regions with VGPR spilling) to their excess RP.
-  DenseMap<unsigned, unsigned> OptRegions;
+  DenseMap<unsigned, int> OptRegions;
   const Function &F = MF.getFunction();
   const bool UnifiedRF = ST.hasGFX90AInsts();
 
@@ -1814,16 +1821,38 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
   // Accounts for a reduction in RP in an optimizable region. Returns whether we
   // estimate that we have identified enough rematerialization opportunities to
   // achieve our goal.
-  auto ReduceRPInRegion = [&](auto OptIt, LaneBitmask Mask) -> bool {
-    auto NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
-    unsigned I = OptIt->getFirst();
-    unsigned &Excess = OptIt->getSecond();
-    if (NumRegs >= Excess)
-      OptRegions.erase(I);
-    else
-      Excess -= NumRegs;
-    return OptRegions.empty();
+  auto ReduceRPInRegion = [&](auto OptIt, LaneBitmask ReduceMask, LaneBitmask IncreaseMask) -> bool {
+    auto NumRemovedRegs = SIRegisterInfo::getNumCoveredRegs(ReduceMask);
+    auto NumAddedRegs = SIRegisterInfo::getNumCoveredRegs(IncreaseMask);
+    int &Excess = OptIt->getSecond();
+    Excess -= NumRemovedRegs;
+    Excess += NumAddedRegs;
+    
+    return !std::any_of(OptRegions.begin(), OptRegions.end(), [](std::pair<unsigned, int> OptEntry) {return OptEntry.second > 0;});
   };
+
+
+  // Accounts for a reduction in RP in an optimizable region. Returns whether we
+  // estimate that we have identified enough rematerialization opportunities to
+  // achieve our goal.
+  auto GetUncoveredMask = [this](MachineOperand &MO, GCNRPTracker::LiveRegSet &ExistingMasks, GCNRPTracker::LiveRegSet &NewMasks) -> LaneBitmask {
+    Register Reg = MO.getReg();
+
+    LiveInterval &LI = DAG.LIS->getInterval(Reg);
+    LaneBitmask MaskToCover = DAG.MRI.getMaxLaneMaskForVReg(Reg);
+    if (LI.hasSubRanges() && MO.getSubReg())
+      MaskToCover = DAG.TRI->getSubRegIndexLaneMask(MO.getSubReg());
+        
+    LaneBitmask ExistingMask(0);
+    if (ExistingMasks.contains(Reg))
+      ExistingMask |= ExistingMasks[Reg];
+        
+    if (NewMasks.contains(Reg))
+      ExistingMask |= NewMasks[Reg];
+        
+    return MaskToCover & ~(ExistingMask & MaskToCover);
+  };
+
 
   // We need up-to-date live-out info. to query live-out register masks in
   // regions containing rematerializable instructions.
@@ -1831,6 +1860,7 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
 
   // Cache set of registers that are going to be rematerialized.
   DenseSet<unsigned> RematRegs;
+  SmallVector<std::pair<MachineInstr *, unsigned>, 8> DeferRemats;
 
   // identify rematerializable instructions in the function.
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
@@ -1871,23 +1901,45 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
       // range while rematerializing.
       SlotIndex DefIdx = DAG.LIS->getInstructionIndex(DefMI);
       SlotIndex UseIdx = DAG.LIS->getInstructionIndex(*UseMI).getRegSlot(true);
-      if (!allUsesAvailableAt(&DefMI, DefIdx, UseIdx))
+      if (!allUsesAvailableAt(&DefMI, DefIdx, UseIdx)) {
+        DeferRemats.push_back({&DefMI, I});
         continue;
+      }
+
+      // Check if remat is useful
+      bool RematUseful = false;
+      if (auto It = OptRegions.find(I); It != OptRegions.end() && It->second > 0)
+        RematUseful = true;
+      
+      else {
+        for (unsigned LIRegion = 0; LIRegion != E; ++LIRegion) {
+          auto It = DAG.LiveIns[LIRegion].find(Reg);
+          if (It == DAG.LiveIns[LIRegion].end() || It->second.none())
+            continue;
+          if (auto It = OptRegions.find(LIRegion); It != OptRegions.end() && It->second > 0) {
+            RematUseful = true;
+            break;
+          }
+        }
+      }
+
+      if (!RematUseful) {
+        REMAT_DEBUG(dbgs() << "  No impact, not rematerializing instruction\n");
+        continue;
+      }
 
       REMAT_DEBUG(dbgs() << "Region " << I << ": remat instruction " << DefMI);
       RematInstruction &Remat =
           Rematerializations.try_emplace(&DefMI, I, UseMI).first->second;
 
-      bool RematUseful = false;
       if (auto It = OptRegions.find(I); It != OptRegions.end()) {
         // Optimistically consider that moving the instruction out of its
         // defining region will reduce RP in the latter; this assumes that
         // maximum RP in the region is reached somewhere between the defining
         // instruction and the end of the region.
         REMAT_DEBUG(dbgs() << "  Defining region is optimizable\n");
-        RematUseful = true;
         LaneBitmask Mask = DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I)[Reg];
-        if (ReduceRPInRegion(It, Mask))
+        if (ReduceRPInRegion(It, Mask, LaneBitmask(0)))
           return true;
       }
 
@@ -1907,21 +1959,168 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
         // instruction's use.
         if (auto It = OptRegions.find(LIRegion); It != OptRegions.end()) {
           REMAT_DEBUG(dbgs() << "  Live-in in region " << LIRegion << '\n');
-          RematUseful = true;
-          if (ReduceRPInRegion(It, DAG.LiveIns[LIRegion][Reg]))
+          if (ReduceRPInRegion(It, DAG.LiveIns[LIRegion][Reg], LaneBitmask(0)))
             return true;
         }
       }
 
-      // If the instruction is not a live-in or live-out in any optimizable
-      // region then there is no point in rematerializing it.
-      if (!RematUseful) {
-        Rematerializations.pop_back();
-        REMAT_DEBUG(dbgs() << "  No impact, not rematerializing instruction\n");
-      } else {
-        RematRegs.insert(Reg);
+      RematRegs.insert(Reg);
+    }
+  }
+
+  DenseMap<unsigned, GCNRPTracker::LiveRegSet> NewLiveIns;
+  DenseMap<unsigned, GCNRPTracker::LiveRegSet> NewLiveOuts;
+
+/*
+  for (auto &OptRegion : OptRegions) {
+    NewLiveIns.insert({OptRegion.first,{}});
+    NewLiveOuts.insert({OptRegion.first,{}});
+  }
+*/
+  MapVector<MachineInstr *, RematInstruction> PotentialRematerializations;
+  DenseSet<unsigned> PotentialRematRegs;
+
+
+  // We did not hit our objective, try the deferred candidatese
+  for (std::pair<MachineInstr *, unsigned> &DefCand : DeferRemats) {
+    // Do not remat an instruction if there is a dependency with remat instruction or potential remat instruction
+    // Before this PR -- remove this restriction.
+
+    MachineInstr *MI = DefCand.first;
+    unsigned I = DefCand.second;
+    Register DefReg = MI->getOperand(0).getReg();
+    MachineInstr *UseMI = DAG.MRI.getOneNonDBGUser(DefReg);
+
+
+    // Do not rematerialize an instruction if it uses or is used by an
+    // instruction that we have designated for rematerialization.
+    // FIXME: Allow for rematerialization chains: this requires 1. updating
+    // remat points to account for uses that are rematerialized, and 2. either
+    // rematerializing the candidates in careful ordering, or deferring the
+    // MBB RP walk until the entire chain has been rematerialized.
+    if (PotentialRematerializations.contains(UseMI) ||
+        llvm::any_of(MI->operands(), [&PotentialRematRegs](MachineOperand &MO) {
+          return MO.isReg() && PotentialRematRegs.contains(MO.getReg());
+        }))
+      continue;
+
+
+    REMAT_DEBUG(dbgs() << "Region " << I << ": deferred remat instruction " << MI);
+
+    // Check if remat is useful
+    bool RematUseful = false;
+    if (auto It = OptRegions.find(I); It != OptRegions.end() && It->second > 0)
+      RematUseful = true;
+    
+    else {
+      for (unsigned LIRegion = 0, E = DAG.Regions.size(); LIRegion != E; ++LIRegion) {
+        auto It = DAG.LiveIns[LIRegion].find(DefReg);
+        if (It == DAG.LiveIns[LIRegion].end() || It->second.none())
+          continue;
+        if (auto It = OptRegions.find(LIRegion); It != OptRegions.end() && It->second > 0) {
+          RematUseful = true;
+          break;
+        }
       }
     }
+
+    if (!RematUseful) {
+      REMAT_DEBUG(dbgs() << "  No impact, not rematerializing instruction\n");
+      continue;
+    }    
+
+    
+    RematInstruction &Remat =
+      PotentialRematerializations.try_emplace(MI, I, UseMI, /* ExtendLR */ true).first->second;
+    PotentialRematRegs.insert(DefReg);
+
+    SmallVector<MachineOperand, 2> ExtendRegs;
+
+    for (MachineOperand &MO : MI->operands()) {
+      if (!MO.isReg() || !MO.getReg() || !MO.readsReg())
+        continue;
+      
+      if (!MO.getReg().isVirtual())
+        continue;
+      
+      SlotIndex DefIdx = DAG.LIS->getInstructionIndex(*MI);
+      SlotIndex UseIdx = DAG.LIS->getInstructionIndex(*UseMI).getRegSlot(true);
+
+      if (!isOperandAvailableAt(MO, DefIdx, UseIdx))
+        ExtendRegs.push_back(MO);
+    }
+    assert(ExtendRegs.size() > 0);
+
+
+    if (auto It = OptRegions.find(I); It != OptRegions.end()) {
+      // Optimistically consider that moving the instruction out of its
+      // defining region will reduce RP in the latter; this assumes that
+      // maximum RP in the region is reached somewhere between the defining
+      // instruction and the end of the region.
+      REMAT_DEBUG(dbgs() << "  Defining region is optimizable\n");
+
+      auto LiveOuts = DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I);
+      for (MachineOperand &MO : ExtendRegs) {
+        LaneBitmask UncoveredLanes = GetUncoveredMask(MO, LiveOuts, NewLiveOuts[I]);
+        if (UncoveredLanes.any()) {
+          ReduceRPInRegion(It, LaneBitmask(0), UncoveredLanes);
+          NewLiveOuts[I][MO.getReg()] = UncoveredLanes;
+        }
+      }
+
+      LaneBitmask Mask = LiveOuts[DefReg];
+      ReduceRPInRegion(It, Mask, LaneBitmask(0));
+    }
+
+    for (unsigned LIRegion = 0, E = DAG.Regions.size(); LIRegion != E; ++LIRegion) {
+      // We are only collecting regions in which the register is a live-in
+      // (and may be live-through).
+      auto It = DAG.LiveIns[LIRegion].find(DefReg);
+      if (It == DAG.LiveIns[LIRegion].end() || It->second.none())
+        continue;
+      Remat.LiveInRegions.insert(LIRegion);
+
+      // Account for the reduction in RP due to the rematerialization in an
+      // optimizable region in which the defined register is a live-in. This
+      // is exact for live-through region but optimistic in the using region,
+      // where RP is actually reduced only if maximum RP is reached somewhere
+      // between the beginning of the region and the rematerializable
+      // instruction's use.
+      if (auto It = OptRegions.find(LIRegion); It != OptRegions.end()) {
+        REMAT_DEBUG(dbgs() << "  Live-in in region " << LIRegion << '\n');
+        auto LiveIns = DAG.LiveIns[LIRegion];
+        for (MachineOperand &MO : ExtendRegs) {
+          LaneBitmask UncoveredLanes = GetUncoveredMask(MO, LiveIns, NewLiveIns[LIRegion]);
+          if (UncoveredLanes.any()) {
+            ReduceRPInRegion(It, LaneBitmask(0), UncoveredLanes);
+            NewLiveIns[LIRegion][MO.getReg()] = UncoveredLanes;
+          }
+        }
+
+
+        if (ReduceRPInRegion(It, DAG.LiveIns[LIRegion][DefReg], LaneBitmask(0))) {
+          for (auto PR : PotentialRematerializations)
+            Rematerializations.insert(PR);
+          for (auto &LiveInPair : NewLiveIns) {
+            unsigned Region = LiveInPair.first;
+            GCNRPTracker::LiveRegSet NewlyLive = LiveInPair.second;
+            GCNRPTracker::LiveRegSet &OldLiveIn = DAG.LiveIns[Region];
+            for (auto &LiveReg : NewlyLive) {
+              if (OldLiveIn.contains(LiveReg.first)) {
+                assert(!(OldLiveIn[LiveReg.first] & LiveReg.second).any());
+                OldLiveIn[LiveReg.first] |= LiveReg.second;
+                continue;  
+              }
+              OldLiveIn[LiveReg.first] = LiveReg.second;
+
+            }
+          }
+          return true;
+        }
+      }
+    }
+
+
   }
 
   if (IncreaseOccupancy) {
@@ -1964,41 +2163,22 @@ void PreRARematStage::rematerialize() {
     DefMI->eraseFromParent();
     DAG.LIS->RemoveMachineInstrFromMaps(*DefMI);
 
+    if (Remat.ExtendLR) {
+      for (MachineOperand &MO : Remat.RematMI->operands()) {
+        if (!MO.isReg() || !MO.getReg() || !MO.readsReg() || MO.getReg().isPhysical())
+          continue;
+        Register UseReg = MO.getReg();
+
+        DAG.LIS->removeInterval(UseReg);
+        DAG.LIS->createAndComputeVirtRegInterval(UseReg);
+      }
+    }
+
     // Collect all regions impacted by the rematerialization and update their
     // live-in/RP information.
     for (unsigned I : Remat.LiveInRegions) {
       ImpactedRegions.insert({I, DAG.Pressure[I]});
       GCNRPTracker::LiveRegSet &RegionLiveIns = DAG.LiveIns[I];
-
-#ifdef EXPENSIVE_CHECKS
-      // All uses are known to be available / live at the remat point. Thus, the
-      // uses should already be live in to the region.
-      for (MachineOperand &MO : DefMI->operands()) {
-        if (!MO.isReg() || !MO.getReg() || !MO.readsReg())
-          continue;
-
-        Register UseReg = MO.getReg();
-        if (!UseReg.isVirtual())
-          continue;
-
-        LiveInterval &LI = DAG.LIS->getInterval(UseReg);
-        LaneBitmask LM = DAG.MRI.getMaxLaneMaskForVReg(MO.getReg());
-        if (LI.hasSubRanges() && MO.getSubReg())
-          LM = DAG.TRI->getSubRegIndexLaneMask(MO.getSubReg());
-
-        assert(RegionLiveIns.contains(UseReg));
-        LaneBitmask LiveInMask = RegionLiveIns[UseReg];
-        LaneBitmask UncoveredLanes = LM & ~(LiveInMask & LM);
-        // If this register has lanes not covered by the LiveIns, be sure they
-        // do not map to any subrange. ref:
-        // machine-scheduler-sink-trivial-remats.mir::omitted_subrange
-        if (UncoveredLanes.any()) {
-          assert(LI.hasSubRanges());
-          for (LiveInterval::SubRange &SR : LI.subranges())
-            assert((SR.LaneMask & UncoveredLanes).none());
-        }
-      }
-#endif
 
       // The register is no longer a live-in in all regions but the one that
       // contains the single use. In live-through regions, maximum register
@@ -2008,7 +2188,7 @@ void PreRARematStage::rematerialize() {
       LaneBitmask PrevMask = RegionLiveIns[Reg];
       RegionLiveIns.erase(Reg);
       RegMasks.insert({{I, Remat.RematMI->getOperand(0).getReg()}, PrevMask});
-      if (Remat.UseMI->getParent() != DAG.Regions[I].first->getParent())
+      if (!Remat.ExtendLR && Remat.UseMI->getParent() != DAG.Regions[I].first->getParent())
         DAG.Pressure[I].inc(Reg, PrevMask, LaneBitmask::getNone(), DAG.MRI);
       else
         RecomputeRP.insert(I);
@@ -2092,18 +2272,35 @@ bool PreRARematStage::isTriviallyReMaterializable(const MachineInstr &MI) {
   if (!DAG.TII->isTriviallyReMaterializable(MI))
     return false;
 
-  // Even though TargetInstrInfo::isReallyTriviallyReMaterializable already
-  // ensures that the instruction has no virtual register uses,
-  // SIInstrInfo::isReallyTriviallyReMaterializable may consider an instruction
-  // rematerializable and return before calling its parent's method, so we need
-  // to double-check here.
   for (const MachineOperand &MO : MI.all_uses()) {
+    if (!MO.isReg())
+      continue;
+  
     // We can't remat physreg uses, unless it is a constant or an ignorable
     // use (e.g. implicit exec use on VALU instructions)
     if (MO.getReg().isPhysical()) {
       if (DAG.MRI.isConstantPhysReg(MO.getReg()) || DAG.TII->isIgnorableUse(MO))
         continue;
       return false;
+    }
+
+    Register Reg = MO.getReg();
+    assert(Reg.isVirtual());
+    if (!DAG.MRI.hasOneDef(Reg)) {
+      LiveInterval &LI = DAG.
+      LIS->getInterval(Reg);
+      if (!LI.hasSubRanges())
+        return false;
+      
+      SmallSet<unsigned, 4> DefinedSubregs;
+
+      for (auto &MI : DAG.MRI.def_instructions(Reg)) {
+        MachineOperand DefOp = MI.getOperand(0);
+        if (DefinedSubregs.contains(DefOp.getSubReg()))
+          return false;
+        
+        DefinedSubregs.insert(DefOp.getSubReg());
+      }
     }
   }
 
@@ -2162,6 +2359,9 @@ void PreRARematStage::finalizeGCNSchedStage() {
     // Recompute live interval for the re-rematerialized register
     DAG.LIS->removeInterval(Reg);
     DAG.LIS->createAndComputeVirtRegInterval(Reg);
+
+
+    // TODO -- just recalculate the liveins
 
     // Re-add the register as a live-in in all regions it used to be one in.
     for (unsigned LIRegion : Remat.LiveInRegions)

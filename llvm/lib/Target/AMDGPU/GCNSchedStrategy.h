@@ -463,8 +463,13 @@ private:
     /// Region containing the rematerializable instruction.
     unsigned DefRegion;
 
+    bool ExtendLR = false;
+
     RematInstruction(unsigned DefRegion, MachineInstr *UseMI)
         : UseMI(UseMI), DefRegion(DefRegion) {}
+    
+    RematInstruction(unsigned DefRegion, MachineInstr *UseMI, bool ExtendLR)
+        : UseMI(UseMI), DefRegion(DefRegion), ExtendLR(ExtendLR) {}
   };
 
   /// Collects instructions to rematerialize.
@@ -511,6 +516,8 @@ private:
   /// rematerializations and resets live-ins/RP in all regions impacted by the
   /// stage to their pre-stage values.
   void finalizeGCNSchedStage() override;
+
+  bool isOperandAvailableAt(const MachineOperand &MO, SlotIndex OriginalIdx, SlotIndex RematIdx) const;
 
   /// \p Returns true if all the uses in \p InstToRemat defined at \p
   /// OriginalIdx are live at \p RematIdx. This only checks liveness of virtual
