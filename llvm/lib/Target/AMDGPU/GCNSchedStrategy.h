@@ -453,6 +453,9 @@ private:
   struct RematInstruction {
     /// Single use of the rematerializable instruction's defined register,
     /// located in a different block.
+    MachineInstr *DefMI;
+    /// Single use of the rematerializable instruction's defined register,
+    /// located in a different block.
     MachineInstr *UseMI;
     /// Rematerialized version of \p DefMI, set in
     /// PreRARematStage::rematerialize. Used for reverting rematerializations.
@@ -463,12 +466,151 @@ private:
     /// Region containing the rematerializable instruction.
     unsigned DefRegion;
 
-    RematInstruction(unsigned DefRegion, MachineInstr *UseMI)
-        : UseMI(UseMI), DefRegion(DefRegion) {}
+    /// The position at which to insert the remat.
+    MachineBasicBlock::iterator InsertPos;
+
+    /// The position at which we should rollback
+    MachineBasicBlock::iterator RollbackPos;
+
+    bool HasDependency = false;
+
+    RematInstruction(MachineInstr *DefMI, unsigned DefRegion, MachineInstr *UseMI)
+        : DefMI(DefMI), UseMI(UseMI), DefRegion(DefRegion), InsertPos(UseMI) {}
+    
+        RematInstruction(MachineInstr *DefMI, unsigned DefRegion, MachineInstr *UseMI, MachineBasicBlock::iterator InsertPos)
+        : DefMI(DefMI), UseMI(UseMI), DefRegion(DefRegion), InsertPos(InsertPos) {}
   };
 
-  /// Collects instructions to rematerialize.
-  MapVector<MachineInstr *, RematInstruction> Rematerializations;
+  class RematInstructions {
+  private:
+    SmallVector<RematInstruction, 8> Rematerializations;
+
+  public:
+    using iterator = typename SmallVectorImpl<RematInstruction>::iterator;
+    using const_iterator = typename SmallVectorImpl<RematInstruction>::const_iterator;
+    using reverse_iterator = typename SmallVectorImpl<RematInstruction>::reverse_iterator;
+    using const_reverse_iterator = typename SmallVectorImpl<RematInstruction>::const_reverse_iterator;
+
+    iterator begin() { return Rematerializations.begin(); }
+    const_iterator begin() const { return Rematerializations.begin(); }
+    iterator end() { return Rematerializations.end(); }
+    const_iterator end() const { return Rematerializations.end(); }
+
+    reverse_iterator rbegin() { return Rematerializations.rbegin(); }
+    const_reverse_iterator rbegin() const { return Rematerializations.rbegin(); }
+    reverse_iterator rend() { return Rematerializations.rend(); }
+    const_reverse_iterator rend() const { return Rematerializations.rend(); }
+
+    unsigned size() {return Rematerializations.size();}
+
+    RematInstruction *insert(const RematInstruction &R) {
+      Rematerializations.push_back(R);
+      return &Rematerializations[size() - 1];
+    }
+
+    RematInstruction *insert(MachineInstr *DefMI, unsigned DefRegion, MachineInstr *UseMI) {
+      Rematerializations.push_back({DefMI, DefRegion, UseMI});
+      return &Rematerializations[size() - 1];
+    }
+
+    bool erase(const RematInstruction &R) {
+      auto Match = find_if(Rematerializations, [&R](const RematInstruction &Other){
+        return R.DefMI == Other.DefMI && R.UseMI == Other.UseMI;
+      });
+      if (Match == Rematerializations.end())
+        return false;
+      return !Rematerializations.erase(Match);
+    }
+
+    void clear() {
+      Rematerializations.clear();
+    }
+
+    bool empty() {
+      return Rematerializations.empty();
+    }
+
+    // We may be rematiarlizing an instruction used by another instruciton we are rematerializing. Be
+    // sure that we insert the user remats after -- the user remats and def remats will have the same InsertPt,
+    // by inserting the users last, they will occur after the defs. Thus, we must sort the remats so
+    // the users occur after the defs. 
+    void sort(const MachineRegisterInfo *MRI) {
+      std::sort(Rematerializations.begin(), Rematerializations.end(), [MRI](RematInstruction &A, RematInstruction &B) {
+        if (A.HasDependency && B.HasDependency) {
+          for (auto BOp : B.DefMI->operands()) {
+            if (!BOp.isReg() || !BOp.getReg() || !BOp.readsReg())
+              continue;
+            auto UseReg = BOp.getReg();
+            if (!UseReg.isVirtual())
+              continue;
+            MachineInstr *DefInst = &*MRI->def_instr_begin(UseReg);
+            if (DefInst == A.DefMI)
+              return true;
+          }
+          return false;
+        }
+
+        return !A.HasDependency;
+      });
+    }
+
+    bool resolveInsertPos(const MachineRegisterInfo *MRI,
+                              const LiveIntervals *LIS) {
+      // We may have added remat candidates which are used by other remat
+      // candidates -- be sure that we have correct insert points for this
+      bool FixedPoint = false;
+      unsigned IterCount = 0;
+      while (!FixedPoint && IterCount < 5) {
+        ++IterCount;
+        FixedPoint = true;
+        for (auto &Remat : Rematerializations) {
+          MachineInstr *RematInst = Remat.DefMI;
+
+          for (auto MO : RematInst->operands()) {
+            if (!MO.isReg() || !MO.getReg() || !MO.readsReg())
+              continue;
+            auto UseReg = MO.getReg();
+            if (!UseReg.isVirtual())
+              continue;
+            for (MachineInstr &DefInst : MRI->def_instructions(UseReg)) {
+
+
+              auto Match = find_if(Rematerializations, [&DefInst](const RematInstruction &R) {
+                return R.DefMI == &DefInst;
+              });
+
+              if (Match == Rematerializations.end())
+                continue;
+              
+              RematInstruction &TheMatch = *const_cast<RematInstruction *>(&*Match);
+              Remat.HasDependency = true;
+
+              // Since the remats 1. only have one use, and 2. the operands of the remat are live at the remat point
+              // we do not need further analysis to check whether changing the TheMatch.InsertPos will effect the condition
+              // of allUsesAvailableAt.
+              // The questionable case is when we are moving a remat pt to a later MBB. For such a condition to occur, we must have
+              // instructions A, B and C where we have previously set the remat point of A to B, but B is being remat to C so we 
+              // would like to update the remat point of A to C. We will remat B to C iff the use operands (i.e. A) are live at C. 
+              // since there is only 1 use of A, this can occur iff A is defined outside a loop and is live-in / live-out. Thus, B
+              // must be in the body of a loop. Moreover, since we know A can be remat at B, then the use operands of A must also be defined
+              // outside a loop and are live-in / live-out. Since these operands are live throughout the body of the loop, we are safe to 
+              // remat A to C without further checking.
+              // TODO: handle mulit-use case.
+              if (TheMatch.InsertPos == Remat.InsertPos)
+                continue;
+              FixedPoint = false;
+              TheMatch.InsertPos = Remat.InsertPos;
+            }
+          }
+
+        }
+      }
+      return FixedPoint;
+    }
+  };
+
+  RematInstructions Remats;
+
   /// Collect regions whose live-ins or register pressure will change due to
   /// rematerializations.
   DenseMap<unsigned, GCNRegPressure> ImpactedRegions;

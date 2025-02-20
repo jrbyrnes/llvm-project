@@ -988,7 +988,6 @@ void GCNScheduleDAGMILive::runSchedStages() {
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
       }
-
       ScheduleDAGMILive::schedule();
       Stage->finalizeGCNRegion();
     }
@@ -1818,7 +1817,7 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
     auto NumRegs = SIRegisterInfo::getNumCoveredRegs(Mask);
     unsigned I = OptIt->getFirst();
     unsigned &Excess = OptIt->getSecond();
-    if (NumRegs >= Excess)
+    if (NumRegs >= Excess) 
       OptRegions.erase(I);
     else
       Excess -= NumRegs;
@@ -1854,29 +1853,17 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
       if (!UseMI || DefMI.getParent() == UseMI->getParent())
         continue;
 
-      // Do not rematerialize an instruction if it uses or is used by an
-      // instruction that we have designated for rematerialization.
-      // FIXME: Allow for rematerialization chains: this requires 1. updating
-      // remat points to account for uses that are rematerialized, and 2. either
-      // rematerializing the candidates in careful ordering, or deferring the
-      // MBB RP walk until the entire chain has been rematerialized.
-      if (Rematerializations.contains(UseMI) ||
-          llvm::any_of(DefMI.operands(), [&RematRegs](MachineOperand &MO) {
-            return MO.isReg() && RematRegs.contains(MO.getReg());
-          }))
-        continue;
-
       // Do not rematerialize an instruction it it uses registers that aren't
       // available at its use. This ensures that we are not extending any live
       // range while rematerializing.
       SlotIndex DefIdx = DAG.LIS->getInstructionIndex(DefMI);
       SlotIndex UseIdx = DAG.LIS->getInstructionIndex(*UseMI).getRegSlot(true);
+
       if (!allUsesAvailableAt(&DefMI, DefIdx, UseIdx))
         continue;
 
       REMAT_DEBUG(dbgs() << "Region " << I << ": remat instruction " << DefMI);
-      RematInstruction &Remat =
-          Rematerializations.try_emplace(&DefMI, I, UseMI).first->second;
+      RematInstruction &Temp = *Remats.insert({&DefMI, I, UseMI});
 
       bool RematUseful = false;
       if (auto It = OptRegions.find(I); It != OptRegions.end()) {
@@ -1884,11 +1871,14 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
         // defining region will reduce RP in the latter; this assumes that
         // maximum RP in the region is reached somewhere between the defining
         // instruction and the end of the region.
+        // Since we only remat instructions with one use, we can assume that we
+        // adding a new remat instead of merely updating the remat position.
         REMAT_DEBUG(dbgs() << "  Defining region is optimizable\n");
         RematUseful = true;
         LaneBitmask Mask = DAG.RegionLiveOuts.getLiveRegsForRegionIdx(I)[Reg];
-        if (ReduceRPInRegion(It, Mask))
-          return true;
+        if (ReduceRPInRegion(It, Mask)) {
+          return  Remats.resolveInsertPos(&DAG.MRI, DAG.LIS);
+        }
       }
 
       for (unsigned LIRegion = 0; LIRegion != E; ++LIRegion) {
@@ -1897,7 +1887,7 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
         auto It = DAG.LiveIns[LIRegion].find(Reg);
         if (It == DAG.LiveIns[LIRegion].end() || It->second.none())
           continue;
-        Remat.LiveInRegions.insert(LIRegion);
+        Temp.LiveInRegions.insert(LIRegion);
 
         // Account for the reduction in RP due to the rematerialization in an
         // optimizable region in which the defined register is a live-in. This
@@ -1909,14 +1899,13 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
           REMAT_DEBUG(dbgs() << "  Live-in in region " << LIRegion << '\n');
           RematUseful = true;
           if (ReduceRPInRegion(It, DAG.LiveIns[LIRegion][Reg]))
-            return true;
+            return Remats.resolveInsertPos(&DAG.MRI, DAG.LIS);
         }
       }
 
       // If the instruction is not a live-in or live-out in any optimizable
       // region then there is no point in rematerializing it.
       if (!RematUseful) {
-        Rematerializations.pop_back();
         REMAT_DEBUG(dbgs() << "  No impact, not rematerializing instruction\n");
       } else {
         RematRegs.insert(Reg);
@@ -1927,11 +1916,11 @@ bool PreRARematStage::canIncreaseOccupancyOrReduceSpill() {
   if (IncreaseOccupancy) {
     // We were trying to increase occupancy but failed, abort the stage.
     REMAT_DEBUG(dbgs() << "Cannot increase occupancy\n");
-    Rematerializations.clear();
+    Remats.clear();
     return false;
   }
   REMAT_DEBUG(dbgs() << "Can reduce but not eliminate spilling\n");
-  return !Rematerializations.empty();
+  return !Remats.empty() && Remats.resolveInsertPos(&DAG.MRI, DAG.LIS);
 }
 
 void PreRARematStage::rematerialize() {
@@ -1943,18 +1932,22 @@ void PreRARematStage::rematerialize() {
   DenseSet<unsigned> RecomputeRP;
   SlotIndexes *Slots = DAG.LIS->getSlotIndexes();
 
+  // Remat the dependencies last
+  Remats.sort(&DAG.MRI);
+
   // Rematerialize all instructions.
-  for (auto &[DefMI, Remat] : Rematerializations) {
-    MachineBasicBlock::iterator InsertPos(Remat.UseMI);
+  for (auto &Remat : Remats) {
+    MachineInstr *DefMI = Remat.DefMI;
+    MachineBasicBlock::iterator InsertPos = Remat.InsertPos;
     Register Reg = DefMI->getOperand(0).getReg();
     unsigned SubReg = DefMI->getOperand(0).getSubReg();
-
     // Rematerialize DefMI to its use block.
     TII->reMaterialize(*InsertPos->getParent(), InsertPos, Reg, SubReg, *DefMI,
                        *DAG.TRI);
     Remat.RematMI = &*std::prev(InsertPos);
     Remat.RematMI->getOperand(0).setSubReg(SubReg);
     DAG.LIS->InsertMachineInstrInMaps(*Remat.RematMI);
+
 
     // Update region boundaries in regions we sinked from (remove defining MI)
     // and to (insert MI rematerialized in use block). Only then we can erase
@@ -2054,6 +2047,20 @@ void PreRARematStage::rematerialize() {
       UpdateLiveRange(SubRange);
     }
   }
+  for (auto &Remat : reverse(Remats)) {
+      if (Remat.HasDependency) {
+      for (auto &ROp : Remat.RematMI->operands()) {
+        if (!ROp.isReg() || !ROp.getReg() || !ROp.readsReg())
+          continue;
+        auto UseReg = ROp.getReg();
+        if (!UseReg.isVirtual())
+          continue;
+        
+        DAG.LIS->removeInterval(UseReg);
+        DAG.LIS->createAndComputeVirtRegInterval(UseReg);
+      }
+    }
+  }
 
   // All regions impacted by at least one rematerialization must be rescheduled.
   // Maximum pressure must also be recomputed for all regions where it changed
@@ -2066,6 +2073,7 @@ void PreRARematStage::rematerialize() {
       continue;
 
     GCNRegPressure RP;
+
     if (IsEmptyRegion) {
       RP = getRegPressure(DAG.MRI, DAG.LiveIns[I]);
     } else {
@@ -2140,10 +2148,11 @@ void PreRARematStage::finalizeGCNSchedStage() {
       static_cast<const SIInstrInfo *>(MF.getSubtarget().getInstrInfo());
 
   // Rollback the rematerializations.
-  for (const auto &[_, Remat] : Rematerializations) {
+  for (auto &Remat : Remats) {
     MachineInstr &RematMI = *Remat.RematMI;
-    MachineBasicBlock::iterator InsertPos(DAG.Regions[Remat.DefRegion].second);
     MachineBasicBlock *MBB = getRegionMBB(MF, DAG.Regions[Remat.DefRegion]);
+    MachineBasicBlock::iterator InsertPos(MBB->end());
+
     Register Reg = RematMI.getOperand(0).getReg();
     unsigned SubReg = RematMI.getOperand(0).getSubReg();
 
@@ -2156,6 +2165,7 @@ void PreRARematStage::finalizeGCNSchedStage() {
     DAG.LIS->InsertMachineInstrInMaps(*NewMI);
 
     // Erase rematerialized MI.
+    DAG.updateRegionBoundaries(DAG.Regions, RematMI, nullptr);
     RematMI.eraseFromParent();
     DAG.LIS->RemoveMachineInstrFromMaps(RematMI);
 
@@ -2166,6 +2176,7 @@ void PreRARematStage::finalizeGCNSchedStage() {
     // Re-add the register as a live-in in all regions it used to be one in.
     for (unsigned LIRegion : Remat.LiveInRegions)
       DAG.LiveIns[LIRegion].insert({Reg, RegMasks.at({LIRegion, Reg})});
+    
   }
 
   // Reset RP in all impacted regions.
