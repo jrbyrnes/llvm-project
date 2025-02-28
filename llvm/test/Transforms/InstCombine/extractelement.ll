@@ -340,14 +340,10 @@ define <4 x double> @invalid_extractelement(<2 x double> %a, <4 x double> %b, pt
 ; i32 is a desirable/supported type independent of data layout.
 
 define i8 @bitcast_scalar_supported_type_index0(i32 %x) {
-; ANYLE-LABEL: @bitcast_scalar_supported_type_index0(
-; ANYLE-NEXT:    [[R:%.*]] = trunc i32 [[X:%.*]] to i8
-; ANYLE-NEXT:    ret i8 [[R]]
-;
-; ANYBE-LABEL: @bitcast_scalar_supported_type_index0(
-; ANYBE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 24
-; ANYBE-NEXT:    [[R:%.*]] = trunc nuw i32 [[EXTELT_OFFSET]] to i8
-; ANYBE-NEXT:    ret i8 [[R]]
+; ANY-LABEL: @bitcast_scalar_supported_type_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i32 [[X:%.*]] to <4 x i8>
+; ANY-NEXT:    [[R:%.*]] = extractelement <4 x i8> [[V]], i64 0
+; ANY-NEXT:    ret i8 [[R]]
 ;
   %v = bitcast i32 %x to <4 x i8>
   %r = extractelement <4 x i8> %v, i8 0
@@ -355,15 +351,10 @@ define i8 @bitcast_scalar_supported_type_index0(i32 %x) {
 }
 
 define i8 @bitcast_scalar_supported_type_index2(i32 %x) {
-; ANYLE-LABEL: @bitcast_scalar_supported_type_index2(
-; ANYLE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 16
-; ANYLE-NEXT:    [[R:%.*]] = trunc i32 [[EXTELT_OFFSET]] to i8
-; ANYLE-NEXT:    ret i8 [[R]]
-;
-; ANYBE-LABEL: @bitcast_scalar_supported_type_index2(
-; ANYBE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 8
-; ANYBE-NEXT:    [[R:%.*]] = trunc i32 [[EXTELT_OFFSET]] to i8
-; ANYBE-NEXT:    ret i8 [[R]]
+; ANY-LABEL: @bitcast_scalar_supported_type_index2(
+; ANY-NEXT:    [[V:%.*]] = bitcast i32 [[X:%.*]] to <4 x i8>
+; ANY-NEXT:    [[R:%.*]] = extractelement <4 x i8> [[V]], i64 2
+; ANY-NEXT:    ret i8 [[R]]
 ;
   %v = bitcast i32 %x to <4 x i8>
   %r = extractelement <4 x i8> %v, i64 2
@@ -373,25 +364,10 @@ define i8 @bitcast_scalar_supported_type_index2(i32 %x) {
 ; i64 is legal based on data layout.
 
 define i4 @bitcast_scalar_legal_type_index3(i64 %x) {
-; LE64-LABEL: @bitcast_scalar_legal_type_index3(
-; LE64-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i64 [[X:%.*]], 12
-; LE64-NEXT:    [[R:%.*]] = trunc i64 [[EXTELT_OFFSET]] to i4
-; LE64-NEXT:    ret i4 [[R]]
-;
-; LE128-LABEL: @bitcast_scalar_legal_type_index3(
-; LE128-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <16 x i4>
-; LE128-NEXT:    [[R:%.*]] = extractelement <16 x i4> [[V]], i64 3
-; LE128-NEXT:    ret i4 [[R]]
-;
-; BE64-LABEL: @bitcast_scalar_legal_type_index3(
-; BE64-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i64 [[X:%.*]], 48
-; BE64-NEXT:    [[R:%.*]] = trunc i64 [[EXTELT_OFFSET]] to i4
-; BE64-NEXT:    ret i4 [[R]]
-;
-; BE128-LABEL: @bitcast_scalar_legal_type_index3(
-; BE128-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <16 x i4>
-; BE128-NEXT:    [[R:%.*]] = extractelement <16 x i4> [[V]], i64 3
-; BE128-NEXT:    ret i4 [[R]]
+; ANY-LABEL: @bitcast_scalar_legal_type_index3(
+; ANY-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <16 x i4>
+; ANY-NEXT:    [[R:%.*]] = extractelement <16 x i4> [[V]], i64 3
+; ANY-NEXT:    ret i4 [[R]]
 ;
 
   %v = bitcast i64 %x to <16 x i4>
@@ -402,25 +378,10 @@ define i4 @bitcast_scalar_legal_type_index3(i64 %x) {
 ; negative test - don't create a shift for an illegal type.
 
 define i8 @bitcast_scalar_illegal_type_index1(i128 %x) {
-; LE64-LABEL: @bitcast_scalar_illegal_type_index1(
-; LE64-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <16 x i8>
-; LE64-NEXT:    [[R:%.*]] = extractelement <16 x i8> [[V]], i64 1
-; LE64-NEXT:    ret i8 [[R]]
-;
-; LE128-LABEL: @bitcast_scalar_illegal_type_index1(
-; LE128-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i128 [[X:%.*]], 8
-; LE128-NEXT:    [[R:%.*]] = trunc i128 [[EXTELT_OFFSET]] to i8
-; LE128-NEXT:    ret i8 [[R]]
-;
-; BE64-LABEL: @bitcast_scalar_illegal_type_index1(
-; BE64-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <16 x i8>
-; BE64-NEXT:    [[R:%.*]] = extractelement <16 x i8> [[V]], i64 1
-; BE64-NEXT:    ret i8 [[R]]
-;
-; BE128-LABEL: @bitcast_scalar_illegal_type_index1(
-; BE128-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i128 [[X:%.*]], 112
-; BE128-NEXT:    [[R:%.*]] = trunc i128 [[EXTELT_OFFSET]] to i8
-; BE128-NEXT:    ret i8 [[R]]
+; ANY-LABEL: @bitcast_scalar_illegal_type_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <16 x i8>
+; ANY-NEXT:    [[R:%.*]] = extractelement <16 x i8> [[V]], i64 1
+; ANY-NEXT:    ret i8 [[R]]
 ;
   %v = bitcast i128 %x to <16 x i8>
   %r = extractelement <16 x i8> %v, i64 1
@@ -441,16 +402,10 @@ define i8 @bitcast_fp_index0(float %x) {
 }
 
 define half @bitcast_fp16vec_index0(i32 %x) {
-; ANYLE-LABEL: @bitcast_fp16vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i32 [[X:%.*]] to i16
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to half
-; ANYLE-NEXT:    ret half [[R]]
-;
-; ANYBE-LABEL: @bitcast_fp16vec_index0(
-; ANYBE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 16
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc nuw i32 [[EXTELT_OFFSET]] to i16
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to half
-; ANYBE-NEXT:    ret half [[R]]
+; ANY-LABEL: @bitcast_fp16vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i32 [[X:%.*]] to <2 x half>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x half> [[V]], i64 0
+; ANY-NEXT:    ret half [[R]]
 ;
   %v = bitcast i32 %x to <2 x half>
   %r = extractelement <2 x half> %v, i8 0
@@ -458,16 +413,10 @@ define half @bitcast_fp16vec_index0(i32 %x) {
 }
 
 define half @bitcast_fp16vec_index1(i32 %x) {
-; ANYLE-LABEL: @bitcast_fp16vec_index1(
-; ANYLE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 16
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc nuw i32 [[EXTELT_OFFSET]] to i16
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to half
-; ANYLE-NEXT:    ret half [[R]]
-;
-; ANYBE-LABEL: @bitcast_fp16vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i32 [[X:%.*]] to i16
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to half
-; ANYBE-NEXT:    ret half [[R]]
+; ANY-LABEL: @bitcast_fp16vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i32 [[X:%.*]] to <2 x half>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x half> [[V]], i64 1
+; ANY-NEXT:    ret half [[R]]
 ;
   %v = bitcast i32 %x to <2 x half>
   %r = extractelement <2 x half> %v, i8 1
@@ -475,16 +424,10 @@ define half @bitcast_fp16vec_index1(i32 %x) {
 }
 
 define bfloat @bitcast_bfp16vec_index0(i32 %x) {
-; ANYLE-LABEL: @bitcast_bfp16vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i32 [[X:%.*]] to i16
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to bfloat
-; ANYLE-NEXT:    ret bfloat [[R]]
-;
-; ANYBE-LABEL: @bitcast_bfp16vec_index0(
-; ANYBE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 16
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc nuw i32 [[EXTELT_OFFSET]] to i16
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to bfloat
-; ANYBE-NEXT:    ret bfloat [[R]]
+; ANY-LABEL: @bitcast_bfp16vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i32 [[X:%.*]] to <2 x bfloat>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x bfloat> [[V]], i64 0
+; ANY-NEXT:    ret bfloat [[R]]
 ;
   %v = bitcast i32 %x to <2 x bfloat>
   %r = extractelement <2 x bfloat> %v, i8 0
@@ -492,16 +435,10 @@ define bfloat @bitcast_bfp16vec_index0(i32 %x) {
 }
 
 define bfloat @bitcast_bfp16vec_index1(i32 %x) {
-; ANYLE-LABEL: @bitcast_bfp16vec_index1(
-; ANYLE-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i32 [[X:%.*]], 16
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc nuw i32 [[EXTELT_OFFSET]] to i16
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to bfloat
-; ANYLE-NEXT:    ret bfloat [[R]]
-;
-; ANYBE-LABEL: @bitcast_bfp16vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i32 [[X:%.*]] to i16
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i16 [[TMP1]] to bfloat
-; ANYBE-NEXT:    ret bfloat [[R]]
+; ANY-LABEL: @bitcast_bfp16vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i32 [[X:%.*]] to <2 x bfloat>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x bfloat> [[V]], i64 1
+; ANY-NEXT:    ret bfloat [[R]]
 ;
   %v = bitcast i32 %x to <2 x bfloat>
   %r = extractelement <2 x bfloat> %v, i8 1
@@ -509,21 +446,10 @@ define bfloat @bitcast_bfp16vec_index1(i32 %x) {
 }
 
 define float @bitcast_fp32vec_index0(i64 %x) {
-; ANYLE-LABEL: @bitcast_fp32vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i64 [[X:%.*]] to i32
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i32 [[TMP1]] to float
-; ANYLE-NEXT:    ret float [[R]]
-;
-; BE64-LABEL: @bitcast_fp32vec_index0(
-; BE64-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i64 [[X:%.*]], 32
-; BE64-NEXT:    [[TMP1:%.*]] = trunc nuw i64 [[EXTELT_OFFSET]] to i32
-; BE64-NEXT:    [[R:%.*]] = bitcast i32 [[TMP1]] to float
-; BE64-NEXT:    ret float [[R]]
-;
-; BE128-LABEL: @bitcast_fp32vec_index0(
-; BE128-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <2 x float>
-; BE128-NEXT:    [[R:%.*]] = extractelement <2 x float> [[V]], i64 0
-; BE128-NEXT:    ret float [[R]]
+; ANY-LABEL: @bitcast_fp32vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <2 x float>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x float> [[V]], i64 0
+; ANY-NEXT:    ret float [[R]]
 ;
   %v = bitcast i64 %x to <2 x float>
   %r = extractelement <2 x float> %v, i8 0
@@ -531,21 +457,10 @@ define float @bitcast_fp32vec_index0(i64 %x) {
 }
 
 define float @bitcast_fp32vec_index1(i64 %x) {
-; LE64-LABEL: @bitcast_fp32vec_index1(
-; LE64-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i64 [[X:%.*]], 32
-; LE64-NEXT:    [[TMP1:%.*]] = trunc nuw i64 [[EXTELT_OFFSET]] to i32
-; LE64-NEXT:    [[R:%.*]] = bitcast i32 [[TMP1]] to float
-; LE64-NEXT:    ret float [[R]]
-;
-; LE128-LABEL: @bitcast_fp32vec_index1(
-; LE128-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <2 x float>
-; LE128-NEXT:    [[R:%.*]] = extractelement <2 x float> [[V]], i64 1
-; LE128-NEXT:    ret float [[R]]
-;
-; ANYBE-LABEL: @bitcast_fp32vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i64 [[X:%.*]] to i32
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i32 [[TMP1]] to float
-; ANYBE-NEXT:    ret float [[R]]
+; ANY-LABEL: @bitcast_fp32vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <2 x float>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x float> [[V]], i64 1
+; ANY-NEXT:    ret float [[R]]
 ;
   %v = bitcast i64 %x to <2 x float>
   %r = extractelement <2 x float> %v, i8 1
@@ -563,21 +478,10 @@ define double @bitcast_fp64vec64_index0(i64 %x) {
 }
 
 define double @bitcast_fp64vec_index0(i128 %x) {
-; ANYLE-LABEL: @bitcast_fp64vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i128 [[X:%.*]] to i64
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i64 [[TMP1]] to double
-; ANYLE-NEXT:    ret double [[R]]
-;
-; BE64-LABEL: @bitcast_fp64vec_index0(
-; BE64-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <2 x double>
-; BE64-NEXT:    [[R:%.*]] = extractelement <2 x double> [[V]], i64 0
-; BE64-NEXT:    ret double [[R]]
-;
-; BE128-LABEL: @bitcast_fp64vec_index0(
-; BE128-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i128 [[X:%.*]], 64
-; BE128-NEXT:    [[TMP1:%.*]] = trunc nuw i128 [[EXTELT_OFFSET]] to i64
-; BE128-NEXT:    [[R:%.*]] = bitcast i64 [[TMP1]] to double
-; BE128-NEXT:    ret double [[R]]
+; ANY-LABEL: @bitcast_fp64vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <2 x double>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x double> [[V]], i64 0
+; ANY-NEXT:    ret double [[R]]
 ;
   %v = bitcast i128 %x to <2 x double>
   %r = extractelement <2 x double> %v, i8 0
@@ -585,21 +489,10 @@ define double @bitcast_fp64vec_index0(i128 %x) {
 }
 
 define double @bitcast_fp64vec_index1(i128 %x) {
-; LE64-LABEL: @bitcast_fp64vec_index1(
-; LE64-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <2 x double>
-; LE64-NEXT:    [[R:%.*]] = extractelement <2 x double> [[V]], i64 1
-; LE64-NEXT:    ret double [[R]]
-;
-; LE128-LABEL: @bitcast_fp64vec_index1(
-; LE128-NEXT:    [[EXTELT_OFFSET:%.*]] = lshr i128 [[X:%.*]], 64
-; LE128-NEXT:    [[TMP1:%.*]] = trunc nuw i128 [[EXTELT_OFFSET]] to i64
-; LE128-NEXT:    [[R:%.*]] = bitcast i64 [[TMP1]] to double
-; LE128-NEXT:    ret double [[R]]
-;
-; ANYBE-LABEL: @bitcast_fp64vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i128 [[X:%.*]] to i64
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i64 [[TMP1]] to double
-; ANYBE-NEXT:    ret double [[R]]
+; ANY-LABEL: @bitcast_fp64vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i128 [[X:%.*]] to <2 x double>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x double> [[V]], i64 1
+; ANY-NEXT:    ret double [[R]]
 ;
   %v = bitcast i128 %x to <2 x double>
   %r = extractelement <2 x double> %v, i8 1
@@ -609,15 +502,10 @@ define double @bitcast_fp64vec_index1(i128 %x) {
 ; negative test - input integer should be legal
 
 define x86_fp80 @bitcast_x86fp80vec_index0(i160 %x) {
-; ANYLE-LABEL: @bitcast_x86fp80vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i160 [[X:%.*]] to i80
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i80 [[TMP1]] to x86_fp80
-; ANYLE-NEXT:    ret x86_fp80 [[R]]
-;
-; ANYBE-LABEL: @bitcast_x86fp80vec_index0(
-; ANYBE-NEXT:    [[V:%.*]] = bitcast i160 [[X:%.*]] to <2 x x86_fp80>
-; ANYBE-NEXT:    [[R:%.*]] = extractelement <2 x x86_fp80> [[V]], i64 0
-; ANYBE-NEXT:    ret x86_fp80 [[R]]
+; ANY-LABEL: @bitcast_x86fp80vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i160 [[X:%.*]] to <2 x x86_fp80>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x x86_fp80> [[V]], i64 0
+; ANY-NEXT:    ret x86_fp80 [[R]]
 ;
   %v = bitcast i160 %x to <2 x x86_fp80>
   %r = extractelement <2 x x86_fp80> %v, i8 0
@@ -627,15 +515,10 @@ define x86_fp80 @bitcast_x86fp80vec_index0(i160 %x) {
 ; negative test - input integer should be legal
 
 define x86_fp80 @bitcast_x86fp80vec_index1(i160 %x) {
-; ANYLE-LABEL: @bitcast_x86fp80vec_index1(
-; ANYLE-NEXT:    [[V:%.*]] = bitcast i160 [[X:%.*]] to <2 x x86_fp80>
-; ANYLE-NEXT:    [[R:%.*]] = extractelement <2 x x86_fp80> [[V]], i64 1
-; ANYLE-NEXT:    ret x86_fp80 [[R]]
-;
-; ANYBE-LABEL: @bitcast_x86fp80vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i160 [[X:%.*]] to i80
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i80 [[TMP1]] to x86_fp80
-; ANYBE-NEXT:    ret x86_fp80 [[R]]
+; ANY-LABEL: @bitcast_x86fp80vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i160 [[X:%.*]] to <2 x x86_fp80>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x x86_fp80> [[V]], i64 1
+; ANY-NEXT:    ret x86_fp80 [[R]]
 ;
   %v = bitcast i160 %x to <2 x x86_fp80>
   %r = extractelement <2 x x86_fp80> %v, i8 1
@@ -645,15 +528,10 @@ define x86_fp80 @bitcast_x86fp80vec_index1(i160 %x) {
 ; negative test - input integer should be legal
 
 define fp128 @bitcast_fp128vec_index0(i256 %x) {
-; ANYLE-LABEL: @bitcast_fp128vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i256 [[X:%.*]] to i128
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i128 [[TMP1]] to fp128
-; ANYLE-NEXT:    ret fp128 [[R]]
-;
-; ANYBE-LABEL: @bitcast_fp128vec_index0(
-; ANYBE-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x fp128>
-; ANYBE-NEXT:    [[R:%.*]] = extractelement <2 x fp128> [[V]], i64 0
-; ANYBE-NEXT:    ret fp128 [[R]]
+; ANY-LABEL: @bitcast_fp128vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x fp128>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x fp128> [[V]], i64 0
+; ANY-NEXT:    ret fp128 [[R]]
 ;
   %v = bitcast i256 %x to <2 x fp128>
   %r = extractelement <2 x fp128> %v, i8 0
@@ -663,15 +541,10 @@ define fp128 @bitcast_fp128vec_index0(i256 %x) {
 ; negative test - input integer should be legal
 
 define fp128 @bitcast_fp128vec_index1(i256 %x) {
-; ANYLE-LABEL: @bitcast_fp128vec_index1(
-; ANYLE-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x fp128>
-; ANYLE-NEXT:    [[R:%.*]] = extractelement <2 x fp128> [[V]], i64 1
-; ANYLE-NEXT:    ret fp128 [[R]]
-;
-; ANYBE-LABEL: @bitcast_fp128vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i256 [[X:%.*]] to i128
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i128 [[TMP1]] to fp128
-; ANYBE-NEXT:    ret fp128 [[R]]
+; ANY-LABEL: @bitcast_fp128vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x fp128>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x fp128> [[V]], i64 1
+; ANY-NEXT:    ret fp128 [[R]]
 ;
   %v = bitcast i256 %x to <2 x fp128>
   %r = extractelement <2 x fp128> %v, i8 1
@@ -681,15 +554,10 @@ define fp128 @bitcast_fp128vec_index1(i256 %x) {
 ; negative test - input integer should be legal
 
 define ppc_fp128 @bitcast_ppcfp128vec_index0(i256 %x) {
-; ANYLE-LABEL: @bitcast_ppcfp128vec_index0(
-; ANYLE-NEXT:    [[TMP1:%.*]] = trunc i256 [[X:%.*]] to i128
-; ANYLE-NEXT:    [[R:%.*]] = bitcast i128 [[TMP1]] to ppc_fp128
-; ANYLE-NEXT:    ret ppc_fp128 [[R]]
-;
-; ANYBE-LABEL: @bitcast_ppcfp128vec_index0(
-; ANYBE-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x ppc_fp128>
-; ANYBE-NEXT:    [[R:%.*]] = extractelement <2 x ppc_fp128> [[V]], i64 0
-; ANYBE-NEXT:    ret ppc_fp128 [[R]]
+; ANY-LABEL: @bitcast_ppcfp128vec_index0(
+; ANY-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x ppc_fp128>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x ppc_fp128> [[V]], i64 0
+; ANY-NEXT:    ret ppc_fp128 [[R]]
 ;
   %v = bitcast i256 %x to <2 x ppc_fp128>
   %r = extractelement <2 x ppc_fp128> %v, i8 0
@@ -699,15 +567,10 @@ define ppc_fp128 @bitcast_ppcfp128vec_index0(i256 %x) {
 ; negative test -input integer should be legal
 
 define ppc_fp128 @bitcast_ppcfp128vec_index1(i256 %x) {
-; ANYLE-LABEL: @bitcast_ppcfp128vec_index1(
-; ANYLE-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x ppc_fp128>
-; ANYLE-NEXT:    [[R:%.*]] = extractelement <2 x ppc_fp128> [[V]], i64 1
-; ANYLE-NEXT:    ret ppc_fp128 [[R]]
-;
-; ANYBE-LABEL: @bitcast_ppcfp128vec_index1(
-; ANYBE-NEXT:    [[TMP1:%.*]] = trunc i256 [[X:%.*]] to i128
-; ANYBE-NEXT:    [[R:%.*]] = bitcast i128 [[TMP1]] to ppc_fp128
-; ANYBE-NEXT:    ret ppc_fp128 [[R]]
+; ANY-LABEL: @bitcast_ppcfp128vec_index1(
+; ANY-NEXT:    [[V:%.*]] = bitcast i256 [[X:%.*]] to <2 x ppc_fp128>
+; ANY-NEXT:    [[R:%.*]] = extractelement <2 x ppc_fp128> [[V]], i64 1
+; ANY-NEXT:    ret ppc_fp128 [[R]]
 ;
   %v = bitcast i256 %x to <2 x ppc_fp128>
   %r = extractelement <2 x ppc_fp128> %v, i8 1
@@ -744,21 +607,11 @@ define i8 @bitcast_scalar_index0_use(i64 %x) {
 }
 
 define i1 @bit_extract_cmp(i64 %x) {
-; LE64-LABEL: @bit_extract_cmp(
-; LE64-NEXT:    [[TMP1:%.*]] = and i64 [[X:%.*]], 9223372032559808512
-; LE64-NEXT:    [[R:%.*]] = icmp eq i64 [[TMP1]], 0
-; LE64-NEXT:    ret i1 [[R]]
-;
-; LE128-LABEL: @bit_extract_cmp(
-; LE128-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <2 x float>
-; LE128-NEXT:    [[E:%.*]] = extractelement <2 x float> [[V]], i64 1
-; LE128-NEXT:    [[R:%.*]] = fcmp oeq float [[E]], 0.000000e+00
-; LE128-NEXT:    ret i1 [[R]]
-;
-; ANYBE-LABEL: @bit_extract_cmp(
-; ANYBE-NEXT:    [[TMP1:%.*]] = and i64 [[X:%.*]], 2147483647
-; ANYBE-NEXT:    [[R:%.*]] = icmp eq i64 [[TMP1]], 0
-; ANYBE-NEXT:    ret i1 [[R]]
+; ANY-LABEL: @bit_extract_cmp(
+; ANY-NEXT:    [[V:%.*]] = bitcast i64 [[X:%.*]] to <2 x float>
+; ANY-NEXT:    [[E:%.*]] = extractelement <2 x float> [[V]], i64 1
+; ANY-NEXT:    [[R:%.*]] = fcmp oeq float [[E]], 0.000000e+00
+; ANY-NEXT:    ret i1 [[R]]
 ;
   %v = bitcast i64 %x to <2 x float>
   %e = extractelement <2 x float> %v, i8 1
@@ -925,3 +778,8 @@ define float @crash_4b8320(<2 x float> %i1, float %i12) {
   %i29 = extractelement <4 x float> %i26, i64 0
   ret float %i29
 }
+;; NOTE: These prefixes are unused and the list is autogenerated. Do not add tests below this line:
+; BE128: {{.*}}
+; BE64: {{.*}}
+; LE128: {{.*}}
+; LE64: {{.*}}

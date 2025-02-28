@@ -205,17 +205,35 @@ Instruction *InstCombinerImpl::foldBitcastExtElt(ExtractElementInst &Ext) {
     if (IsBigEndian)
       ExtIndexC = NumElts.getKnownMinValue() - 1 - ExtIndexC;
     unsigned ShiftAmountC = ExtIndexC * DestWidth;
-    if ((!ShiftAmountC ||
-         isDesirableIntType(X->getType()->getPrimitiveSizeInBits())) &&
-        Ext.getVectorOperand()->hasOneUse()) {
-      if (ShiftAmountC)
-        X = Builder.CreateLShr(X, ShiftAmountC, "extelt.offset");
-      if (DestTy->isFloatingPointTy()) {
-        Type *DstIntTy = IntegerType::getIntNTy(X->getContext(), DestWidth);
-        Value *Trunc = Builder.CreateTrunc(X, DstIntTy);
-        return new BitCastInst(Trunc, DestTy);
+    if (!ShiftAmountC ||
+        (isDesirableIntType(X->getType()->getPrimitiveSizeInBits()) &&
+         Ext.getVectorOperand()->hasOneUse())) {
+      Use *SingleUse =
+          &*dyn_cast<Instruction>(Ext.getVectorOperand())->use_begin();
+      bool PreferScalar = true;
+      if (SingleUse) {
+        if (isa<ShuffleVectorInst>(SingleUse->get()) ||
+            isa<InsertElementInst>(SingleUse->get()) ||
+            isa<BitCastInst>(SingleUse->get())) {
+          Instruction *UseInst = cast<Instruction>(SingleUse->get());
+          VectorType *VTy = dyn_cast<VectorType>(UseInst->getType());
+          if (VTy && VTy->getElementCount().getKnownMinValue() > 1) {
+            // Prefer to keep the vector if we have vectorized uses
+            PreferScalar = false;
+          }
+        }
       }
-      return new TruncInst(X, DestTy);
+
+      if (PreferScalar) {
+        if (ShiftAmountC)
+          X = Builder.CreateLShr(X, ShiftAmountC, "extelt.offset");
+        if (DestTy->isFloatingPointTy()) {
+          Type *DstIntTy = IntegerType::getIntNTy(X->getContext(), DestWidth);
+          Value *Trunc = Builder.CreateTrunc(X, DstIntTy);
+          return new BitCastInst(Trunc, DestTy);
+        }
+        return new TruncInst(X, DestTy);
+      }
     }
   }
 
