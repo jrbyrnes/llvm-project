@@ -618,6 +618,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
 
     MBBRegionsVector MBBRegions;
     getSchedRegions(&*MBB, MBBRegions, Scheduler.doMBBSchedRegionsTopDown());
+    bool ScheduleSingleMI = Scheduler.shouldScheduleSingleMIRegions();
     for (const SchedRegion &R : MBBRegions) {
       MachineBasicBlock::iterator I = R.RegionBegin;
       MachineBasicBlock::iterator RegionEnd = R.RegionEnd;
@@ -627,8 +628,9 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
       // it. Perhaps it still needs to be bundled.
       Scheduler.enterRegion(&*MBB, I, RegionEnd, NumRegionInstrs);
 
-      // Skip empty scheduling regions (0 or 1 schedulable instructions).
-      if (I == RegionEnd || I == std::prev(RegionEnd)) {
+      // Skip empty scheduling regions and, conditionally, regions with a single
+      // MI.
+      if (I == RegionEnd || (!ScheduleSingleMI && I == std::prev(RegionEnd))) {
         // Close the current region. Bundle the terminator if needed.
         // This invalidates 'RegionEnd' and 'I'.
         Scheduler.exitRegion();

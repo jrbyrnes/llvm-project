@@ -295,11 +295,10 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   /// If necessary, updates a region's boundaries following insertion ( \p NewMI
   /// != nullptr) or removal ( \p NewMI == nullptr) of a \p MI in the region.
   /// For an MI removal, this must be called before the MI is actually erased
-  /// from its parent MBB. If a region is left empty by a removal, both
-  /// boundaries are set to the last removed MI's MBB's end.
-  void
-  updateRegionBoundaries(SmallVectorImpl<RegionBoundaries> &RegionBoundaries,
-                         MachineBasicBlock::iterator MI, MachineInstr *NewMI);
+  /// from its parent MBB.
+  void updateRegionBoundaries(RegionBoundaries &RegionBounds,
+                              MachineBasicBlock::iterator MI,
+                              MachineInstr *NewMI);
 
   void runSchedStages();
 
@@ -463,8 +462,6 @@ private:
     /// Set of regions in which the rematerializable instruction's defined
     /// register is a live-in.
     SmallDenseSet<unsigned, 4> LiveInRegions;
-    /// Region containing the rematerializable instruction.
-    unsigned DefRegion;
 
     /// The position at which to insert the remat.
     MachineBasicBlock::iterator InsertPos;
@@ -611,6 +608,12 @@ private:
 
   RematInstructions Remats;
 
+    RematInstruction(MachineInstr *UseMI) : UseMI(UseMI) {}
+  };
+
+  /// Maps all MIs to their parent region. MI terminators are considered to be
+  /// outside the region they delimitate, and as such are not stored in the map.
+  DenseMap<MachineInstr *, unsigned> MIRegion;
   /// Collect regions whose live-ins or register pressure will change due to
   /// rematerializations.
   DenseMap<unsigned, GCNRegPressure> ImpactedRegions;
