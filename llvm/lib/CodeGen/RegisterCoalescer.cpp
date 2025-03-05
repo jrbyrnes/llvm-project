@@ -440,6 +440,14 @@ INITIALIZE_PASS_END(RegisterCoalescerLegacy, "register-coalescer",
   return true;
 }
 
+static cl::opt<bool> UseNew("inflate-and-coalesce",
+                                   cl::desc("inflate and coalesce"),
+                                   cl::init(true), cl::Hidden);
+
+static cl::opt<bool> UseLate("late-coalesce",
+                                   cl::desc("inflate and coalesce"),
+                                   cl::init(false), cl::Hidden);
+
 /// Return true if this block should be vacated by the coalescer to eliminate
 /// branches. The important cases to handle in the coalescer are critical edges
 /// split during phi elimination which contain only copies. Simple blocks that
@@ -477,8 +485,8 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
     Flipped = true;
   }
 
-  const MachineRegisterInfo &MRI = MI->getMF()->getRegInfo();
-  const TargetRegisterClass *SrcRC = MRI.getRegClass(Src);
+  MachineRegisterInfo *MRI = const_cast<MachineRegisterInfo *>(&MI->getMF()->getRegInfo());
+  const TargetRegisterClass *SrcRC = MRI->getRegClass(Src);
 
   if (Dst.isPhysical()) {
     // Eliminate DstSub on a physreg.
@@ -499,7 +507,14 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
     }
   } else {
     // Both registers are virtual.
-    const TargetRegisterClass *DstRC = MRI.getRegClass(Dst);
+    const TargetRegisterClass *DstRC = MRI->getRegClass(Dst);
+
+    auto recomputeRegClasses = [&MRI](Register &Src, Register &Dst) {
+      bool Success = false;
+      Success = MRI->recomputeRegClass(Src);
+      Success |= MRI->recomputeRegClass(Dst);
+      return Success;
+    };
 
     // Both registers have subreg indices.
     if (SrcSub && DstSub) {
@@ -509,19 +524,44 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
 
       NewRC = TRI.getCommonSuperRegClass(SrcRC, SrcSub, DstRC, DstSub, SrcIdx,
                                          DstIdx);
-      if (!NewRC)
-        return false;
+      if (!NewRC) {
+        if (!UseNew)
+          return false;
+        if (recomputeRegClasses(Src, Dst)) {
+          SrcRC = MRI->getRegClass(Src);
+          DstRC = MRI->getRegClass(Dst);
+          NewRC = TRI.getCommonSuperRegClass(SrcRC, SrcSub, DstRC, DstSub, SrcIdx,
+                                            DstIdx);
+        }
+        if (!NewRC)
+          return false;
+      }
     } else if (DstSub) {
       // SrcReg will be merged with a sub-register of DstReg.
       SrcIdx = DstSub;
       NewRC = TRI.getMatchingSuperRegClass(DstRC, SrcRC, DstSub);
+      if (UseNew && !NewRC && recomputeRegClasses(Src, Dst)) {
+        SrcRC = MRI->getRegClass(Src);
+        DstRC = MRI->getRegClass(Dst);
+        NewRC = TRI.getMatchingSuperRegClass(SrcRC, DstRC, DstSub);
+      }
     } else if (SrcSub) {
       // DstReg will be merged with a sub-register of SrcReg.
       DstIdx = SrcSub;
       NewRC = TRI.getMatchingSuperRegClass(SrcRC, DstRC, SrcSub);
+      if (UseNew && !NewRC && recomputeRegClasses(Src, Dst)) {
+        SrcRC = MRI->getRegClass(Src);
+        DstRC = MRI->getRegClass(Dst);
+        NewRC = TRI.getMatchingSuperRegClass(SrcRC, DstRC, SrcSub);
+      }
     } else {
       // This is a straight copy without sub-registers.
       NewRC = TRI.getCommonSubClass(DstRC, SrcRC);
+      if (UseNew && !NewRC && recomputeRegClasses(Src, Dst)) {
+        SrcRC = MRI->getRegClass(Src);
+        DstRC = MRI->getRegClass(Dst);
+        NewRC = TRI.getCommonSubClass(DstRC, SrcRC);
+      }
     }
 
     // The combined constraint may be impossible to satisfy.
@@ -4054,6 +4094,7 @@ void RegisterCoalescer::lateLiveIntervalUpdate() {
 bool RegisterCoalescer::copyCoalesceWorkList(
     MutableArrayRef<MachineInstr *> CurrList) {
   bool Progress = false;
+
   SmallPtrSet<MachineInstr *, 4> CurrentErasedInstrs;
   for (MachineInstr *&MI : CurrList) {
     if (!MI)
@@ -4272,7 +4313,7 @@ bool RegisterCoalescerLegacy::runOnMachineFunction(MachineFunction &MF) {
 bool RegisterCoalescer::run(MachineFunction &fn) {
   LLVM_DEBUG(dbgs() << "********** REGISTER COALESCER **********\n"
                     << "********** Function: " << fn.getName() << '\n');
-
+  
   // Variables changed between a setjmp and a longjump can have undefined value
   // after the longjmp. This behaviour can be observed if such a variable is
   // spilled, so longjmp won't restore the value in the spill slot.
@@ -4361,6 +4402,17 @@ bool RegisterCoalescer::run(MachineFunction &fn) {
       }
     }
   }
+
+  if (UseLate) {
+    WorkList.clear();
+    LocalWorkList.clear();
+    // Join (coalesce) intervals if requested.
+    if (UseNew && EnableJoining)
+      joinAllIntervals();
+  }
+
+  //errs() << "After coalesce\n";
+  //MF->dump();
 
   // After coalescing, update any PHIs that are being tracked by debug-info
   // with their new VReg locations.

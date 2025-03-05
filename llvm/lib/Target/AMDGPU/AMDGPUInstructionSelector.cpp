@@ -3578,6 +3578,7 @@ bool AMDGPUInstructionSelector::selectBVHIntersectRayIntrinsic(
 // FIXME: This should be removed and let the patterns select. We just need the
 // AGPR/VGPR combination versions.
 bool AMDGPUInstructionSelector::selectSMFMACIntrin(MachineInstr &MI) const {
+  errs() << "Select SMFMACIntrin\n";
   unsigned Opc;
   switch (cast<GIntrinsic>(MI).getIntrinsicID()) {
   case Intrinsic::amdgcn_smfmac_f32_16x16x32_f16:
@@ -3628,9 +3629,11 @@ bool AMDGPUInstructionSelector::selectSMFMACIntrin(MachineInstr &MI) const {
   case Intrinsic::amdgcn_smfmac_f32_32x32x32_f16:
     Opc = AMDGPU::V_SMFMAC_F32_32X32X32_F16_e64;
     break;
-  case Intrinsic::amdgcn_smfmac_f32_16x16x64_bf16:
+  case Intrinsic::amdgcn_smfmac_f32_16x16x64_bf16: {
+    errs() << "In AMDGPUInstrucitonSelector::selectSMFMACIntrin\n";
     Opc = AMDGPU::V_SMFMAC_F32_16X16X64_BF16_e64;
     break;
+  }
   case Intrinsic::amdgcn_smfmac_f32_32x32x32_bf16:
     Opc = AMDGPU::V_SMFMAC_F32_32X32X32_BF16_e64;
     break;
