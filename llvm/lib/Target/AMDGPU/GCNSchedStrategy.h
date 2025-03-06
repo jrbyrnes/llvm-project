@@ -471,11 +471,13 @@ private:
 
     bool HasDependency = false;
 
+    unsigned DefRegion;
+
     RematInstruction(MachineInstr *DefMI, unsigned DefRegion, MachineInstr *UseMI)
-        : DefMI(DefMI), UseMI(UseMI), DefRegion(DefRegion), InsertPos(UseMI) {}
+        : DefMI(DefMI), UseMI(UseMI), InsertPos(UseMI), DefRegion(DefRegion)  {}
     
         RematInstruction(MachineInstr *DefMI, unsigned DefRegion, MachineInstr *UseMI, MachineBasicBlock::iterator InsertPos)
-        : DefMI(DefMI), UseMI(UseMI), DefRegion(DefRegion), InsertPos(InsertPos) {}
+        : DefMI(DefMI), UseMI(UseMI), InsertPos(UseMI), DefRegion(DefRegion) {}
   };
 
   class RematInstructions {
@@ -604,13 +606,10 @@ private:
       }
       return FixedPoint;
     }
-  };
 
+  };
+  
   RematInstructions Remats;
-
-    RematInstruction(MachineInstr *UseMI) : UseMI(UseMI) {}
-  };
-
   /// Maps all MIs to their parent region. MI terminators are considered to be
   /// outside the region they delimitate, and as such are not stored in the map.
   DenseMap<MachineInstr *, unsigned> MIRegion;

@@ -533,7 +533,6 @@ bool GCNDownwardRPTracker::advanceBeforeNext(MachineInstr *MI,
 
   // Remove dead registers or mask bits.
   SmallSet<Register, 8> SeenRegs;
-  //errs() << "Advance before next: "; CurrMI->dump();
   for (auto &MO : CurrMI->operands()) {
     if (!MO.isReg() || !MO.getReg().isVirtual())
       continue;
@@ -551,7 +550,6 @@ bool GCNDownwardRPTracker::advanceBeforeNext(MachineInstr *MI,
           if (It == LiveRegs.end()) {
             It = LiveRegs.find(MO.getReg());
             if (It == LiveRegs.end()) {
-              errs() << "BadReg: " << printReg(MO.getReg()) << "\n";
               llvm_unreachable("register isn't live");
             }
           }
@@ -565,7 +563,6 @@ bool GCNDownwardRPTracker::advanceBeforeNext(MachineInstr *MI,
     } else if (!LI.liveAt(SI)) {
       auto It = LiveRegs.find(MO.getReg());
       if (It == LiveRegs.end()) {
-        errs() << "BadReg: " << printReg(MO.getReg()) << "\n";
         llvm_unreachable("register isn't live");
       }
       CurPressure.inc(MO.getReg(), It->second, LaneBitmask::getNone(), *MRI);

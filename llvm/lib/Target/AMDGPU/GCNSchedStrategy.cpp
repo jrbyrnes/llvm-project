@@ -1954,6 +1954,11 @@ void PreRARematStage::rematerialize() {
     unsigned SubReg = DefMI->getOperand(0).getSubReg();
     unsigned DefRegion = MIRegion.at(DefMI);
 
+    // FIXME -- 
+
+//    bool IsFirst = DAG.Regions[UseRegion->second].first == InsertPos;
+
+
     // Rematerialize DefMI to its use block.
     TII->reMaterialize(*InsertPos->getParent(), InsertPos, Reg, SubReg, *DefMI,
                        *DAG.TRI);
@@ -1962,15 +1967,19 @@ void PreRARematStage::rematerialize() {
     DAG.LIS->InsertMachineInstrInMaps(*Remat.RematMI);
 
 
-    // Update region boundaries in regions we sinked from (remove defining MI)
+      // Update region boundaries in regions we sinked from (remove defining MI)
     // and to (insert MI rematerialized in use block). Only then we can erase
     // the original MI.
+
     DAG.updateRegionBoundaries(DAG.Regions[DefRegion], DefMI, nullptr);
-    auto UseRegion = MIRegion.find(Remat.UseMI);
+    auto UseRegion = MIRegion.find(&*InsertPos);
     if (UseRegion != MIRegion.end()) {
       DAG.updateRegionBoundaries(DAG.Regions[UseRegion->second], InsertPos,
                                  Remat.RematMI);
     }
+
+
+
     DefMI->eraseFromParent();
     DAG.LIS->RemoveMachineInstrFromMaps(*DefMI);
 
@@ -2163,16 +2172,25 @@ void PreRARematStage::finalizeGCNSchedStage() {
   REMAT_DEBUG(dbgs() << "Rollbacking all rematerializations\n");
   const auto *TII =
       static_cast<const SIInstrInfo *>(MF.getSubtarget().getInstrInfo());
-
+  
   // Rollback the rematerializations.
   for (auto &Remat : Remats) {
     MachineInstr &RematMI = *Remat.RematMI;
-    unsigned DefRegion = MIRegion.at(DefMI);
+    unsigned DefRegion = MIRegion.at(Remat.DefMI);
     MachineBasicBlock *MBB = getRegionMBB(MF, DAG.Regions[DefRegion]);
     MachineBasicBlock::iterator InsertPos(MBB->end());
 
     Register Reg = RematMI.getOperand(0).getReg();
     unsigned SubReg = RematMI.getOperand(0).getSubReg();
+    
+    auto UseRegion = MIRegion.find(&*Remat.InsertPos);
+    if (UseRegion != MIRegion.end()) {
+      DAG.updateRegionBoundaries(DAG.Regions[UseRegion->second], RematMI,
+                                 nullptr);
+    }
+
+    bool IsFirst = DAG.Regions[DefRegion].first == InsertPos;
+
 
     // Re-rematerialize MI at the end of its original region. Note that it may
     // not be rematerialized exactly in the same position as originally within
@@ -2182,15 +2200,11 @@ void PreRARematStage::finalizeGCNSchedStage() {
     NewMI->getOperand(0).setSubReg(SubReg);
     DAG.LIS->InsertMachineInstrInMaps(*NewMI);
 
-    auto UseRegion = MIRegion.find(Remat.UseMI);
-    if (UseRegion != MIRegion.end()) {
-      DAG.updateRegionBoundaries(DAG.Regions[UseRegion->second], RematMI,
-                                 nullptr);
+    if (IsFirst) {
+      DAG.Regions[DefRegion].first = NewMI;
     }
-    DAG.updateRegionBoundaries(DAG.Regions[DefRegion], InsertPos, NewMI);
 
     // Erase rematerialized MI.
-    DAG.updateRegionBoundaries(DAG.Regions, RematMI, nullptr);
     RematMI.eraseFromParent();
     DAG.LIS->RemoveMachineInstrFromMaps(RematMI);
 
@@ -2227,6 +2241,7 @@ void GCNScheduleDAGMILive::updateRegionBoundaries(
   // the upper region boundary is exclusive.
   if (MI != RegionBounds.first)
     return;
+
   if (!NewMI)
     RegionBounds.first = std::next(MI); // Removal
   else
