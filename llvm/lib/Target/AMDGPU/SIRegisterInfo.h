@@ -422,6 +422,8 @@ public:
   /// of the subtarget.
   ArrayRef<MCPhysReg> getAllSGPR32(const MachineFunction &MF) const;
 
+  bool preferLocalAssignment(const MachineFunction *MF, LiveIntervals *LIS) const override;
+
   // Insert spill or restore instructions.
   // When lowering spill pseudos, the RegScavenger should be set.
   // For creating spill instructions during frame lowering, where no scavenger

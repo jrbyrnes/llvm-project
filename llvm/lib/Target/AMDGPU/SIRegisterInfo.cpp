@@ -13,6 +13,7 @@
 
 #include "AMDGPU.h"
 #include "AMDGPURegisterBankInfo.h"
+#include "GCNRegPressure.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUInstPrinter.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
@@ -3931,4 +3932,35 @@ SIRegisterInfo::getVRegFlagsOfReg(Register Reg,
   if (FuncInfo->checkFlag(Reg, AMDGPU::VirtRegFlag::WWM_REG))
     RegFlags.push_back("WWM_REG");
   return RegFlags;
+}
+
+bool SIRegisterInfo::preferLocalAssignment(const MachineFunction *MF, LiveIntervals *LIS) const {
+  errs() << "Checking prefer Local assignment\n";
+  return false;
+
+  std::vector<MachineInstr *> MBBFirstMIs;
+  for (auto &MBB : *MF) {
+    MachineInstr *MI = const_cast<MachineInstr *>(&*skipDebugInstructionsForward(MBB.begin(), MBB.end()));
+    MBBFirstMIs.push_back(MI);
+  }
+  
+  auto LRM = getLiveRegMap(MBBFirstMIs, /*After=*/false, *LIS);
+  unsigned Bias = 10;
+  auto VecRegLimits = getMaxNumVectorRegs(*MF);
+
+  VecRegLimits.first = VecRegLimits.first > Bias ? VecRegLimits.first - Bias : 0;
+  VecRegLimits.second = VecRegLimits.second > Bias ? VecRegLimits.second - Bias : 0;
+
+  for (auto LiveIns : LRM) {
+    GCNDownwardRPTracker LiveRegAnalyzer(*LIS);
+    LiveRegAnalyzer.reset(MF->getRegInfo(), LiveIns.second);
+    GCNRegPressure LiveInPressure = LiveRegAnalyzer.getPressure();
+    unsigned ArchVGPRPressure = LiveInPressure.getArchVGPRNum();
+    unsigned AGPRPressure = LiveInPressure.getAGPRNum();
+
+    if (ArchVGPRPressure >= VecRegLimits.first || AGPRPressure >= VecRegLimits.second) {
+      return true;
+    }
+  }
+  return false;
 }

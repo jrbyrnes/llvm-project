@@ -4411,9 +4411,6 @@ bool RegisterCoalescer::run(MachineFunction &fn) {
       joinAllIntervals();
   }
 
-  errs() << "After coalesce\n";
-  MF->dump();
-
   // After coalescing, update any PHIs that are being tracked by debug-info
   // with their new VReg locations.
   for (auto &p : MF->DebugPHIPositions) {

@@ -2900,6 +2900,8 @@ bool RAGreedy::run(MachineFunction &mf) {
   ReverseLocalAssignment = GreedyReverseLocalAssignment.getNumOccurrences()
                                ? GreedyReverseLocalAssignment
                                : TRI->reverseLocalAssignment();
+  
+  PreferLocalAssignment = TRI->preferLocalAssignment(MF, LIS);
 
   ExtraInfo.emplace();
 
