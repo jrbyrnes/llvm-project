@@ -3824,6 +3824,80 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
       return &SI;
   }
 
+  if (isa<ConstantInt>(TrueVal) && isa<ConstantInt>(FalseVal)) {
+    if (auto CondInst = dyn_cast<ICmpInst>(CondVal)) {
+      auto Pred = CondInst->getPredicate();
+      if (Pred == ICmpInst::ICMP_EQ) {
+        auto Op0 = CondInst->getOperand(0);
+        auto Op1 = CondInst->getOperand(1);
+
+        Value *ConstOp = nullptr;
+        Value *ValueOp = nullptr;
+
+        if (isa<ConstantInt>(Op0) && isa<Instruction>(Op1)) {
+          ConstOp = Op0;
+          ValueOp = Op1;
+        }
+
+        if (isa<ConstantInt>(Op1) && isa<Instruction>(Op0)) {
+          ConstOp = Op1;
+          ValueOp = Op0;
+        }
+
+        if (ConstOp &&
+            cast<Constant>(ConstOp)->getUniqueInteger().tryZExtValue()) {
+          auto Const = cast<Constant>(ConstOp);
+
+          uint64_t CompareConst = Const->getUniqueInteger().getZExtValue();
+
+          if (CompareConst == 0 &&
+              cast<Instruction>(ValueOp)->getOpcode() == Instruction::And) {
+            Value *AndConst = nullptr;
+
+            auto ValInst = cast<Instruction>(ValueOp);
+            auto AndOp0 = ValInst->getOperand(0);
+            auto AndOp1 = ValInst->getOperand(1);
+
+            if (isa<ConstantInt>(AndOp0)) {
+              AndConst = AndOp0;
+            }
+
+            if (isa<ConstantInt>(AndOp1)) {
+              AndConst = AndOp1;
+            }
+
+            auto TrueConstC = dyn_cast<Constant>(TrueVal);
+            auto FalseConstC = dyn_cast<Constant>(FalseVal);
+
+            if (AndConst) {
+              auto AndConstC = dyn_cast<Constant>(AndConst);
+              if (AndConstC && AndConstC->getUniqueInteger().tryZExtValue() &&
+                  TrueConstC && TrueConstC->getUniqueInteger().tryZExtValue() &&
+                  FalseConstC &&
+                  FalseConstC->getUniqueInteger().tryZExtValue()) {
+
+                uint64_t AndConstVal =
+                    cast<Constant>(AndConst)->getUniqueInteger().getZExtValue();
+                uint64_t TrueConstVal =
+                    cast<Constant>(TrueVal)->getUniqueInteger().getZExtValue();
+                uint64_t FalseConstVal =
+                    cast<Constant>(FalseVal)->getUniqueInteger().getZExtValue();
+
+                if (!TrueConstVal && FalseConstVal &&
+                    (FalseConstVal % AndConstVal == 0)) {
+                  uint64_t Mul = FalseConstVal / AndConstVal;
+
+                  return BinaryOperator::CreateMul(
+                      ValueOp, ConstantInt::get(ValueOp->getType(), Mul));
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (Instruction *R = foldSelectOfBools(SI))
     return R;
 

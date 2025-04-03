@@ -508,10 +508,38 @@ FunctionPass *llvm::createSeparateConstOffsetFromGEPPass(bool LowerGEP) {
   return new SeparateConstOffsetFromGEPLegacyPass(LowerGEP);
 }
 
-bool ConstantOffsetExtractor::CanTraceInto(bool SignExtended,
-                                            bool ZeroExtended,
-                                            BinaryOperator *BO,
-                                            bool NonNegative) {
+bool ConstantOffsetExtractor::CanTraceInto(bool SignExtended, bool ZeroExtended,
+                                           BinaryOperator *OGBO,
+                                           bool NonNegative) {
+  BinaryOperator *Temp = nullptr;
+  if (OGBO->getOpcode() == Instruction::Xor) {
+    KnownBits LHSKnown(DL.getTypeSizeInBits(OGBO->getOperand(0)->getType()));
+    KnownBits RHSKnown(DL.getTypeSizeInBits(OGBO->getOperand(1)->getType()));
+    computeKnownBits(OGBO->getOperand(0), LHSKnown, DL, 0, nullptr, OGBO,
+                     nullptr, true, 6);
+    computeKnownBits(OGBO->getOperand(1), RHSKnown, DL, 0, nullptr, OGBO,
+                     nullptr, true, 6);
+    if (KnownBits::haveNoCommonBitsSet(LHSKnown, RHSKnown)) {
+      ; // good condition
+    } else {
+      if (isa<Constant>(OGBO->getOperand(1)) ||
+          isa<Constant>(OGBO->getOperand(0))) {
+        KnownBits LHSKnown(
+            DL.getTypeSizeInBits(OGBO->getOperand(0)->getType()));
+        KnownBits RHSKnown(
+            DL.getTypeSizeInBits(OGBO->getOperand(1)->getType()));
+        computeKnownBits(OGBO->getOperand(0), LHSKnown, DL, 0, nullptr, OGBO,
+                         nullptr, true, 12);
+        computeKnownBits(OGBO->getOperand(1), RHSKnown, DL, 0, nullptr, OGBO,
+                         nullptr, true, 12);
+        if (KnownBits::haveNoCommonBitsSet(LHSKnown, RHSKnown)) {
+          assert(false && "Good case missed\n");
+        }
+      }
+    }
+  }
+  BinaryOperator *BO = Temp ? Temp : OGBO;
+
   // We only consider ADD, SUB and OR, because a non-zero constant found in
   // expressions composed of these operations can be easily hoisted as a
   // constant offset by reassociation.
