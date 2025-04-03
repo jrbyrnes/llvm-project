@@ -42,7 +42,7 @@ class StringRef;
 class TargetLibraryInfo;
 template <typename T> class ArrayRef;
 
-constexpr unsigned MaxAnalysisRecursionDepth = 6;
+extern unsigned MaxAnalysisRecursionDepth;
 
 /// Determine which bits of V are known to be either zero or one and return
 /// them in the KnownZero/KnownOne bit sets.
@@ -57,6 +57,11 @@ void computeKnownBits(const Value *V, KnownBits &Known, const DataLayout &DL,
                       const Instruction *CxtI = nullptr,
                       const DominatorTree *DT = nullptr,
                       bool UseInstrInfo = true);
+
+void computeKnownBits(const Value *V, KnownBits &Known, const DataLayout &DL,
+                      unsigned Depth, AssumptionCache *AC,
+                      const Instruction *CxtI, const DominatorTree *DT,
+                      bool UseInstrInfo, unsigned MaxDepth);
 
 /// Returns the known bits rather than passing by reference.
 KnownBits computeKnownBits(const Value *V, const DataLayout &DL,

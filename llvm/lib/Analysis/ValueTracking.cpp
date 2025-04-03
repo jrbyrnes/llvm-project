@@ -83,6 +83,8 @@
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
+unsigned llvm::MaxAnalysisRecursionDepth = 6;
+
 // Controls the number of uses of the value searched for possible
 // dominating comparisons.
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
@@ -151,6 +153,18 @@ void llvm::computeKnownBits(const Value *V, KnownBits &Known,
   computeKnownBits(
       V, Known, Depth,
       SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+}
+
+void llvm::computeKnownBits(const Value *V, KnownBits &Known,
+                            const DataLayout &DL, unsigned Depth,
+                            AssumptionCache *AC, const Instruction *CxtI,
+                            const DominatorTree *DT, bool UseInstrInfo,
+                            unsigned MaxDepth) {
+  unsigned TempDepth = MaxAnalysisRecursionDepth;
+  MaxAnalysisRecursionDepth = MaxDepth;
+  computeKnownBits(V, Known, Depth,
+                   SimplifyQuery(DL, DT, AC, safeCxtI(V, CxtI), UseInstrInfo));
+  MaxAnalysisRecursionDepth = TempDepth;
 }
 
 KnownBits llvm::computeKnownBits(const Value *V, const DataLayout &DL,
