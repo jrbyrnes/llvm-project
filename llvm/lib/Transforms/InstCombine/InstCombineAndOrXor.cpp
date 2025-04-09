@@ -4919,6 +4919,55 @@ Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
         return BinaryOperator::CreateXor(OtherXor->getOperand(0), NewOr);
       }
     }
+
+    OtherXor = nullptr;
+    Instruction *OtherInst = nullptr;
+
+    if (Op0Inst && Op0Inst->getOpcode() == Instruction::Or) {
+      OtherXor = Op0Inst;
+      OtherInst = dyn_cast<Instruction>(I.getOperand(1));
+    }
+
+    if (Op1Inst && Op1Inst->getOpcode() == Instruction::Or) {
+      OtherXor = Op1Inst;
+      OtherInst = dyn_cast<Instruction>(I.getOperand(0));
+    }
+
+    if (OtherXor && OtherInst && cast<PossiblyDisjointInst>(OtherXor)->isDisjoint()) {
+
+      Value *Payload = nullptr;
+      Value *ConstOff = nullptr;
+
+      if (isa<ConstantInt>(OtherXor->getOperand(0))) {
+        Payload = OtherXor->getOperand(1);
+        ConstOff = OtherXor->getOperand(0);
+      }
+
+      if (isa<ConstantInt>(OtherXor->getOperand(1))) {
+        Payload = OtherXor->getOperand(0);
+        ConstOff = OtherXor->getOperand(1);
+      }
+
+      if (Payload) {
+        errs() << "Found condition\n";
+        KnownBits LHSKnown =
+          computeKnownBits(Payload, /*Depth=*/0, OtherXor);
+        KnownBits RHSKnown =
+          computeKnownBits(ConstOff, /*Depth=*/0, OtherXor);
+        KnownBits OtherKnown =
+          computeKnownBits(OtherInst, /*Depth=*/0, &I);
+        
+        KnownBits Try1 = LHSKnown;
+        Try1 ^= OtherKnown;
+        if (KnownBits::haveNoCommonBitsSet(Try1, RHSKnown)) {
+          auto NewXor = Builder.CreateXor(Payload,OtherInst);
+          auto NewOr = BinaryOperator::CreateOr(NewXor, ConstOff);
+          cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+          return NewOr;
+
+        }
+      }        
+    }
   }
 
   if (Instruction *X = foldVectorBinop(I))
