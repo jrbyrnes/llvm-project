@@ -516,11 +516,17 @@ static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
 }
 
 static ScheduleDAGInstrs *createSIMachineScheduler(MachineSchedContext *C) {
+    if (C->MF->getTarget().getTargetTriple().getArch() != Triple::amdgcn) {
+    return new ScheduleDAGMILive(C, std::make_unique<GenericScheduler>(C));
+  }
   return new SIScheduleDAGMI(C);
 }
 
 static ScheduleDAGInstrs *
 createGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
+    if (C->MF->getTarget().getTargetTriple().getArch() != Triple::amdgcn) {
+    return new ScheduleDAGMILive(C, std::make_unique<GenericScheduler>(C));
+  }
   const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
   ScheduleDAGMILive *DAG =
     new GCNScheduleDAGMILive(C, std::make_unique<GCNMaxOccupancySchedStrategy>(C));
@@ -535,6 +541,9 @@ createGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
 
 static ScheduleDAGInstrs *
 createGCNMaxILPMachineScheduler(MachineSchedContext *C) {
+    if (C->MF->getTarget().getTargetTriple().getArch() != Triple::amdgcn) {
+    return new ScheduleDAGMILive(C, std::make_unique<GenericScheduler>(C));
+  }
   ScheduleDAGMILive *DAG =
       new GCNScheduleDAGMILive(C, std::make_unique<GCNMaxILPSchedStrategy>(C));
   DAG->addMutation(createIGroupLPDAGMutation(AMDGPU::SchedulingPhase::Initial));
@@ -544,6 +553,9 @@ createGCNMaxILPMachineScheduler(MachineSchedContext *C) {
 static ScheduleDAGInstrs *
 createIterativeGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
   const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
+  if (C->MF->getTarget().getTargetTriple().getArch() != Triple::amdgcn) {
+    return new ScheduleDAGMILive(C, std::make_unique<GenericScheduler>(C));
+  }
   auto DAG = new GCNIterativeScheduler(C,
     GCNIterativeScheduler::SCHEDULE_LEGACYMAXOCCUPANCY);
   DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
@@ -554,12 +566,18 @@ createIterativeGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
 }
 
 static ScheduleDAGInstrs *createMinRegScheduler(MachineSchedContext *C) {
+    if (C->MF->getTarget().getTargetTriple().getArch() != Triple::amdgcn) {
+    return new ScheduleDAGMILive(C, std::make_unique<GenericScheduler>(C));
+  }
   return new GCNIterativeScheduler(C,
     GCNIterativeScheduler::SCHEDULE_MINREGFORCED);
 }
 
 static ScheduleDAGInstrs *
 createIterativeILPMachineScheduler(MachineSchedContext *C) {
+    if (C->MF->getTarget().getTargetTriple().getArch() != Triple::amdgcn) {
+    return new ScheduleDAGMILive(C, std::make_unique<GenericScheduler>(C));
+  }
   const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
   auto DAG = new GCNIterativeScheduler(C,
     GCNIterativeScheduler::SCHEDULE_ILP);
