@@ -529,9 +529,9 @@ bool ConstantOffsetExtractor::CanTraceInto(bool SignExtended, bool ZeroExtended,
         KnownBits RHSKnown(
             DL.getTypeSizeInBits(OGBO->getOperand(1)->getType()));
         computeKnownBits(OGBO->getOperand(0), LHSKnown, DL, 0, nullptr, OGBO,
-                         nullptr, true, 12);
+                         nullptr, true, 100);
         computeKnownBits(OGBO->getOperand(1), RHSKnown, DL, 0, nullptr, OGBO,
-                         nullptr, true, 12);
+                         nullptr, true, 100);
         if (KnownBits::haveNoCommonBitsSet(LHSKnown, RHSKnown)) {
           assert(false && "Good case missed\n");
         }
