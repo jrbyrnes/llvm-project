@@ -3566,6 +3566,197 @@ static Value *foldOrOfInversions(BinaryOperator &I,
 // here. We should standardize that construct where it is needed or choose some
 // other way to ensure that commutated variants of patterns are not missed.
 Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
+
+  if (auto DOr = dyn_cast<PossiblyDisjointInst>(&I); false) {
+    if (DOr->isDisjoint()) {
+      auto Op0Inst = dyn_cast<Instruction>(I.getOperand(0));
+      auto Op1Inst = dyn_cast<Instruction>(I.getOperand(1));
+
+      if (Op0Inst && Op0Inst->getOpcode() == Instruction::Mul && Op1Inst &&
+          Op1Inst->getOpcode() == Instruction::Mul) {
+
+        if (isa<Constant>(Op0Inst->getOperand(1)) &&
+            isa<Constant>(Op1Inst->getOperand(1))) {
+          uint64_t LHSMul = cast<Constant>(Op0Inst->getOperand(1))
+                                ->getUniqueInteger()
+                                .getZExtValue();
+          uint64_t RHSMul = cast<Constant>(Op1Inst->getOperand(1))
+                                ->getUniqueInteger()
+                                .getZExtValue();
+          if (LHSMul == RHSMul) {
+            auto Op00Inst = dyn_cast<Instruction>(Op0Inst->getOperand(0));
+            auto Op10Inst = dyn_cast<Instruction>(Op1Inst->getOperand(0));
+
+            if (Op00Inst && Op00Inst->getOpcode() == Instruction::And &&
+                Op10Inst && Op10Inst->getOpcode() == Instruction::And) {
+              if (Op00Inst->getOperand(0) == Op10Inst->getOperand(0) &&
+                  isa<Constant>(Op00Inst->getOperand(1)) &&
+                  isa<Constant>(Op10Inst->getOperand(1))) {
+                uint64_t LHSConst = cast<Constant>(Op00Inst->getOperand(1))
+                                        ->getUniqueInteger()
+                                        .getZExtValue();
+                uint64_t RHSConst = cast<Constant>(Op10Inst->getOperand(1))
+                                        ->getUniqueInteger()
+                                        .getZExtValue();
+
+                auto X = Builder.CreateAnd(
+                    Op00Inst->getOperand(0),
+                    ConstantInt::get(Op00Inst->getType(), LHSConst + RHSConst));
+
+                return BinaryOperator::CreateMul(X, Op0Inst->getOperand(1));
+              }
+            }
+          }
+        }
+      }
+
+      else if (Op0Inst && Op1Inst) {
+        Instruction *MulOp0 = nullptr;
+        Instruction *OtherOp = nullptr;
+
+        if (Op0Inst->getOpcode() == Instruction::Mul) {
+          MulOp0 = Op0Inst;
+          OtherOp = Op1Inst;
+        } else if (Op1Inst->getOpcode() == Instruction::Mul) {
+          MulOp0 = Op1Inst;
+          OtherOp = Op0Inst;
+        }
+
+        if (MulOp0) {
+          if (auto OtherOr = dyn_cast<PossiblyDisjointInst>(OtherOp)) {
+            if (OtherOr->getOpcode() == Instruction::Or &&
+                OtherOr->isDisjoint() &&
+                isa<Instruction>(OtherOr->getOperand(0)) &&
+                isa<Instruction>(OtherOr->getOperand(1))) {
+              /*Instruction *MulOp1 = nullptr;
+              Instruction *OtherOp1 = nullptr;
+
+              Instruction *OtherOp0Inst =
+                  cast<Instruction>(OtherOr->getOperand(0));
+              Instruction *OtherOp1Inst =
+                  cast<Instruction>(OtherOr->getOperand(1));
+
+              if (OtherOp0Inst->getOpcode() == Instruction::Mul) {
+                MulOp1 = OtherOp0Inst;
+                OtherOp1 = OtherOp1Inst;
+              }
+
+              else if (OtherOp1Inst->getOpcode() == Instruction::Mul) {
+                MulOp1 = OtherOp1Inst;
+                OtherOp1 = OtherOp0Inst;
+              }
+
+              if (MulOp1) {
+                Instruction *Op00Inst =
+                    dyn_cast<Instruction>(MulOp0->getOperand(0));
+                Instruction *Op10Inst =
+                    dyn_cast<Instruction>(MulOp1->getOperand(0));
+
+                if (Op00Inst && Op10Inst &&
+                    (Op00Inst->getOperand(0) == Op10Inst->getOperand(0)) &&
+                    isa<ConstantInt>(Op00Inst->getOperand(1)) &&
+                    isa<ConstantInt>(Op10Inst->getOperand(1)) &&
+                    (MulOp0->getOperand(1) == MulOp1->getOperand(1))) {
+                  uint64_t LHSConst = cast<Constant>(Op00Inst->getOperand(1))
+                                          ->getUniqueInteger()
+                                          .getZExtValue();
+                  uint64_t RHSConst = cast<Constant>(Op10Inst->getOperand(1))
+                                          ->getUniqueInteger()
+                                          .getZExtValue();
+                  auto NewAnd =
+                      Builder.CreateAnd(Op00Inst->getOperand(0),
+                                        ConstantInt::get(Op00Inst->getType(),
+                                                         LHSConst + RHSConst));
+                  auto NewMul =
+                      Builder.CreateMul(NewAnd, MulOp1->getOperand(1));
+
+                  auto Ret = BinaryOperator::CreateOr(NewMul, OtherOp1);
+                  cast<PossiblyDisjointInst>(Ret)->setIsDisjoint(true);
+                  return Ret;
+                }
+              }*/
+
+              //else {
+                Instruction *SelOp1 = nullptr;
+                Instruction *OtherOp1 = nullptr;
+
+              Instruction *OtherOp0Inst =
+                  cast<Instruction>(OtherOr->getOperand(0));
+              Instruction *OtherOp1Inst =
+                  cast<Instruction>(OtherOr->getOperand(1));
+
+                if (isa<SelectInst>(OtherOp0Inst)) {
+                  SelOp1 = OtherOp0Inst;
+                  OtherOp1 = OtherOp1Inst;
+                }
+
+                else if (isa<SelectInst>(OtherOp1Inst)) {
+                  SelOp1 = OtherOp1Inst;
+                  OtherOp1 = OtherOp0Inst;
+                }
+
+                if (SelOp1) {
+                  auto NewOr =
+                      Builder.CreateOr(SelOp1,MulOp0);
+                  cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+
+                  auto Ret = BinaryOperator::CreateOr(NewOr, OtherOp1);
+                  cast<PossiblyDisjointInst>(Ret)->setIsDisjoint(true);
+                  return Ret;
+                }
+              //}
+            }
+          }
+
+          if (auto OtherSel = dyn_cast<SelectInst>(OtherOp)) {
+            errs() << "Cond00\n";
+
+            auto OtherCmp = dyn_cast<ICmpInst>(OtherSel->getOperand(0));
+            if (OtherCmp) {
+              errs() << "Cond01\n";
+                    auto NewDecompose =
+            decomposeBitTestICmp(OtherCmp->getOperand(0), OtherCmp->getOperand(1),
+                                 OtherCmp->getPredicate(), true, false, true);
+
+                                 errs() << "found sel\n";
+
+
+
+
+              auto TrueBits = dyn_cast<Constant>(OtherSel->getOperand(2));
+              auto OtherFactor = dyn_cast<Constant>(MulOp0->getOperand(1));
+              auto OtherAnd = dyn_cast<Instruction>(MulOp0->getOperand(0));
+
+
+              if (NewDecompose.has_value() && TrueBits && OtherFactor && OtherAnd && OtherAnd->getOpcode() == Instruction::And && OtherAnd->getOperand(0) == NewDecompose->X) {
+                auto OtherMask = dyn_cast<Constant>(OtherAnd->getOperand(1));
+                errs() << "new cond0\n";
+                if ((TrueBits->getUniqueInteger().udiv(NewDecompose->Mask) == OtherFactor->getUniqueInteger()) && OtherMask) {
+                  errs() << "new cond\n";
+
+                    auto TheAnd = Builder.CreateAnd(
+                    NewDecompose->X,
+                    ConstantInt::get(NewDecompose->X->getType(), OtherMask->getUniqueInteger() + NewDecompose->Mask));
+                  errs() << "Built thing\n";
+                return BinaryOperator::CreateMul(TheAnd, OtherFactor);
+                } 
+              }
+           }
+          }
+
+
+        }
+
+
+      }
+
+    }
+  }
+
+
+
+
+
   if (Value *V = simplifyOrInst(I.getOperand(0), I.getOperand(1),
                                 SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
@@ -3643,6 +3834,58 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
             foldAddLikeCommutative(I.getOperand(1), I.getOperand(0),
                                    /*NSW=*/true, /*NUW=*/true))
       return R;
+
+    Value *Cond0 = nullptr, *Cond1 = nullptr;
+    const APInt *Op0Eq = nullptr, *Op0Ne = nullptr;
+    const APInt *Op1Eq = nullptr, *Op1Ne = nullptr;
+
+    //  (!(A & N) ? 0 : N * C) + (!(A & M) ? 0 : M * C) -> A & (N + M) * C
+    if (match(I.getOperand(0),
+              m_Select(m_Value(Cond0), m_APInt(Op0Eq), m_APInt(Op0Ne))) &&
+        match(I.getOperand(1),
+              m_Select(m_Value(Cond1), m_APInt(Op1Eq), m_APInt(Op1Ne)))) {
+      CmpPredicate Pred0, Pred1;
+
+      if (ICmpInst *ICL = dyn_cast<ICmpInst>(Cond0);
+          ICmpInst *ICR = dyn_cast<ICmpInst>(Cond1)) {
+        auto LHSDecompose =
+            decomposeBitTestICmp(ICL->getOperand(0), ICL->getOperand(1),
+                                 ICL->getPredicate(), true, false, true);
+        auto RHSDecompose =
+            decomposeBitTestICmp(ICR->getOperand(0), ICR->getOperand(1),
+                                 ICR->getPredicate(), true, false, true);
+        if (LHSDecompose && RHSDecompose &&
+            LHSDecompose->X == RHSDecompose->X &&
+            LHSDecompose->Pred == RHSDecompose->Pred &&
+            (ICmpInst::isEquality(LHSDecompose->Pred)) &&
+            !RHSDecompose->Mask.isNegative() &&
+            !LHSDecompose->Mask.isNegative() &&
+            RHSDecompose->Mask.isPowerOf2() &&
+            LHSDecompose->Mask.isPowerOf2() &&
+            LHSDecompose->Mask != RHSDecompose->Mask) {
+          std::pair<const APInt *, const APInt *> LHSInts;
+          std::pair<const APInt *, const APInt *> RHSInts;
+          if (LHSDecompose->Pred == ICmpInst::ICMP_NE) {
+            std::swap(Op0Eq, Op0Ne);
+            std::swap(Op1Eq, Op1Ne);
+          }
+
+          if (!Op0Ne->isNegative() && !Op1Ne->isNegative() && Op0Eq->isZero() &&
+              Op1Eq->isZero() && Op0Ne->urem(LHSDecompose->Mask).isZero() &&
+              Op1Ne->urem(RHSDecompose->Mask).isZero() &&
+              Op0Ne->udiv(LHSDecompose->Mask) ==
+                  Op1Ne->udiv(RHSDecompose->Mask)) {
+            auto NewAnd = Builder.CreateAnd(
+                LHSDecompose->X,
+                ConstantInt::get(LHSDecompose->X->getType(),
+                                 (LHSDecompose->Mask + RHSDecompose->Mask)));
+            return BinaryOperator::CreateMul(
+                NewAnd, ConstantInt::get(NewAnd->getType(),
+                                         Op0Ne->udiv(LHSDecompose->Mask)));
+          }
+        }
+      }
+    }
   }
 
   Value *X, *Y;
@@ -4689,6 +4932,172 @@ Instruction *InstCombinerImpl::foldNot(BinaryOperator &I) {
 // here. We should standardize that construct where it is needed or choose some
 // other way to ensure that commutated variants of patterns are not missed.
 Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
+ auto Op0Inst = dyn_cast<Instruction>(I.getOperand(0));
+  auto Op1Inst = dyn_cast<Instruction>(I.getOperand(1));
+  if (Op0Inst && Op1Inst) {
+    Instruction *MulOp0 = nullptr;
+    Instruction *OtherOp = nullptr;
+
+    if (Op0Inst->getOpcode() == Instruction::Mul) {
+      MulOp0 = Op0Inst;
+      OtherOp = Op1Inst;
+    } else if (Op1Inst->getOpcode() == Instruction::Mul) {
+      MulOp0 = Op1Inst;
+      OtherOp = Op0Inst;
+    }
+
+    if (false  && MulOp0) {
+
+      if (auto OtherOr = dyn_cast<PossiblyDisjointInst>(OtherOp)) {
+        if (OtherOr->getOpcode() == Instruction::Or && OtherOr->isDisjoint() &&
+            (isa<Instruction>(OtherOr->getOperand(0)) ||
+             isa<Instruction>(OtherOr->getOperand(1)))) {
+
+          Instruction *MulOp1 = nullptr;
+          Value *FinalOp = nullptr;
+
+          Value *OtherOp0 = OtherOr->getOperand(0);
+          Value *OtherOp1 = OtherOr->getOperand(1);
+
+          if (isa<Instruction>(OtherOp0) &&
+              cast<Instruction>(OtherOp0)->getOpcode() == Instruction::Mul) {
+            MulOp1 = cast<Instruction>(OtherOp0);
+            FinalOp = OtherOp1;
+          }
+
+          else if (isa<Instruction>(OtherOp1) &&
+                   cast<Instruction>(OtherOp1)->getOpcode() ==
+                       Instruction::Mul) {
+            MulOp1 = cast<Instruction>(OtherOp1);
+            FinalOp = OtherOp0;
+          }
+
+          if (MulOp1) {
+            Instruction *Op00Inst =
+                dyn_cast<Instruction>(MulOp0->getOperand(0));
+            Instruction *Op10Inst =
+                dyn_cast<Instruction>(MulOp1->getOperand(0));
+
+            if (Op00Inst && Op10Inst &&
+                (Op00Inst->getOperand(0) == Op10Inst->getOperand(0)) &&
+                isa<ConstantInt>(Op00Inst->getOperand(1)) &&
+                cast<Constant>(Op00Inst->getOperand(1))
+                    ->getUniqueInteger()
+                    .tryZExtValue() &&
+                isa<ConstantInt>(Op10Inst->getOperand(1)) &&
+                cast<Constant>(Op10Inst->getOperand(1))
+                    ->getUniqueInteger()
+                    .tryZExtValue() &&
+                (MulOp0->getOperand(1) == MulOp1->getOperand(1))) {
+
+              uint64_t LHSConst = cast<Constant>(Op00Inst->getOperand(1))
+                                      ->getUniqueInteger()
+                                      .getZExtValue();
+              uint64_t RHSConst = cast<Constant>(Op10Inst->getOperand(1))
+                                      ->getUniqueInteger()
+                                      .getZExtValue();
+              auto NewAnd = Builder.CreateAnd(
+                  Op00Inst->getOperand(0),
+                  ConstantInt::get(Op00Inst->getType(), LHSConst + RHSConst));
+              auto NewMul = Builder.CreateMul(NewAnd, MulOp1->getOperand(1));
+
+              return BinaryOperator::CreateXor(NewMul, FinalOp);
+            }
+          }
+        }
+      }
+    }
+  }
+
+    if ((Op0Inst || Op1Inst)) {
+    Instruction *OtherXor = nullptr;
+    Value *OtherOp = nullptr;
+
+    if (Op0Inst && Op0Inst->getOpcode() == Instruction::Xor) {
+      OtherXor = Op0Inst;
+      OtherOp = I.getOperand(1);
+    }
+
+    if (Op1Inst && Op1Inst->getOpcode() == Instruction::Xor) {
+      OtherXor = Op1Inst;
+      OtherOp = I.getOperand(0);
+    }
+
+    if (OtherXor) {
+      KnownBits LHSKnown =
+          computeKnownBits(OtherXor->getOperand(0), /*Depth=*/0, OtherXor);
+      KnownBits RHSKnown =
+          computeKnownBits(OtherXor->getOperand(1), /*Depth=*/0, OtherXor);
+      KnownBits OtherKnown = computeKnownBits(OtherOp, /*Depth=*/0, &I);
+      if (KnownBits::haveNoCommonBitsSet(LHSKnown, OtherKnown)) {
+        auto NewOr = Builder.CreateOr(OtherXor->getOperand(0), OtherOp);
+        cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+        return BinaryOperator::CreateXor(OtherXor->getOperand(1), NewOr);
+      }
+      if (KnownBits::haveNoCommonBitsSet(LHSKnown, OtherKnown)) {
+        auto NewOr = Builder.CreateOr(OtherXor->getOperand(1), OtherOp);
+        cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+        return BinaryOperator::CreateXor(OtherXor->getOperand(0), NewOr);
+      }
+    }
+
+    OtherXor = nullptr;
+    Instruction *OtherInst = nullptr;
+
+    if (Op0Inst && Op0Inst->getOpcode() == Instruction::Or) {
+      OtherXor = Op0Inst;
+      OtherInst = dyn_cast<Instruction>(I.getOperand(1));
+    }
+
+    if (Op1Inst && Op1Inst->getOpcode() == Instruction::Or) {
+      OtherXor = Op1Inst;
+      OtherInst = dyn_cast<Instruction>(I.getOperand(0));
+    }
+
+    if (OtherXor && OtherInst && cast<PossiblyDisjointInst>(OtherXor)->isDisjoint()) {
+
+      Value *Payload = nullptr;
+      Value *ConstOff = nullptr;
+
+      if (isa<ConstantInt>(OtherXor->getOperand(0))) {
+        Payload = OtherXor->getOperand(1);
+        ConstOff = OtherXor->getOperand(0);
+      }
+
+      if (isa<ConstantInt>(OtherXor->getOperand(1))) {
+        Payload = OtherXor->getOperand(0);
+        ConstOff = OtherXor->getOperand(1);
+      }
+
+      if (Payload) {
+        errs() << "Found condition\n";
+
+        errs() << "Xor\n";
+        I.dump();
+        errs() << "Or-d\n";
+        OtherXor->dump();
+        KnownBits LHSKnown =
+          computeKnownBits(Payload, /*Depth=*/0, OtherXor);
+        KnownBits RHSKnown =
+          computeKnownBits(ConstOff, /*Depth=*/0, OtherXor);
+        KnownBits OtherKnown =
+          computeKnownBits(OtherInst, /*Depth=*/0, &I);
+        
+        KnownBits Try1 = LHSKnown;
+        Try1 ^= OtherKnown;
+        if (KnownBits::haveNoCommonBitsSet(Try1, RHSKnown)) {
+          errs() << "are disjoint\n";
+          auto NewXor = Builder.CreateXor(Payload,OtherInst);
+          auto NewOr = BinaryOperator::CreateOr(NewXor, ConstOff);
+          cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+          return NewOr;
+
+        }
+      }        
+    }
+  }
+
+
   if (Value *V = simplifyXorInst(I.getOperand(0), I.getOperand(1),
                                  SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
