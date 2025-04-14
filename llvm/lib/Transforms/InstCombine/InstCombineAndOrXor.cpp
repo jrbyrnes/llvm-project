@@ -3645,42 +3645,61 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
       return R;
 
     Value *Cond0 = nullptr, *Cond1 = nullptr;
-    ConstantInt *Op0True = nullptr, *Op0False = nullptr;
-    ConstantInt *Op1True = nullptr, *Op1False = nullptr;
+    const APInt *Op0True = nullptr, *Op0False = nullptr;
+    const APInt *Op1True = nullptr, *Op1False = nullptr;
 
     //  (!(A & N) ? 0 : N * C) + (!(A & M) ? 0 : M * C) -> A & (N + M) * C
-    if (match(I.getOperand(0), m_Select(m_Value(Cond0), m_ConstantInt(Op0True),
-                                        m_ConstantInt(Op0False))) &&
-        match(I.getOperand(1), m_Select(m_Value(Cond1), m_ConstantInt(Op1True),
-                                        m_ConstantInt(Op1False))) &&
-        Op0True->isZero() && Op1True->isZero() &&
-        Op0False->getValue().tryZExtValue() &&
-        Op1False->getValue().tryZExtValue()) {
+    if (match(I.getOperand(0),
+              m_Select(m_Value(Cond0), m_APInt(Op0True), m_APInt(Op0False))) &&
+        match(I.getOperand(1),
+              m_Select(m_Value(Cond1), m_APInt(Op1True), m_APInt(Op1False))) &&
+        Op0True->isZero() && Op1True->isZero()) {
       CmpPredicate Pred0, Pred1;
-      Value *CmpOp0 = nullptr, *CmpOp1 = nullptr;
-      ConstantInt *Op0Cond = nullptr, *Op1Cond = nullptr;
-      if (match(Cond0,
-                m_c_ICmp(Pred0, m_Value(CmpOp0), m_ConstantInt(Op0Cond))) &&
-          match(Cond1,
-                m_c_ICmp(Pred1, m_Value(CmpOp1), m_ConstantInt(Op1Cond))) &&
-          Pred0 == ICmpInst::ICMP_EQ && Pred1 == ICmpInst::ICMP_EQ &&
-          Op0Cond->isZero() && Op1Cond->isZero()) {
-        Value *AndSrc0 = nullptr, *AndSrc1 = nullptr;
-        ConstantInt *BitSel0 = nullptr, *BitSel1 = nullptr;
-        if (match(CmpOp0, m_And(m_Value(AndSrc0), m_ConstantInt(BitSel0))) &&
-            match(CmpOp1, m_And(m_Value(AndSrc1), m_ConstantInt(BitSel1))) &&
-            AndSrc0 == AndSrc1 && BitSel0->getValue().tryZExtValue() &&
-            BitSel1->getValue().tryZExtValue()) {
-          unsigned Out0 = Op0False->getValue().getZExtValue();
-          unsigned Out1 = Op1False->getValue().getZExtValue();
-          unsigned Sel0 = BitSel0->getValue().getZExtValue();
-          unsigned Sel1 = BitSel1->getValue().getZExtValue();
-          if (!(Out0 % Sel0) && !(Out1 % Sel1) &&
-              ((Out0 / Sel0) == (Out1 / Sel1))) {
+
+      if (ICmpInst *ICL = dyn_cast<ICmpInst>(Cond0);
+          ICmpInst *ICR = dyn_cast<ICmpInst>(Cond1)) {
+        auto LHSDecompose =
+            decomposeBitTestICmp(ICL->getOperand(0), ICL->getOperand(1),
+                                 ICL->getPredicate(), true, true, true);
+        auto RHSDecompose =
+            decomposeBitTestICmp(ICR->getOperand(0), ICR->getOperand(1),
+                                 ICR->getPredicate(), true, true, true);
+        if (LHSDecompose && RHSDecompose &&
+            LHSDecompose->Pred == RHSDecompose->Pred &&
+            (LHSDecompose->Pred == ICmpInst::ICMP_EQ ||
+             LHSDecompose->Pred == ICmpInst::ICMP_NE) &&
+            ((LHSDecompose->Mask & RHSDecompose->Mask) ==
+             APInt::getZero(LHSDecompose->Mask.getBitWidth())) &&
+            LHSDecompose->C.isZero() && RHSDecompose->C.isZero() &&
+            !RHSDecompose->Mask.isNegative() &&
+            !LHSDecompose->Mask.isNegative() &&
+            RHSDecompose->Mask.isPowerOf2() &&
+            LHSDecompose->Mask.isPowerOf2()) {
+          std::pair<const APInt *, const APInt *> LHSInts;
+          std::pair<const APInt *, const APInt *> RHSInts;
+
+          if (LHSDecompose->Pred == ICmpInst::ICMP_EQ) {
+            LHSInts = {Op0False, Op0True};
+            RHSInts = {Op1False, Op1True};
+          } else {
+            LHSInts = {Op0True, Op0False};
+            RHSInts = {Op1True, Op1False};
+          }
+
+          if (!LHSInts.first->isNegative() && !RHSInts.first->isNegative() &&
+              LHSInts.second->isZero() && RHSInts.second->isZero() &&
+              LHSInts.first->urem(LHSDecompose->Mask).isZero() &&
+              RHSInts.first->urem(RHSDecompose->Mask).isZero() &&
+              LHSInts.first->udiv(LHSDecompose->Mask) ==
+                  RHSInts.first->udiv(RHSDecompose->Mask)) {
             auto NewAnd = Builder.CreateAnd(
-                AndSrc0, ConstantInt::get(AndSrc0->getType(), Sel0 + Sel1));
+                LHSDecompose->X,
+                ConstantInt::get(LHSDecompose->X->getType(),
+                                 (LHSDecompose->Mask + RHSDecompose->Mask)));
             return BinaryOperator::CreateMul(
-                NewAnd, ConstantInt::get(NewAnd->getType(), (Out1 / Sel1)));
+                NewAnd,
+                ConstantInt::get(NewAnd->getType(),
+                                 LHSInts.first->udiv(LHSDecompose->Mask)));
           }
         }
       }

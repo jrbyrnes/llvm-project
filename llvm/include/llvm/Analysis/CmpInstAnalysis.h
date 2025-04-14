@@ -105,8 +105,8 @@ namespace llvm {
   /// Unless \p AllowNonZeroC is true, C will always be 0.
   std::optional<DecomposedBitTest>
   decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate Pred,
-                       bool LookThroughTrunc = true,
-                       bool AllowNonZeroC = false);
+                       bool LookThroughTrunc = true, bool AllowNonZeroC = false,
+                       bool LookThruBitSel = false);
 
   /// Decompose an icmp into the form ((X & Mask) pred C) if
   /// possible. Unless \p AllowNonZeroC is true, C will always be 0.

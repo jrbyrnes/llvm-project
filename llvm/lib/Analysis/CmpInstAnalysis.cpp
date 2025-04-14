@@ -75,11 +75,12 @@ Constant *llvm::getPredForFCmpCode(unsigned Code, Type *OpTy,
 
 std::optional<DecomposedBitTest>
 llvm::decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate Pred,
-                           bool LookThruTrunc, bool AllowNonZeroC) {
+                           bool LookThruTrunc, bool AllowNonZeroC,
+                           bool LookThruBitSel) {
   using namespace PatternMatch;
 
   const APInt *OrigC;
-  if (!ICmpInst::isRelational(Pred) || !match(RHS, m_APIntAllowPoison(OrigC)))
+  if (!match(RHS, m_APIntAllowPoison(OrigC)))
     return std::nullopt;
 
   bool Inverted = false;
@@ -96,10 +97,27 @@ llvm::decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate Pred,
     Pred = ICmpInst::getStrictPredicate(Pred);
   }
 
+  auto decomposeBitMask =
+      [LHS,
+       LookThruBitSel](CmpInst::Predicate Pred,
+                       const APInt *OrigC) -> std::optional<DecomposedBitTest> {
+    if (!LookThruBitSel)
+      return std::nullopt;
+
+    const APInt *AndC;
+    Value *AndVal;
+    std::optional<DecomposedBitTest> Result = std::nullopt;
+    if (match(LHS, m_And(m_Value(AndVal), m_APInt(AndC))))
+      Result = {AndVal /*X*/, Pred /*Pred*/, *AndC /*Mask*/, *OrigC /*C*/};
+
+    return Result;
+  };
+
   DecomposedBitTest Result;
+
   switch (Pred) {
   default:
-    llvm_unreachable("Unexpected predicate");
+    return decomposeBitMask(Pred, OrigC);
   case ICmpInst::ICMP_SLT: {
     // X < 0 is equivalent to (X & SignMask) != 0.
     if (C.isZero()) {
@@ -126,7 +144,7 @@ llvm::decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate Pred,
       break;
     }
 
-    return std::nullopt;
+    return decomposeBitMask(Pred, OrigC);
   }
   case ICmpInst::ICMP_ULT:
     // X <u 2^n is equivalent to (X & ~(2^n-1)) == 0.
@@ -145,7 +163,7 @@ llvm::decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate Pred,
       break;
     }
 
-    return std::nullopt;
+    return decomposeBitMask(Pred, OrigC);
   }
 
   if (!AllowNonZeroC && !Result.C.isZero())
