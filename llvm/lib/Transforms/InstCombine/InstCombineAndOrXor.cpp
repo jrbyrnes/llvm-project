@@ -3672,8 +3672,6 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
             RHSDecompose->Mask.isPowerOf2() &&
             LHSDecompose->Mask.isPowerOf2() &&
             LHSDecompose->Mask != RHSDecompose->Mask) {
-          std::pair<const APInt *, const APInt *> LHSInts;
-          std::pair<const APInt *, const APInt *> RHSInts;
           if (LHSDecompose->Pred == ICmpInst::ICMP_NE) {
             std::swap(Op0Eq, Op0Ne);
             std::swap(Op1Eq, Op1Ne);
