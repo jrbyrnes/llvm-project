@@ -180,9 +180,11 @@ static unsigned conjugateICmpMask(unsigned Mask) {
 
 // Adapts the external decomposeBitTestICmp for local use.
 static bool decomposeBitTestICmp(Value *Cond, CmpInst::Predicate &Pred,
-                                 Value *&X, Value *&Y, Value *&Z) {
+                                 Value *&X, Value *&Y, Value *&Z,
+                                 bool DecomposeBitMask = false) {
   auto Res = llvm::decomposeBitTest(Cond, /*LookThroughTrunc=*/true,
-                                    /*AllowNonZeroC=*/true);
+                                    /*AllowNonZeroC=*/true,
+                                    /*DecomposeBitMask=*/DecomposeBitMask);
   if (!Res)
     return false;
 
@@ -3655,41 +3657,37 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
               m_Select(m_Value(Cond1), m_APInt(Op1Eq), m_APInt(Op1Ne)))) {
       CmpPredicate Pred0, Pred1;
 
-      if (ICmpInst *ICL = dyn_cast<ICmpInst>(Cond0);
-          ICmpInst *ICR = dyn_cast<ICmpInst>(Cond1)) {
-        auto LHSDecompose =
-            decomposeBitTestICmp(ICL->getOperand(0), ICL->getOperand(1),
-                                 ICL->getPredicate(), true, false, true);
-        auto RHSDecompose =
-            decomposeBitTestICmp(ICR->getOperand(0), ICR->getOperand(1),
-                                 ICR->getPredicate(), true, false, true);
-        if (LHSDecompose && RHSDecompose &&
-            LHSDecompose->X == RHSDecompose->X &&
-            LHSDecompose->Pred == RHSDecompose->Pred &&
-            (ICmpInst::isEquality(LHSDecompose->Pred)) &&
-            !RHSDecompose->Mask.isNegative() &&
-            !LHSDecompose->Mask.isNegative() &&
-            RHSDecompose->Mask.isPowerOf2() &&
-            LHSDecompose->Mask.isPowerOf2() &&
-            LHSDecompose->Mask != RHSDecompose->Mask) {
-          if (LHSDecompose->Pred == ICmpInst::ICMP_NE) {
-            std::swap(Op0Eq, Op0Ne);
-            std::swap(Op1Eq, Op1Ne);
-          }
+      auto LHSDecompose =
+          decomposeBitTest(Cond0, /*LookThruTrunc=*/true,
+                           /*AllowNonZeroC=*/false, /*DecomposeBitMask=*/true);
+      auto RHSDecompose =
+          decomposeBitTest(Cond1, /*LookThruTrunc=*/true,
+                           /*AllowNonZeroC=*/false, /*DecomposeBitMask=*/true);
 
-          if (!Op0Ne->isNegative() && !Op1Ne->isNegative() && Op0Eq->isZero() &&
-              Op1Eq->isZero() && Op0Ne->urem(LHSDecompose->Mask).isZero() &&
-              Op1Ne->urem(RHSDecompose->Mask).isZero() &&
-              Op0Ne->udiv(LHSDecompose->Mask) ==
-                  Op1Ne->udiv(RHSDecompose->Mask)) {
-            auto NewAnd = Builder.CreateAnd(
-                LHSDecompose->X,
-                ConstantInt::get(LHSDecompose->X->getType(),
-                                 (LHSDecompose->Mask + RHSDecompose->Mask)));
-            return BinaryOperator::CreateMul(
-                NewAnd, ConstantInt::get(NewAnd->getType(),
-                                         Op0Ne->udiv(LHSDecompose->Mask)));
-          }
+      if (LHSDecompose && RHSDecompose && LHSDecompose->X == RHSDecompose->X &&
+          LHSDecompose->Pred == RHSDecompose->Pred &&
+          (ICmpInst::isEquality(LHSDecompose->Pred)) &&
+          !RHSDecompose->Mask.isNegative() &&
+          !LHSDecompose->Mask.isNegative() && RHSDecompose->Mask.isPowerOf2() &&
+          LHSDecompose->Mask.isPowerOf2() &&
+          LHSDecompose->Mask != RHSDecompose->Mask) {
+        if (LHSDecompose->Pred == ICmpInst::ICMP_NE) {
+          std::swap(Op0Eq, Op0Ne);
+          std::swap(Op1Eq, Op1Ne);
+        }
+        if (!Op0Ne->isNegative() && !Op1Ne->isNegative() && Op0Eq->isZero() &&
+            Op1Eq->isZero() && Op0Ne->urem(LHSDecompose->Mask).isZero() &&
+            Op1Ne->urem(RHSDecompose->Mask).isZero() &&
+            Op0Ne->udiv(LHSDecompose->Mask) ==
+                Op1Ne->udiv(RHSDecompose->Mask)) {
+          auto NewAnd = Builder.CreateAnd(
+              LHSDecompose->X,
+              ConstantInt::get(LHSDecompose->X->getType(),
+                               (LHSDecompose->Mask + RHSDecompose->Mask)));
+
+          return BinaryOperator::CreateMul(
+              NewAnd, ConstantInt::get(NewAnd->getType(),
+                                       Op0Ne->udiv(LHSDecompose->Mask)));
         }
       }
     }
