@@ -2119,8 +2119,8 @@ define i32 @add_select_cmp_and4(i32 %in) {
   ret i32 %out
 }
 
-define i32 @add_select_cmp_and_mismatch(i32 %in) {
-; CHECK-LABEL: @add_select_cmp_and_mismatch(
+define i32 @add_select_cmp_and_const_mismatch(i32 %in) {
+; CHECK-LABEL: @add_select_cmp_and_const_mismatch(
 ; CHECK-NEXT:    [[BITOP0:%.*]] = and i32 [[IN:%.*]], 1
 ; CHECK-NEXT:    [[CMP0:%.*]] = icmp eq i32 [[BITOP0]], 0
 ; CHECK-NEXT:    [[BITOP1:%.*]] = and i32 [[IN]], 2
@@ -2136,6 +2136,27 @@ define i32 @add_select_cmp_and_mismatch(i32 %in) {
   %cmp1 = icmp eq i32 %bitop1, 0
   %sel0 = select i1 %cmp0, i32 0, i32 72
   %sel1 = select i1 %cmp1, i32 0, i32 288
+  %out = or disjoint i32 %sel0, %sel1
+  ret i32 %out
+}
+
+define i32 @add_select_cmp_and_value_mismatch(i32 %in, i32 %in1) {
+; CHECK-LABEL: @add_select_cmp_and_value_mismatch(
+; CHECK-NEXT:    [[BITOP0:%.*]] = and i32 [[IN:%.*]], 1
+; CHECK-NEXT:    [[CMP0:%.*]] = icmp eq i32 [[BITOP0]], 0
+; CHECK-NEXT:    [[BITOP1:%.*]] = and i32 [[IN1:%.*]], 2
+; CHECK-NEXT:    [[CMP1:%.*]] = icmp eq i32 [[BITOP1]], 0
+; CHECK-NEXT:    [[SEL0:%.*]] = select i1 [[CMP0]], i32 0, i32 72
+; CHECK-NEXT:    [[SEL1:%.*]] = select i1 [[CMP1]], i32 0, i32 144
+; CHECK-NEXT:    [[OUT:%.*]] = or disjoint i32 [[SEL0]], [[SEL1]]
+; CHECK-NEXT:    ret i32 [[OUT]]
+;
+  %bitop0 = and i32 %in, 1
+  %cmp0 = icmp eq i32 %bitop0, 0
+  %bitop1 = and i32 %in1, 2
+  %cmp1 = icmp eq i32 %bitop1, 0
+  %sel0 = select i1 %cmp0, i32 0, i32 72
+  %sel1 = select i1 %cmp1, i32 0, i32 144
   %out = or disjoint i32 %sel0, %sel1
   ret i32 %out
 }
