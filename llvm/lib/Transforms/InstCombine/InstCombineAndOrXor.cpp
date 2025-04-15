@@ -3645,61 +3645,52 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
       return R;
 
     Value *Cond0 = nullptr, *Cond1 = nullptr;
-    const APInt *Op0True = nullptr, *Op0False = nullptr;
-    const APInt *Op1True = nullptr, *Op1False = nullptr;
+    const APInt *Op0Eq = nullptr, *Op0Ne = nullptr;
+    const APInt *Op1Eq = nullptr, *Op1Ne = nullptr;
 
     //  (!(A & N) ? 0 : N * C) + (!(A & M) ? 0 : M * C) -> A & (N + M) * C
     if (match(I.getOperand(0),
-              m_Select(m_Value(Cond0), m_APInt(Op0True), m_APInt(Op0False))) &&
+              m_Select(m_Value(Cond0), m_APInt(Op0Eq), m_APInt(Op0Ne))) &&
         match(I.getOperand(1),
-              m_Select(m_Value(Cond1), m_APInt(Op1True), m_APInt(Op1False))) &&
-        Op0True->isZero() && Op1True->isZero()) {
+              m_Select(m_Value(Cond1), m_APInt(Op1Eq), m_APInt(Op1Ne)))) {
       CmpPredicate Pred0, Pred1;
 
       if (ICmpInst *ICL = dyn_cast<ICmpInst>(Cond0);
           ICmpInst *ICR = dyn_cast<ICmpInst>(Cond1)) {
         auto LHSDecompose =
             decomposeBitTestICmp(ICL->getOperand(0), ICL->getOperand(1),
-                                 ICL->getPredicate(), true, true, true);
+                                 ICL->getPredicate(), true, false, true);
         auto RHSDecompose =
             decomposeBitTestICmp(ICR->getOperand(0), ICR->getOperand(1),
-                                 ICR->getPredicate(), true, true, true);
+                                 ICR->getPredicate(), true, false, true);
         if (LHSDecompose && RHSDecompose &&
+            LHSDecompose->X == RHSDecompose->X &&
             LHSDecompose->Pred == RHSDecompose->Pred &&
-            (LHSDecompose->Pred == ICmpInst::ICMP_EQ ||
-             LHSDecompose->Pred == ICmpInst::ICMP_NE) &&
-            ((LHSDecompose->Mask & RHSDecompose->Mask) ==
-             APInt::getZero(LHSDecompose->Mask.getBitWidth())) &&
-            LHSDecompose->C.isZero() && RHSDecompose->C.isZero() &&
+            (ICmpInst::isEquality(LHSDecompose->Pred)) &&
             !RHSDecompose->Mask.isNegative() &&
             !LHSDecompose->Mask.isNegative() &&
             RHSDecompose->Mask.isPowerOf2() &&
-            LHSDecompose->Mask.isPowerOf2()) {
+            LHSDecompose->Mask.isPowerOf2() &&
+            LHSDecompose->Mask != RHSDecompose->Mask) {
           std::pair<const APInt *, const APInt *> LHSInts;
           std::pair<const APInt *, const APInt *> RHSInts;
-
-          if (LHSDecompose->Pred == ICmpInst::ICMP_EQ) {
-            LHSInts = {Op0False, Op0True};
-            RHSInts = {Op1False, Op1True};
-          } else {
-            LHSInts = {Op0True, Op0False};
-            RHSInts = {Op1True, Op1False};
+          if (LHSDecompose->Pred == ICmpInst::ICMP_NE) {
+            std::swap(Op0Eq, Op0Ne);
+            std::swap(Op1Eq, Op1Ne);
           }
 
-          if (!LHSInts.first->isNegative() && !RHSInts.first->isNegative() &&
-              LHSInts.second->isZero() && RHSInts.second->isZero() &&
-              LHSInts.first->urem(LHSDecompose->Mask).isZero() &&
-              RHSInts.first->urem(RHSDecompose->Mask).isZero() &&
-              LHSInts.first->udiv(LHSDecompose->Mask) ==
-                  RHSInts.first->udiv(RHSDecompose->Mask)) {
+          if (!Op0Ne->isNegative() && !Op1Ne->isNegative() && Op0Eq->isZero() &&
+              Op1Eq->isZero() && Op0Ne->urem(LHSDecompose->Mask).isZero() &&
+              Op1Ne->urem(RHSDecompose->Mask).isZero() &&
+              Op0Ne->udiv(LHSDecompose->Mask) ==
+                  Op1Ne->udiv(RHSDecompose->Mask)) {
             auto NewAnd = Builder.CreateAnd(
                 LHSDecompose->X,
                 ConstantInt::get(LHSDecompose->X->getType(),
                                  (LHSDecompose->Mask + RHSDecompose->Mask)));
             return BinaryOperator::CreateMul(
-                NewAnd,
-                ConstantInt::get(NewAnd->getType(),
-                                 LHSInts.first->udiv(LHSDecompose->Mask)));
+                NewAnd, ConstantInt::get(NewAnd->getType(),
+                                         Op0Ne->udiv(LHSDecompose->Mask)));
           }
         }
       }
