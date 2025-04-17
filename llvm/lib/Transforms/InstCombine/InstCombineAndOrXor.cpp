@@ -3720,19 +3720,88 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
 
     auto Decomp0 = matchBitmaskMul(I.getOperand(0));
     auto Decomp1 = matchBitmaskMul(I.getOperand(1));
+    auto areCompatibleDecomps = [](std::optional<DecomposedBitTestExtend> D0, std::optional<DecomposedBitTestExtend> D1) {
+      return (D0->X == D1->X) && (D0->Mask & D1->Mask).isZero() && D0->Factor == D1->Factor;
+    };
 
-    if (Decomp0 && Decomp1) {
-      if (Decomp0->X == Decomp1->X &&
-          (Decomp0->Mask & Decomp1->Mask).isZero() &&
-          Decomp0->Factor == Decomp1->Factor) {
+    if (Decomp0 && Decomp1 && areCompatibleDecomps(Decomp0, Decomp1)) {
         auto NewAnd = Builder.CreateAnd(
             Decomp0->X, ConstantInt::get(Decomp0->X->getType(),
                                          (Decomp0->Mask + Decomp1->Mask)));
 
         return BinaryOperator::CreateMul(
             NewAnd, ConstantInt::get(NewAnd->getType(), Decomp1->Factor));
+
+    }
+    else if (Decomp0 || Decomp1) {
+      Value *OtherOp = Decomp0 ? I.getOperand(1) : I.getOperand(0);
+      std::optional<DecomposedBitTestExtend> FirstDecomp = Decomp0 ? Decomp0 : Decomp1;
+      auto Disjoint = dyn_cast<PossiblyDisjointInst>(OtherOp);
+      if (Disjoint && Disjoint->isDisjoint() && Disjoint->getOpcode() == Instruction::Or) {
+        auto OtherOpDecomp0 = matchBitmaskMul(Disjoint->getOperand(0));
+        auto OtherOpDecomp1 = matchBitmaskMul(Disjoint->getOperand(1));
+        if (OtherOpDecomp0 || OtherOpDecomp1) {
+          Value *OtherOp1 = OtherOpDecomp0 ? Disjoint->getOperand(1) : Disjoint->getOperand(0);
+          std::optional<DecomposedBitTestExtend> SecondDecomp = OtherOpDecomp0 ? OtherOpDecomp0 : OtherOpDecomp1;
+          if (areCompatibleDecomps(FirstDecomp, SecondDecomp)) {
+            auto NewAnd = Builder.CreateAnd(
+            FirstDecomp->X, ConstantInt::get(FirstDecomp->X->getType(),
+                                         (FirstDecomp->Mask + SecondDecomp->Mask)));
+
+            auto NewMul = Builder.CreateMul(
+              NewAnd, ConstantInt::get(NewAnd->getType(), SecondDecomp->Factor));
+            
+            return BinaryOperator::CreateDisjointOr(NewMul, OtherOp1);
+          }
+        }
       }
     }
+
+    else {
+      auto Disjoint0 = dyn_cast<PossiblyDisjointInst>(I.getOperand(0));
+      auto Disjoint1 = dyn_cast<PossiblyDisjointInst>(I.getOperand(1));
+
+      if (Disjoint0 && Disjoint1 && Disjoint0->getOpcode() == Instruction::Or && Disjoint1->getOpcode() == Instruction::Or && Disjoint0->isDisjoint() && Disjoint1->isDisjoint()) {
+        auto Decomp00 = matchBitmaskMul(Disjoint0->getOperand(0));
+        auto Decomp01 = matchBitmaskMul(Disjoint0->getOperand(1));
+        auto Decomp10 = matchBitmaskMul(Disjoint1->getOperand(0));
+        auto Decomp11 = matchBitmaskMul(Disjoint1->getOperand(1));
+
+        if ((Decomp00 || Decomp01) && (Decomp10 || Decomp11)) {
+
+          std::optional<DecomposedBitTestExtend> FirstDecomp = Decomp00, SecondDecomp = Decomp10;
+          Value *FirstOtherVal = Disjoint0->getOperand(1), *SecondOtherVal = Disjoint1->getOperand(1);
+
+          if (Decomp01) {
+            FirstDecomp = Decomp01;
+            FirstOtherVal = Disjoint0->getOperand(0);
+          }
+
+          if (Decomp11) {
+            SecondDecomp = Decomp11;
+            SecondOtherVal = Disjoint1->getOperand(0);
+          }
+
+          if (areCompatibleDecomps(FirstDecomp, SecondDecomp)) {
+            auto NewAnd = Builder.CreateAnd(
+              FirstDecomp->X, ConstantInt::get(FirstDecomp->X->getType(),
+                                         (FirstDecomp->Mask + SecondDecomp->Mask)));
+            auto NewMul = Builder.CreateMul(
+              NewAnd, ConstantInt::get(NewAnd->getType(), SecondDecomp->Factor));
+            
+            auto NewOr = Builder.CreateOr(FirstOtherVal, SecondOtherVal);
+            cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+
+            return BinaryOperator::CreateDisjointOr(NewMul, NewOr);
+
+          }
+
+        }
+
+      }
+    }
+
+
   }
 
   Value *X, *Y;
@@ -4803,6 +4872,7 @@ Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
   // purpose is to compute bits we don't care about.
   if (SimplifyDemandedInstructionBits(I))
     return &I;
+
 
   if (Instruction *R = foldNot(I))
     return R;
