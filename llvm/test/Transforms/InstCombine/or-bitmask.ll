@@ -36,13 +36,9 @@ define i32 @add_select_cmp_and2(i32 %in) {
 
 define i32 @add_select_cmp_and3(i32 %in) {
 ; CHECK-LABEL: @add_select_cmp_and3(
-; CHECK-NEXT:    [[TMP1:%.*]] = and i32 [[IN:%.*]], 3
+; CHECK-NEXT:    [[TMP1:%.*]] = and i32 [[IN:%.*]], 7
 ; CHECK-NEXT:    [[TEMP:%.*]] = mul nuw nsw i32 [[TMP1]], 72
-; CHECK-NEXT:    [[BITOP2:%.*]] = and i32 [[IN]], 4
-; CHECK-NEXT:    [[CMP2:%.*]] = icmp eq i32 [[BITOP2]], 0
-; CHECK-NEXT:    [[SEL2:%.*]] = select i1 [[CMP2]], i32 0, i32 288
-; CHECK-NEXT:    [[OUT:%.*]] = or disjoint i32 [[TEMP]], [[SEL2]]
-; CHECK-NEXT:    ret i32 [[OUT]]
+; CHECK-NEXT:    ret i32 [[TEMP]]
 ;
   %bitop0 = and i32 %in, 1
   %cmp0 = icmp eq i32 %bitop0, 0
@@ -60,12 +56,9 @@ define i32 @add_select_cmp_and3(i32 %in) {
 
 define i32 @add_select_cmp_and4(i32 %in) {
 ; CHECK-LABEL: @add_select_cmp_and4(
-; CHECK-NEXT:    [[TMP1:%.*]] = and i32 [[IN:%.*]], 3
-; CHECK-NEXT:    [[OUT:%.*]] = mul nuw nsw i32 [[TMP1]], 72
-; CHECK-NEXT:    [[TMP2:%.*]] = and i32 [[IN]], 12
+; CHECK-NEXT:    [[TMP2:%.*]] = and i32 [[IN:%.*]], 15
 ; CHECK-NEXT:    [[TEMP3:%.*]] = mul nuw nsw i32 [[TMP2]], 72
-; CHECK-NEXT:    [[OUT1:%.*]] = or disjoint i32 [[OUT]], [[TEMP3]]
-; CHECK-NEXT:    ret i32 [[OUT1]]
+; CHECK-NEXT:    ret i32 [[TEMP3]]
 ;
   %bitop0 = and i32 %in, 1
   %cmp0 = icmp eq i32 %bitop0, 0
