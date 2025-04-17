@@ -3801,7 +3801,34 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
       }
     }
 
+    auto Inst0 = dyn_cast<Instruction>(I.getOperand(0));
+    auto Inst1 = dyn_cast<Instruction>(I.getOperand(1));
+    if ((Inst0 && Inst0->getOpcode() == Instruction::Xor) || (Inst1 && Inst1->getOpcode() == Instruction::Xor)) {
+      Instruction *Xor = Inst0->getOpcode() == Instruction::Xor ? Inst0 : Inst1;
+      Value *OtherOp = Inst0->getOpcode() == Instruction::Xor ? I.getOperand(1) : I.getOperand(0);
 
+      auto C0 = dyn_cast<ConstantInt>(Xor->getOperand(0));
+      auto C1 = dyn_cast<ConstantInt>(Xor->getOperand(1));
+
+      if (C0 || C1) {
+        Value *TheConst = C0 ? Xor->getOperand(0) : Xor->getOperand(1);
+        Value *Other = C0 ? Xor->getOperand(1) : Xor->getOperand(0);
+
+
+      KnownBits LHSKnown =
+          computeKnownBits(Other, /*Depth=*/0, Xor);
+      KnownBits RHSKnown =
+          computeKnownBits(OtherOp, /*Depth=*/0, &I);
+      KnownBits ConstKnown = computeKnownBits(TheConst, /*Depth=*/0, Xor);
+      if (KnownBits::haveNoCommonBitsSet(RHSKnown, ConstKnown)) {
+        auto NewOr = Builder.CreateOr(TheConst, OtherOp);
+        cast<PossiblyDisjointInst>(NewOr)->setIsDisjoint(true);
+        return BinaryOperator::CreateXor(Other, NewOr);
+      }
+
+
+      }
+    }
   }
 
   Value *X, *Y;
@@ -4946,6 +4973,8 @@ Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
 
       }
     }
+
+
 
 
   if (Instruction *R = foldNot(I))
