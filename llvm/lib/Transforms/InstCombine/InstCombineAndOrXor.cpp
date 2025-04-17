@@ -3803,7 +3803,7 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
 
     auto Inst0 = dyn_cast<Instruction>(I.getOperand(0));
     auto Inst1 = dyn_cast<Instruction>(I.getOperand(1));
-    if ((Inst0 && Inst0->getOpcode() == Instruction::Xor) || (Inst1 && Inst1->getOpcode() == Instruction::Xor)) {
+    if (false && ((Inst0 && Inst0->getOpcode() == Instruction::Xor) || (Inst1 && Inst1->getOpcode() == Instruction::Xor))) {
       Instruction *Xor = Inst0->getOpcode() == Instruction::Xor ? Inst0 : Inst1;
       Value *OtherOp = Inst0->getOpcode() == Instruction::Xor ? I.getOperand(1) : I.getOperand(0);
 
@@ -4901,13 +4901,25 @@ Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
     return &I;
 
 
+
     auto Decomp0 = matchBitmaskMul(I.getOperand(0));
     auto Decomp1 = matchBitmaskMul(I.getOperand(1));
     auto areCompatibleDecomps = [](std::optional<DecomposedBitTestExtend> D0, std::optional<DecomposedBitTestExtend> D1) {
       return (D0->X == D1->X) && (D0->Mask & D1->Mask).isZero() && D0->Factor == D1->Factor;
     };
 
-    if (Decomp0 || Decomp1) {
+    if (Decomp0 && Decomp1 && areCompatibleDecomps(Decomp0, Decomp1)) {
+        auto NewAnd = Builder.CreateAnd(
+            Decomp0->X, ConstantInt::get(Decomp0->X->getType(),
+                                         (Decomp0->Mask + Decomp1->Mask)));
+
+        return BinaryOperator::CreateMul(
+            NewAnd, ConstantInt::get(NewAnd->getType(), Decomp1->Factor));
+
+    }
+
+
+    else if (Decomp0 || Decomp1) {
       Value *OtherOp = Decomp0 ? I.getOperand(1) : I.getOperand(0);
       std::optional<DecomposedBitTestExtend> FirstDecomp = Decomp0 ? Decomp0 : Decomp1;
       auto Disjoint = dyn_cast<PossiblyDisjointInst>(OtherOp);
