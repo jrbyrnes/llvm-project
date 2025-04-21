@@ -3614,6 +3614,9 @@ static std::optional<DecomposedBitTestExtend> matchBitmaskMul(Value *V) {
     if (!ICmpDecompose->Mask.isStrictlyPositive())
       return std::nullopt;
 
+    if (NeZero->getBitWidth() != ICmpDecompose->Mask.getBitWidth())
+      return std::nullopt;
+
     if (!NeZero->urem(ICmpDecompose->Mask).isZero())
       return std::nullopt;
 
