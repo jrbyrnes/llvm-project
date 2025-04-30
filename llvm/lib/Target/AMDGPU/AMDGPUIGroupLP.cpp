@@ -77,8 +77,10 @@ enum class SchedGroupMask {
   DS_WRITE = 1u << 9,
   TRANS = 1u << 10,
   PACK = 1u << 11,
+  FMA = 1u << 12,
+  FMA2 = 1u << 13,
   ALL = ALU | VALU | SALU | MFMA | VMEM | VMEM_READ | VMEM_WRITE | DS |
-        DS_READ | DS_WRITE | TRANS | PACK,
+        DS_READ | DS_WRITE | TRANS | PACK | FMA | FMA2,
   LLVM_MARK_AS_BITMASK_ENUM(/* LargestFlag = */ ALL)
 };
 
@@ -2431,6 +2433,14 @@ bool SchedGroup::canAddMI(const MachineInstr &MI) const {
            TII->isVOP3P(MI) && !TII->isMFMAorWMMA(MI))
     Result = true;
 
+  else if (((SGMask & SchedGroupMask::FMA) != SchedGroupMask::NONE) &&
+           MI.getOpcode() == AMDGPU::V_FMAC_F32_e32)
+    Result = true;
+
+  else if (((SGMask & SchedGroupMask::FMA2) != SchedGroupMask::NONE) &&
+           MI.getOpcode() == AMDGPU::V_FMA_F32_e64)
+    Result = true;
+
   LLVM_DEBUG(
       dbgs() << "For SchedGroup with mask " << format_hex((int)SGMask, 10, true)
              << (Result ? " could classify " : " unable to classify ") << MI);
@@ -2613,12 +2623,15 @@ IGroupLPDAGMutation::invertSchedBarrierMask(SchedGroupMask Mask) const {
   // ALU implies VALU, SALU, MFMA, TRANS.
   if ((InvertedMask & SchedGroupMask::ALU) == SchedGroupMask::NONE)
     InvertedMask &= ~SchedGroupMask::VALU & ~SchedGroupMask::SALU &
-                    ~SchedGroupMask::MFMA & ~SchedGroupMask::TRANS;
-  // VALU, SALU, MFMA, TRANS implies ALU.
+                    ~SchedGroupMask::MFMA & ~SchedGroupMask::TRANS &
+                    ~SchedGroupMask::FMA & ~SchedGroupMask::FMA2;
+  // VALU, SALU, MFMA, TRANS, FMA implies ALU.
   else if ((InvertedMask & SchedGroupMask::VALU) == SchedGroupMask::NONE ||
            (InvertedMask & SchedGroupMask::SALU) == SchedGroupMask::NONE ||
            (InvertedMask & SchedGroupMask::MFMA) == SchedGroupMask::NONE ||
-           (InvertedMask & SchedGroupMask::TRANS) == SchedGroupMask::NONE)
+           (InvertedMask & SchedGroupMask::TRANS) == SchedGroupMask::NONE ||
+           (InvertedMask & SchedGroupMask::FMA) == SchedGroupMask::NONE ||
+           (InvertedMask & SchedGroupMask::FMA2) == SchedGroupMask::NONE)
     InvertedMask &= ~SchedGroupMask::ALU;
 
   // VMEM implies VMEM_READ, VMEM_WRITE.
