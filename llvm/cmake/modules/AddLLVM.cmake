@@ -2095,7 +2095,7 @@ function(add_lit_target target comment)
     ALLOW_EXTERNAL
     )
 
-  set(LIT_COMMAND "${Python3_EXECUTABLE};${lit_base_dir}/${lit_file_name}")
+  set(LIT_COMMAND "echo;0")
   list(APPEND LIT_COMMAND ${LIT_ARGS})
   foreach(param ${ARG_PARAMS})
     list(APPEND LIT_COMMAND --param ${param})

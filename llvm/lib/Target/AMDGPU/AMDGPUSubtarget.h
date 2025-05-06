@@ -85,6 +85,11 @@ public:
   static const AMDGPUSubtarget &get(const TargetMachine &TM,
                                     const Function &F);
 
+  unsigned getOccupancyWithLocalMemSize(uint32_t Bytes,
+                                        const Function &F) const;
+
+  unsigned getOccupancyWithLocalMemSize(const MachineFunction &MF) const;
+
   /// \returns Default range flat work group size for a calling convention.
   std::pair<unsigned, unsigned> getDefaultFlatWorkGroupSize(CallingConv::ID CC) const;
 
