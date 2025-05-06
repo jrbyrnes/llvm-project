@@ -75,7 +75,7 @@ static cl::opt<bool> RematLiveIn(
     "amdgpu-remat-into", cl::Hidden,
     cl::desc("Rematerialize any LiveIn registers for the first loop found in "
              "the code (may rematerialize into body of loop)"),
-    cl::init(true));
+    cl::init(false));
 
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
