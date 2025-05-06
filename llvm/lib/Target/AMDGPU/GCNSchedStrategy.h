@@ -15,6 +15,7 @@
 
 #include "GCNRegPressure.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PriorityWorklist.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -29,8 +30,7 @@ enum class GCNSchedStageID : unsigned {
   UnclusteredHighRPReschedule = 1,
   ClusteredLowOccupancyReschedule = 2,
   PreRARematerialize = 3,
-  ILPInitialSchedule = 4,
-  MemoryClauseInitialSchedule = 5
+  ILPInitialSchedule = 4
 };
 
 #ifndef NDEBUG
@@ -101,9 +101,9 @@ public:
 
   unsigned VGPRCriticalLimit;
 
-  unsigned SGPRLimitBias = 0;
+  unsigned SGPRLimitBias = 7;
 
-  unsigned VGPRLimitBias = 0;
+  unsigned VGPRLimitBias = 7;
 
   GCNSchedStrategy(const MachineSchedContext *C);
 
@@ -148,17 +148,6 @@ protected:
 
 public:
   GCNMaxILPSchedStrategy(const MachineSchedContext *C);
-};
-
-/// The goal of this scheduling strategy is to maximize memory clause for a
-/// single wave.
-class GCNMaxMemoryClauseSchedStrategy final : public GCNSchedStrategy {
-protected:
-  bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
-                    SchedBoundary *Zone) const override;
-
-public:
-  GCNMaxMemoryClauseSchedStrategy(const MachineSchedContext *C);
 };
 
 class ScheduleMetrics {
@@ -208,7 +197,7 @@ public:
 
   // Retrieve the LiveReg for a given RegionIdx
   GCNRPTracker::LiveRegSet &getLiveRegsForRegionIdx(unsigned RegionIdx) {
-    assert(IdxToInstruction.contains(RegionIdx));
+    assert(IdxToInstruction.find(RegionIdx) != IdxToInstruction.end());
     MachineInstr *Key = IdxToInstruction[RegionIdx];
     return RegionLiveRegMap[Key];
   }
@@ -431,8 +420,200 @@ public:
       : GCNSchedStage(StageID, DAG) {}
 };
 
+
+class RematCandidate {
+public:
+  MachineInstr *Def = nullptr;
+  unsigned LoopCost;
+  std::set<unsigned> HighRPRegions;
+  MachineBasicBlock::iterator InsertPt;
+
+
+  bool operator<(const RematCandidate &Other) const {
+    if (LoopCost < Other.LoopCost)
+      return true;
+    
+    if (LoopCost == Other.LoopCost) {
+      if (Def < Other.Def)
+        return true;
+      
+      if (Def == Other.Def) {
+        return InsertPt->getParent() < Other.InsertPt->getParent();
+      }
+    }
+
+    return false;
+  }
+
+
+  RematCandidate(MachineInstr *Def, unsigned LoopCost, unsigned HighRPRegion, MachineBasicBlock::iterator InsertPt) :
+    Def(Def), LoopCost(LoopCost), InsertPt(InsertPt) {
+      HighRPRegions.insert(HighRPRegion);
+    }
+
+    RematCandidate(MachineInstr *Def, unsigned LoopCost,
+                   std::set<unsigned> HighRPRegions,
+                   MachineBasicBlock::iterator InsertPt)
+        : Def(Def), LoopCost(LoopCost), HighRPRegions(HighRPRegions),
+          InsertPt(InsertPt) {}
+private:
+  friend Printable print(const RematCandidate R);
+};
+
+
+
+
+class RematCandidates {
+private:
+  std::set<RematCandidate> Entries;
+  unsigned MaxLoopCost = 0;
+
+public:
+  using iterator = typename std::set<RematCandidate>::iterator;
+  using const_iterator = typename std::set<RematCandidate>::const_iterator;
+  using reverse_iterator = typename std::set<RematCandidate>::reverse_iterator;
+  using const_reverse_iterator = typename std::set<RematCandidate>::const_reverse_iterator;
+
+  iterator begin() { return Entries.begin(); }
+  const_iterator begin() const { return Entries.begin(); }
+  iterator end() { return Entries.end(); }
+  const_iterator end() const { return Entries.end(); }
+
+  reverse_iterator rbegin() { return Entries.rbegin(); }
+  const_reverse_iterator rbegin() const { return Entries.rbegin(); }
+  reverse_iterator rend() { return Entries.rend(); }
+  const_reverse_iterator rend() const { return Entries.rend(); }
+
+  unsigned getDeferCostThreshold() {return MaxLoopCost;}
+
+  bool empty() const {
+    return Entries.empty();
+  }
+
+  void insert(const RematCandidate &R) { 
+    if (R.LoopCost > MaxLoopCost) {
+      MaxLoopCost = R.LoopCost;
+    }
+    Entries.insert(R); 
+  }
+  void clear() { Entries.clear(); }
+  bool update(RematCandidate &RNew, const LiveIntervals *LIS) {
+    errs() << "Update: "; RNew.Def->dump();
+    //errs() << "Calling update for cand: ";
+    //RNew.Def->dump();
+    //errs() << "With Regions: ";
+    //for (auto Regi : RNew.HighRPRegions) {
+    //  errs() << Regi;
+    //}
+    //errs() << "\n";
+    auto Match = find_if(Entries, [RNew](const RematCandidate &R) {
+      if (R.Def == RNew.Def) {
+        //errs() << "equal defs for cand match: \n";
+
+          //R.Def->dump();
+    //errs() << "With Regions: ";
+    //for (auto Regi : R.HighRPRegions) {
+    //  errs() << Regi;
+    //}
+    //errs() << "\n";
+
+        //errs() << "RNew parent: " << RNew.InsertPt->getParent()->getName() << "\n";
+        //errs() << "R parent: " << R.InsertPt->getParent()->getName() << "\n";
+      }
+      return R.Def == RNew.Def &&
+             RNew.InsertPt->getParent() == R.InsertPt->getParent();
+    });
+    if (Match != Entries.end()) {
+      RematCandidate *TheMatch = const_cast<RematCandidate *>(&*Match);
+
+      for (auto NewRegion : RNew.HighRPRegions)
+        TheMatch->HighRPRegions.insert(NewRegion);
+
+      if (SlotIndex::isEarlierInstr(
+              LIS->getInstructionIndex(*RNew.InsertPt).getRegSlot(),
+              LIS->getInstructionIndex(*Match->InsertPt).getRegSlot())) {
+
+        if (RNew.InsertPt != RNew.InsertPt->getParent()->begin())
+          TheMatch->InsertPt = &*std::prev(RNew.InsertPt);
+        else
+          TheMatch->InsertPt = RNew.InsertPt;
+
+
+
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool updateOrInsert(RematCandidate &RNew, const LiveIntervals *LIS) {
+    if (!update(RNew, LIS)) {
+      insert(RNew);
+    }
+
+    return true;
+  }
+
+  void resolveSameBlockUses(const MachineRegisterInfo *MRI,
+                            const LiveIntervals *LIS) {
+                              errs() << "\nResolve Same Block uses";
+    // We may have added remat candidates which are used by other remat
+    // candidates -- be sure that we have correct insert points for this
+    bool FixedPoint = false;
+    while (!FixedPoint) {
+      errs() << "Fixed Point iter\n";
+      // errs() << "Doling fixed point\n";
+      FixedPoint = true;
+      for (auto &RematEntry : Entries) {
+
+        MachineInstr *RematInst = RematEntry.Def;
+        errs() << "R: "; RematInst->dump();
+        errs() << "For Regions: ";
+        for (auto Regi : RematEntry.HighRPRegions) {
+          errs() << "" << Regi << ", ";
+        }
+        errs() << "\n";
+        MachineBasicBlock::iterator RematPt = RematEntry.InsertPt;
+        // for (auto RematInst : RematEntry.second) {
+        //   errs() << "Have Remat Inst: "; RematInst.first->dump();
+        // errs() << "With Insert Point: " <<
+        // DAG.LIS->getInstructionIndex(*RematInst.second) << "\n";
+        for (auto MO : RematInst->operands()) {
+          if (!MO.isReg() || !MO.getReg() || !MO.readsReg())
+            continue;
+          auto UseReg = MO.getReg();
+          if (!UseReg.isVirtual())
+            continue;
+          // errs() << "Found UseReg: " << printReg(UseReg) << "\n";
+          for (MachineInstr &DefInst : MRI->def_instructions(UseReg)) {
+
+
+            auto Match = find_if(Entries, [&DefInst, &RematPt](const RematCandidate &R) {
+              return R.Def == &DefInst && 
+                RematPt->getParent() == R.InsertPt->getParent();
+            });
+
+            if (Match == Entries.end())
+              continue;
+
+            RematCandidate R(&DefInst, 0, RematEntry.HighRPRegions, RematPt);
+            bool MadeChange = update(R, LIS);
+            if (MadeChange)
+              FixedPoint = false;
+          }
+        }
+        //}
+      }
+    }
+  }
+
+  RematCandidates() {}
+  RematCandidates(std::set<RematCandidate> &Entries) : Entries(Entries) {}
+};
+
 class PreRARematStage : public GCNSchedStage {
 private:
+  
   // Each region at MinOccupancy will have their own list of trivially
   // rematerializable instructions we can remat to reduce RP. The list maps an
   // instruction to the position we should remat before, usually the MI using
@@ -440,13 +621,28 @@ private:
   MapVector<unsigned, MapVector<MachineInstr *, MachineInstr *>>
       RematerializableInsts;
 
+  RematCandidates Cands;
+
+  SmallVector<std::pair<MachineInstr *, MachineBasicBlock::iterator>> RematPlan;
+    
+  DenseMap<MachineInstr *, SmallPtrSet<MachineBasicBlock *, 16>> ToDelete;
+
   // Map a trivially rematerializable def to a list of regions at MinOccupancy
   // that has the defined reg as a live-in.
-  MapVector<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
+  DenseMap<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
 
+  MachineCycleInfo CI;
+
+  bool canRemat(Register Reg);
   // Collect all trivially rematerializable VGPR instructions with a single def
   // and single use outside the defining block into RematerializableInsts.
   void collectRematerializableInstructions();
+
+  void collectRematSeeds();
+
+  bool createRematPlan();
+
+  bool implementRematPlan(const TargetInstrInfo *TII);
 
   bool isTriviallyReMaterializable(const MachineInstr &MI);
 
@@ -455,12 +651,6 @@ private:
   // instructions. Returns true if we were able to sink instruction(s).
   bool sinkTriviallyRematInsts(const GCNSubtarget &ST,
                                const TargetInstrInfo *TII);
-
-  /// \p Returns true if all the uses in \p InstToRemat defined at \p
-  /// OriginalIdx are live at \p RematIdx. This only checks liveness of virtual
-  /// reg uses.
-  bool allUsesAvailableAt(const MachineInstr *InstToRemat,
-                          SlotIndex OriginalIdx, SlotIndex RematIdx) const;
 
 public:
   bool initGCNSchedStage() override;
@@ -478,15 +668,6 @@ public:
   bool shouldRevertScheduling(unsigned WavesAfter) override;
 
   ILPInitialScheduleStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
-      : GCNSchedStage(StageID, DAG) {}
-};
-
-class MemoryClauseInitialScheduleStage : public GCNSchedStage {
-public:
-  bool shouldRevertScheduling(unsigned WavesAfter) override;
-
-  MemoryClauseInitialScheduleStage(GCNSchedStageID StageID,
-                                   GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG) {}
 };
 
