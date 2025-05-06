@@ -899,8 +899,9 @@ void ScheduleDAGMI::releasePred(SUnit *SU, SDep *PredEdge) {
     PredSU->BotReadyCycle = SU->BotReadyCycle + PredEdge->getLatency();
 
   --PredSU->NumSuccsLeft;
-  if (PredSU->NumSuccsLeft == 0 && PredSU != &EntrySU)
+  if (PredSU->NumSuccsLeft == 0 && PredSU != &EntrySU) {
     SchedImpl->releaseBottomNode(PredSU);
+  }
 }
 
 /// releasePredecessors - Call releasePred on each of SU's predecessors.
@@ -1631,7 +1632,6 @@ void ScheduleDAGMILive::schedule() {
   LLVM_DEBUG(dump());
   if (PrintDAGs) dump();
   if (ViewMISchedDAGs) viewGraph();
-
   // Initialize ready queues now that the DAG and priority data are finalized.
   initQueues(TopRoots, BotRoots);
 

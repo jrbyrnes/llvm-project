@@ -597,17 +597,6 @@ createGCNMaxILPMachineScheduler(MachineSchedContext *C) {
   return DAG;
 }
 
-static ScheduleDAGInstrs *
-createGCNMaxMemoryClauseMachineScheduler(MachineSchedContext *C) {
-  const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
-  ScheduleDAGMILive *DAG = new GCNScheduleDAGMILive(
-      C, std::make_unique<GCNMaxMemoryClauseSchedStrategy>(C));
-  DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
-  if (ST.shouldClusterStores())
-    DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
-  DAG->addMutation(createAMDGPUExportClusteringDAGMutation());
-  return DAG;
-}
 
 static ScheduleDAGInstrs *
 createIterativeGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
@@ -652,10 +641,6 @@ GCNMaxOccupancySchedRegistry("gcn-max-occupancy",
 static MachineSchedRegistry
     GCNMaxILPSchedRegistry("gcn-max-ilp", "Run GCN scheduler to maximize ilp",
                            createGCNMaxILPMachineScheduler);
-
-static MachineSchedRegistry GCNMaxMemoryClauseSchedRegistry(
-    "gcn-max-memory-clause", "Run GCN scheduler to maximize memory clause",
-    createGCNMaxMemoryClauseMachineScheduler);
 
 static MachineSchedRegistry IterativeGCNMaxOccupancySchedRegistry(
     "gcn-iterative-max-occupancy-experimental",
@@ -1090,8 +1075,6 @@ GCNTargetMachine::createMachineScheduler(MachineSchedContext *C) const {
   if (SchedStrategy == "max-ilp")
     return createGCNMaxILPMachineScheduler(C);
 
-  if (SchedStrategy == "max-memory-clause")
-    return createGCNMaxMemoryClauseMachineScheduler(C);
 
   if (SchedStrategy == "iterative-ilp")
     return createIterativeILPMachineScheduler(C);
