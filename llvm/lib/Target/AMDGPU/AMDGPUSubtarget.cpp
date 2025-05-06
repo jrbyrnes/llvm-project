@@ -55,9 +55,59 @@ AMDGPUSubtarget::getMaxLocalMemSizeWithWaveCount(unsigned NWaves,
   return getLocalMemorySize() / WorkGroupsPerCU;
 }
 
-std::pair<unsigned, unsigned>
-AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(uint32_t LDSBytes,
-                                                const Function &F) const {
+// FIXME: Should return min,max range.
+//
+// Returns the maximum occupancy, in number of waves per SIMD / EU, that can
+// be achieved when only the given function is running on the machine; and
+// taking into account the overall number of wave slots, the (maximum) workgroup
+// size, and the per-workgroup LDS allocation size.
+unsigned AMDGPUSubtarget::getOccupancyWithLocalMemSize(uint32_t Bytes,
+  const Function &F) const {
+  const unsigned MaxWorkGroupSize = getFlatWorkGroupSizes(F).second;
+  const unsigned MaxWorkGroupsPerCu = getMaxWorkGroupsPerCU(MaxWorkGroupSize);
+  if (!MaxWorkGroupsPerCu)
+    return 0;
+
+  const unsigned WaveSize = getWavefrontSize();
+
+  // FIXME: Do we need to account for alignment requirement of LDS rounding the
+  // size up?
+  // Compute restriction based on LDS usage
+  unsigned NumGroups = getLocalMemorySize() / (Bytes ? Bytes : 1u);
+
+  // This can be queried with more LDS than is possible, so just assume the
+  // worst.
+  if (NumGroups == 0)
+    return 1;
+
+  NumGroups = std::min(MaxWorkGroupsPerCu, NumGroups);
+
+  // Round to the number of waves per CU.
+  const unsigned MaxGroupNumWaves = divideCeil(MaxWorkGroupSize, WaveSize);
+  unsigned MaxWaves = NumGroups * MaxGroupNumWaves;
+
+  // Number of waves per EU (SIMD).
+  MaxWaves = divideCeil(MaxWaves, getEUsPerCU());
+
+  // Clamp to the maximum possible number of waves.
+  MaxWaves = std::min(MaxWaves, getMaxWavesPerEU());
+
+  // FIXME: Needs to be a multiple of the group size?
+  //MaxWaves = MaxGroupNumWaves * (MaxWaves / MaxGroupNumWaves);
+
+  assert(MaxWaves > 0 && MaxWaves <= getMaxWavesPerEU() &&
+         "computed invalid occupancy");
+  return MaxWaves;
+}
+
+unsigned
+AMDGPUSubtarget::getOccupancyWithLocalMemSize(const MachineFunction &MF) const {
+  const auto *MFI = MF.getInfo<SIMachineFunctionInfo>();
+  return getOccupancyWithLocalMemSize(MFI->getLDSSize(), MF.getFunction());
+}
+
+std::pair<unsigned, unsigned> AMDGPUSubtarget::getOccupancyWithWorkGroupSizes(uint32_t LDSBytes, const Function &F)const {
+
   // FIXME: We should take into account the LDS allocation granularity.
   const unsigned MaxWGsLDS = getLocalMemorySize() / std::max(LDSBytes, 1u);
 
