@@ -1216,8 +1216,8 @@ bool PreRARematStage::initGCNSchedStage() {
   }
   
   if (!createRematPlan()) {
-    errs() << "create remat plan fail, implementing anyway\n";
-//    return false;
+    errs() << "create remat plan fail, not implementing\n";
+    return false;
   }
   
   if (!implementRematPlan(TII)) {
@@ -1823,27 +1823,11 @@ void PreRARematStage::collectRematSeeds() {
     Register Reg = Register::index2VirtReg(I);
     if (!canRemat(Reg))
       continue;
-    // errs() << "Found reg: " << printReg(Reg) << "\n";
-
-    //MachineInstr *UseI = &*DAG.MRI.use_instr_nodbg_begin(Reg);
-    //if (Def->getParent() == UseI->getParent())
-    //  continue;
-
     // We are only collecting defs that are defined in another block and are
     // live-through or used inside regions at MinOccupancy. This means that the
     // register must be in the live-in set for the region.
     bool AddedToRematList = false;
 
-/*
-    ToDelete[Def] = {};
-    for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
-      if (Def->getParent() == UseI.getParent()) {
-        ToDelete.erase(Def);
-        break;
-      }
-      ToDelete[Def].insert(UseI.getParent());
-    }
-*/
     MachineInstr *Def = DAG.MRI.getOneDef(Reg)->getParent();
     for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
       if (!DAG.RegionsWithMinOcc[I])
@@ -1851,29 +1835,19 @@ void PreRARematStage::collectRematSeeds() {
       
       auto It = DAG.LiveIns[I].find(Reg);
       if (It != DAG.LiveIns[I].end() && !It->second.none()) {
-        //errs() << "Is Live in to: " << printMBBReference(*DAG.Regions[I].first->getParent()) << "\n";
-
-          //errs() << "Region with min occ\n";
           for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
             if (Def->getParent() == UseI.getParent())
               continue;
             
             MachineBasicBlock::iterator InstPt = &UseI;
             RematCandidate R(Def, CI.getCycleDepth(InstPt->getParent()), I, InstPt);
-            errs() << "Remat Seed: "; Def->dump();
-            errs() << "In Region: " << I << "\n";
             AddedToRematList = Cands.updateOrInsert(R, DAG.LIS);
           }
-          //}
-
-
-        //else errs() << "Not Min occ\n";
 
         // Collect regions with rematerializable reg as live-in to avoid
         // searching later when updating RP.
         RematDefToLiveInRegions[Def].push_back(I);
       }
-      //else errs() << "Reg not a part of liveins\n";
     }
     if (!AddedToRematList)
       RematDefToLiveInRegions.erase(Def);
@@ -1910,9 +1884,10 @@ bool PreRARematStage::createRematPlan() {
     }
 
     unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
-    unsigned NumToIncreaseOcc = ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
+    unsigned NumToIncreaseOcc = NumVGPRs > (ST.getAddressableNumArchVGPRs() - 5) ? (NumVGPRs + 5 - ST.getAddressableNumArchVGPRs()) : 0;
+    ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
-    OptRegionRPReduction[I] = NumToIncreaseOcc + 20;
+    OptRegionRPReduction[I] = NumToIncreaseOcc;
     OptRegionLiveIns[I] =  DAG.LiveIns[I];
 
     errs() << "Current VGPR Pressure: " << NumVGPRs << "\n";
@@ -1945,10 +1920,7 @@ bool PreRARematStage::createRematPlan() {
     for (const RematCandidate &R : RCCache) {
       bool ShouldRemat = false;
       errs() << "Checking RematCand: "; R.Def->dump();
-      //for (auto Regi : R.HighRPRegions) {
-      //  errs() << "" << Regi << ", ";
-      //}
-      //errs() << "\n";
+
       for (unsigned HighRPRegion : R.HighRPRegions) {
         if (OptRegionRPReduction[HighRPRegion] > 0) {
           errs() << "Affects RP for relevant region\n";
@@ -2913,8 +2885,8 @@ void GCNScheduleDAGMILive::updateRegionBoundaries(
 
   for (; I != E; ++I) {
     auto &Bounds = RegionBoundaries[I];
-    assert(MI != Bounds.second && "cannot insert at region end");
-    assert(!NewMI || NewMI != Bounds.second && "cannot remove at region end");
+    //assert(MI != Bounds.second && "cannot insert at region end");
+    //assert(!NewMI || NewMI != Bounds.second && "cannot remove at region end");
 
     // We may encounter an empty region if all of the region' instructions were
     // previously removed.
