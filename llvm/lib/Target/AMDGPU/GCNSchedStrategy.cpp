@@ -831,18 +831,24 @@ void GCNScheduleDAGMILive::runSchedStages() {
     auto Stage = createSchedStage(S.getCurrentStage());
     if (!Stage->initGCNSchedStage())
       continue;
+    
+    if (S.getCurrentStage() == GCNSchedStageID::PreRARematerialize) {
+      BBLiveInMap = getRegionLiveInMap();
+      RegionLiveOuts.buildLiveRegMap();
+      MF.dump();
+    }
 
+    unsigned R = 0;
     for (auto Region : Regions) {
       FoundMFMA = false;
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+
       if (RegionBegin == RegionEnd)
         continue;
       auto BB = Region.first->getParent();
-      errs() << "Have Region.first: "; Region.first->dump();
-      errs() << "Is Debug: " << Region.first->isDebugInstr() << "\n";
-      errs() << "Advance to region (" << BB->getNumber() << "): " << BB->getName() << "\n";
-            errs() << "TargetOcc: " << S.getTargetOccupancy() << "\n";
+
+      errs() << "\nRegion: " << R++ << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
@@ -906,7 +912,43 @@ void GCNScheduleDAGMILive::runSchedStages() {
           }
 
         }
+
+
+
+        errs() << "LiveInPressure: "; DownwardTracker->getPressure().dump();
+        errs() << "LiveOutPressure: "; UpwardTracker->getPressure().dump();
+
+        GCNRegPressure LiveThru;
+        for (auto LR : DownwardTracker->getLiveRegs()) {
+          bool FoundIt = false;
+  //        errs() << "LiveIn: " << printReg(LR.first) << "\n";
+          for (auto &UseI : MRI.use_nodbg_instructions(LR.first)) {
+            if (UseI.getParent() == RegionBegin->getParent()) {
+              FoundIt = true;
+              break;
+            }
+          }
+          if (!FoundIt) {
+            errs() << "LiveThru: " << printReg(LR.first) << "\n";
+            LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
+          }
+        }
+        errs() << "LiveThruPressure: ";
+        LiveThru.dump();
+        const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(TII);
+        for (auto TheMI = RegionBegin; TheMI != RegionEnd; TheMI++) {
+          if (SII->isMFMAorWMMA(*TheMI)) {
+            errs() << "Region has MFMA: ";
+            break;
+          }
+        }
+
+
+
       }
+
+
+
       //errs() << "Calling schedule for region\n";
       ScheduleDAGMILive::schedule();
 
@@ -920,6 +962,11 @@ void GCNScheduleDAGMILive::runSchedStages() {
       Stage->finalizeGCNRegion();
     }
     //MF.dump();
+
+    if (S.getCurrentStage() == GCNSchedStageID::PreRARematerialize) {
+      errs() << "AFTER THE REMAT\n";
+      MF.dump();
+    }
     Stage->finalizeGCNSchedStage();
   }
 
@@ -1216,8 +1263,8 @@ bool PreRARematStage::initGCNSchedStage() {
   }
   
   if (!createRematPlan()) {
-    errs() << "create remat plan fail, not implementing\n";
-    return false;
+    errs() << "create remat plan fail, implementing anyway\n";
+    //return false;
   }
   
   if (!implementRematPlan(TII)) {
@@ -1819,6 +1866,8 @@ Printable print(const RematCandidate &R) {
 
 void PreRARematStage::collectRematSeeds() {
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(DAG.TRI);
+  
+  /*
   for (unsigned I = 0, E = DAG.MRI.getNumVirtRegs(); I != E; ++I) {
     Register Reg = Register::index2VirtReg(I);
     if (!canRemat(Reg))
@@ -1852,6 +1901,57 @@ void PreRARematStage::collectRematSeeds() {
     if (!AddedToRematList)
       RematDefToLiveInRegions.erase(Def);
   }
+*/
+
+
+  SmallPtrSet<MachineBasicBlock *, 4> Visited;
+  for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
+    if (!DAG.RegionsWithMinOcc[I])
+      continue;
+
+    if (I >= 20)
+      continue;
+    errs() << "Checking region " << I << " for liveThrus\n";
+
+    auto TheBlock = DAG.Regions[I].first->getParent();
+    auto Cycle = CI.getCycle(TheBlock);
+    if (Cycle) {
+      TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
+    }
+    if (!Cycle)
+      continue;
+    //if (!Visited.insert(TheBlock).second)
+    //  continue;
+
+    auto TheLiveIns = DAG.LiveIns[I];
+    TheBlock = DAG.Regions[I].first->getParent();
+
+    for (auto LR : TheLiveIns) {
+      auto TheReg = LR.first;
+          bool AddedToRematList = false;
+      errs() << "LiveInReg: " << printReg(TheReg) << "\n";
+      bool FoundBlockUse = false;
+      for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
+        if (TheUseInst.getParent() == TheBlock) {
+          FoundBlockUse = true;
+          break;
+        }
+      }
+      if (!FoundBlockUse && canRemat(TheReg)) {
+        errs() << "Not block use\n";
+        MachineInstr *Def = DAG.MRI.getOneDef(TheReg)->getParent();
+        for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
+            MachineBasicBlock::iterator InstPt = &TheUseInst;
+            RematCandidate R(Def, CI.getCycleDepth(InstPt->getParent()), I, InstPt);
+            AddedToRematList = Cands.updateOrInsert(R, DAG.LIS);
+            if (AddedToRematList)
+              RematDefToLiveInRegions[Def].push_back(I);
+        }
+      }
+     }
+    
+
+  }
 
 
    errs() << "\n\nAfter collecting remat seeds\n";
@@ -1884,7 +1984,7 @@ bool PreRARematStage::createRematPlan() {
     }
 
     unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
-    unsigned NumToIncreaseOcc = NumVGPRs > (ST.getAddressableNumArchVGPRs() - 5) ? (NumVGPRs + 5 - ST.getAddressableNumArchVGPRs()) : 0;
+    unsigned NumToIncreaseOcc = NumVGPRs > (ST.getAddressableNumArchVGPRs() - 20) ? (NumVGPRs + 20 - ST.getAddressableNumArchVGPRs()) : 0;
     ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
     OptRegionRPReduction[I] = NumToIncreaseOcc;
@@ -1972,6 +2072,7 @@ bool PreRARematStage::createRematPlan() {
             auto OldLiveIns = TheLiveRegs[DefReg];
             auto NonLiveIns = OldLiveIns & DefLanes;
             RPImpact += NonLiveIns.getNumLanes() / 2;
+            errs() << "RP benfit from remat: " << RPImpact << "\n";
           }
           for (const MachineOperand &MO : R.Def->operands()) {
             if (RPImpact < 0)
@@ -1982,6 +2083,7 @@ bool PreRARematStage::createRematPlan() {
             if (!Reg.isVirtual())
               continue;
 
+            errs() << "Checking use: " << printReg(MO.getReg()) << "\n";
             LiveInterval &UseLI = DAG.LIS->getInterval(MO.getReg());
             LaneBitmask UseLanes = DAG.MRI.getMaxLaneMaskForVReg(MO.getReg());
             // Check that subrange is live at UseIdx.
@@ -1992,8 +2094,12 @@ bool PreRARematStage::createRematPlan() {
             }
 
             if (!TheLiveRegs.contains(Reg)) {
+              errs() << "Is not live in\n";
               RPImpact -= UseLanes.getNumLanes() / 2;
               continue;
+            }
+            else {
+              errs() << "Is Already live in\n";
             }
 
             LaneBitmask OldLiveInMask = TheLiveRegs[Reg];
@@ -2006,6 +2112,7 @@ bool PreRARematStage::createRematPlan() {
             ShouldDefer = true;
             break;
           }
+          errs() << "RP IMpact: " << RPImpact << "\n";
         }
 
         if (ShouldDefer) {
@@ -2025,6 +2132,7 @@ bool PreRARematStage::createRematPlan() {
         auto Reg = MO.getReg();
         if (!Reg.isVirtual())
           continue;
+        errs() << "Checking use: " << printReg(Reg) << "\n";
         LiveInterval &UseLI = DAG.LIS->getInterval(MO.getReg());
         LaneBitmask CoveredLanes = DAG.MRI.getMaxLaneMaskForVReg(MO.getReg());
         // Check that subrange is live at UseIdx.
@@ -2040,6 +2148,23 @@ bool PreRARematStage::createRematPlan() {
           errs() << "Cant remat\n";
           continue;
         }
+
+        bool FoundInBlockUse = false;
+
+      for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(Reg)) {
+        for (auto HighRegion : R.HighRPRegions) {
+          auto TheBlock = DAG.Regions[HighRegion].first->getParent();
+        if (TheUseInst.getParent() == TheBlock) {
+          errs() << "Have in block use\n";
+          FoundInBlockUse = true;
+          break;
+        }
+        }
+      }
+
+      if (FoundInBlockUse)
+        continue;
+
 
         MachineInstr *UseDef = DAG.MRI.getOneDef(Reg)->getParent();
         MachineBasicBlock::iterator UseRematPt;
@@ -2077,7 +2202,7 @@ bool PreRARematStage::createRematPlan() {
           unsigned UseReg = LiveInPair.first;
           LaneBitmask UseMask = LiveInPair.second;
           if (!TheLiveRegs.contains(UseReg)) {
-            errs() << "Use is not live in\n";
+            errs() << "Use is not live in: " << printReg(UseReg) << "\n";
             RPImpact -= UseMask.getNumLanes() / 2;
             TheLiveRegs[UseReg] = UseMask;
             continue;
@@ -2159,7 +2284,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       MachineInstr *Def = R.Def;
 
       //errs() << "Have remat instr: "; Def->dump();
-      errs() << "Trying to remat: "; Def->dump();
+      errs() << "\n\n\nTrying to remat: "; Def->dump();
       bool Flag = false;
       errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
       MachineBasicBlock::iterator InsertPos =
@@ -2168,6 +2293,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
       for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
         if (UseI.getParent() == R.InsertPt->getParent()) {
+                  errs() << "Have User: "; UseI.dump();
           if (SlotIndex::isEarlierInstr(DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot(), DAG.LIS->getInstructionIndex(UseI).getRegSlot()))
             continue;
           MachineBasicBlock::iterator UseIt = MachineBasicBlock::iterator(&UseI);
@@ -2179,6 +2305,8 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
             Flag = true;
             InsertPos = R.InsertPt->getParent()->begin();
           }
+
+
         }
       }
 
@@ -2199,7 +2327,10 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
           
           MachineBasicBlock::iterator DefIt = MachineBasicBlock::iterator(&DefI);
           InsertPos = std::next(DefIt);
-          assert(false);
+          
+          // WHY IS THIS HERE?
+          //
+          //assert(false);
         }
       }
 
@@ -2218,24 +2349,33 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
       TII->reMaterialize(*InsertPos->getParent(), InsertPos, Reg,
                          Def->getOperand(0).getSubReg(), *Def, *DAG.TRI);
-                         //errs() << "Did a remat\n";
+      errs() << "Did a remat\n";
       MachineInstr *NewMI = &*std::prev(InsertPos);
       NewMI->getOperand(0).setSubReg(Def->getOperand(0).getSubReg());
       NewMI->clearRegisterDeads(Def->getOperand(0).getReg());
 
+      
+
       const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
       Register NewReg = DAG.MRI.createVirtualRegister(RC);
       NewMI->getOperand(0).setReg(NewReg);
-
-      for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
-        if (UseI.getParent() == NewMI->getParent()) {
-          for (MachineOperand &Op : UseI.operands()) {
+      errs() << "Create: "; NewMI->dump();
+      auto X = DAG.MRI.use_nodbg_instructions(Reg);
+      SmallVector<MachineInstr *, 4> Users;
+      for (auto &UseI : X) {
+        Users.push_back(&UseI);
+      }
+      for (auto UseI : Users) {
+        if (UseI->getParent() == NewMI->getParent()) {
+          errs() << "Tryreplace op UseI: "; UseI->dump();
+          for (MachineOperand &Op : UseI->operands()) {
             if (!Op.isReg())
               continue;
             Register UseReg = Op.getReg();
             if (UseReg == Reg)
               Op.setReg(NewReg);
           }
+          errs() << "After replace: "; UseI->dump();
         }
       }
 
