@@ -524,10 +524,10 @@ class raw_ostream;
     }
 
     void printMIMap() {
-      for (auto Entry : mi2iMap) {
-        errs() << "MI: "; Entry.first->dump();
-        errs() << "At index: " << Entry.second << "\n";
-      }
+      //for (auto Entry : mi2iMap) {
+        //errs() << "MI: "; Entry.first->dump();
+        //errs() << "At index: " << Entry.second << "\n";
+      //}
     }
 
 
@@ -540,10 +540,10 @@ class raw_ostream;
       assert(!MI.isInsideBundle() &&
              "Instructions inside bundles should use bundle start's slot.");
       if (mi2iMap.contains(&MI)) {
-        errs() << "mi2iMap.contains: "; MI.dump();
-        auto Entry = mi2iMap[&MI];
-        errs() << "Entry is: " << Entry << "\n";
-        dump();
+        //errs() << "mi2iMap.contains: "; MI.dump();
+        //auto Entry = mi2iMap[&MI];
+        //errs() << "Entry is: " << Entry << "\n";
+        //dump();
       }
       assert(!mi2iMap.contains(&MI) && "Instr already indexed.");
       // Numbering debug instructions could cause code generation to be
@@ -600,7 +600,7 @@ class raw_ostream;
     /// maps used by register allocator. \returns the index where the new
     /// instruction was inserted.
     SlotIndex replaceMachineInstrInMaps(MachineInstr &MI, MachineInstr &NewMI) {
-      errs() << "Rplace mi2imap\n";
+      //errs() << "Rplace mi2imap\n";
       Mi2IndexMap::iterator mi2iItr = mi2iMap.find(&MI);
       if (mi2iItr == mi2iMap.end())
         return SlotIndex();

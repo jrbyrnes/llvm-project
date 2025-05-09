@@ -497,27 +497,27 @@ public:
   }
   void clear() { Entries.clear(); }
   bool update(RematCandidate &RNew, const LiveIntervals *LIS) {
-    errs() << "Update: "; RNew.Def->dump();
-    //errs() << "Calling update for cand: ";
+    //errs() << "Update: "; RNew.Def->dump();
+    ////errs() << "Calling update for cand: ";
     //RNew.Def->dump();
-    //errs() << "With Regions: ";
+    ////errs() << "With Regions: ";
     //for (auto Regi : RNew.HighRPRegions) {
-    //  errs() << Regi;
+    //  //errs() << Regi;
     //}
-    //errs() << "\n";
+    ////errs() << "\n";
     auto Match = find_if(Entries, [RNew](const RematCandidate &R) {
       if (R.Def == RNew.Def) {
-        //errs() << "equal defs for cand match: \n";
+        ////errs() << "equal defs for cand match: \n";
 
           //R.Def->dump();
-    //errs() << "With Regions: ";
+    ////errs() << "With Regions: ";
     //for (auto Regi : R.HighRPRegions) {
-    //  errs() << Regi;
+    //  //errs() << Regi;
     //}
-    //errs() << "\n";
+    ////errs() << "\n";
 
-        //errs() << "RNew parent: " << RNew.InsertPt->getParent()->getName() << "\n";
-        //errs() << "R parent: " << R.InsertPt->getParent()->getName() << "\n";
+        ////errs() << "RNew parent: " << RNew.InsertPt->getParent()->getName() << "\n";
+        ////errs() << "R parent: " << R.InsertPt->getParent()->getName() << "\n";
       }
       return R.Def == RNew.Def &&
              RNew.InsertPt->getParent() == R.InsertPt->getParent();
@@ -556,27 +556,27 @@ public:
 
   void resolveSameBlockUses(const MachineRegisterInfo *MRI,
                             const LiveIntervals *LIS) {
-                              errs() << "\nResolve Same Block uses";
+                              //errs() << "\nResolve Same Block uses";
     // We may have added remat candidates which are used by other remat
     // candidates -- be sure that we have correct insert points for this
     bool FixedPoint = false;
     while (!FixedPoint) {
-      errs() << "Fixed Point iter\n";
-      // errs() << "Doling fixed point\n";
+      //errs() << "Fixed Point iter\n";
+      // //errs() << "Doling fixed point\n";
       FixedPoint = true;
       for (auto &RematEntry : Entries) {
 
         MachineInstr *RematInst = RematEntry.Def;
-        errs() << "R: "; RematInst->dump();
-        errs() << "For Regions: ";
+        //errs() << "R: "; RematInst->dump();
+        //errs() << "For Regions: ";
         for (auto Regi : RematEntry.HighRPRegions) {
-          errs() << "" << Regi << ", ";
+          //errs() << "" << Regi << ", ";
         }
-        errs() << "\n";
+        //errs() << "\n";
         MachineBasicBlock::iterator RematPt = RematEntry.InsertPt;
         // for (auto RematInst : RematEntry.second) {
-        //   errs() << "Have Remat Inst: "; RematInst.first->dump();
-        // errs() << "With Insert Point: " <<
+        //   //errs() << "Have Remat Inst: "; RematInst.first->dump();
+        // //errs() << "With Insert Point: " <<
         // DAG.LIS->getInstructionIndex(*RematInst.second) << "\n";
         for (auto MO : RematInst->operands()) {
           if (!MO.isReg() || !MO.getReg() || !MO.readsReg())
@@ -584,7 +584,7 @@ public:
           auto UseReg = MO.getReg();
           if (!UseReg.isVirtual())
             continue;
-          // errs() << "Found UseReg: " << printReg(UseReg) << "\n";
+          // //errs() << "Found UseReg: " << printReg(UseReg) << "\n";
           for (MachineInstr &DefInst : MRI->def_instructions(UseReg)) {
 
 
