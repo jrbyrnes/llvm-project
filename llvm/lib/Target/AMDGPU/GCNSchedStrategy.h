@@ -716,9 +716,6 @@ private:
   MachineCycleInfo CI;
 
   bool canRemat(Register Reg);
-  // Collect all trivially rematerializable VGPR instructions with a single def
-  // and single use outside the defining block into RematerializableInsts.
-  void collectRematerializableInstructions();
 
   void collectRematSeeds();
 
@@ -727,12 +724,6 @@ private:
   bool implementRematPlan(const TargetInstrInfo *TII);
 
   bool isTriviallyReMaterializable(const MachineInstr &MI);
-
-  // TODO: Should also attempt to reduce RP of SGPRs and AGPRs
-  // Attempt to reduce RP of VGPR by sinking trivially rematerializable
-  // instructions. Returns true if we were able to sink instruction(s).
-  bool sinkTriviallyRematInsts(const GCNSubtarget &ST,
-                               const TargetInstrInfo *TII);
 
   bool eliminateDeadMI();
   bool isDead(MachineInstr *MI);
