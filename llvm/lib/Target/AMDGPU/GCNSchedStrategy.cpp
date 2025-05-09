@@ -762,7 +762,6 @@ GCNScheduleDAGMILive::getRegionLiveInMap() const {
   std::vector<MachineInstr *> RegionFirstMIs;
   RegionFirstMIs.reserve(Regions.size());
   auto I = Regions.rbegin(), E = Regions.rend();
-  auto *BB = I->first->getParent();
   do {
     auto *MI = &*skipDebugInstructionsForward(I->first, I->second);
     RegionFirstMIs.push_back(MI);
@@ -2279,10 +2278,12 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
   LiveIntervals *LIS = DAG.LIS;
   unsigned RematCount = 0;
 
-
-  for (const RematCandidate &R : RematPlan) {
+  RematPlan.sort();
+  for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E; I++) {
+    auto R = *I;
       MachineInstr *Def = R.Def;
 
+      errs() << "Remat: "; Def->dump();
       ////errs() << "Have remat instr: "; Def->dump();
       //errs() << "\n\n\nTrying to remat: "; Def->dump();
       bool Flag = false;

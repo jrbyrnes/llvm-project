@@ -483,6 +483,8 @@ public:
   reverse_iterator rend() { return Entries.rend(); }
   const_reverse_iterator rend() const { return Entries.rend(); }
 
+
+  SmallVector<RematCandidate, 16> Sorted;
   unsigned getDeferCostThreshold() {return MaxLoopCost;}
 
   bool empty() const {
@@ -496,6 +498,89 @@ public:
     Entries.insert(R); 
   }
   void clear() { Entries.clear(); }
+
+  void sort() {
+    std::set<RematCandidate> Cache = Entries;
+    SmallVector<RematCandidate, 8> Temps;
+    for (auto RCand : Entries) {
+      auto Def = RCand.Def;
+
+      bool FoundUse = false;
+      for (auto MO : Def->operands()) {
+        if (!MO.isReg() || !MO.isUse())
+          continue;
+        
+        auto Reg = MO.getReg();
+
+        for (auto OtherCand : Entries) {
+          if (OtherCand.Def->definesRegister(Reg, nullptr)) {
+            FoundUse = true;
+            break;
+          }
+
+        }
+        if (FoundUse)
+          break;
+      }
+
+      if (!FoundUse) {
+        Temps.push_back(RCand);
+        Cache.erase(RCand);
+      } 
+    }
+
+    std::sort(Temps.begin(), Temps.end(), [](RematCandidate A, RematCandidate B) {
+      return A.Def->getOperand(0).getReg() < B.Def->getOperand(0).getReg();
+    });
+
+    Sorted.append(Temps);
+    Temps.clear();
+
+
+    Entries = Cache;
+
+    while (!Entries.empty()) {
+      Cache = Entries;
+
+      for (auto RCand : Entries) {
+        auto Def = RCand.Def;
+        bool FoundUse = false;
+        for (auto MO : Def->operands()) {
+          if (!MO.isReg() || !MO.isUse())
+            continue;
+        
+          auto Reg = MO.getReg();
+
+          for (auto OtherCand : Entries) {
+            if (OtherCand.Def->definesRegister(Reg, nullptr)) {
+              FoundUse = true;
+              break;
+            }
+
+          }
+          if (FoundUse)
+            break;
+        }
+
+        if (!FoundUse) {
+          Temps.push_back(RCand);
+          Cache.erase(RCand);
+        }
+
+
+
+      }
+    std::sort(Temps.begin(), Temps.end(), [](RematCandidate A, RematCandidate B) {
+      return A.Def->getOperand(0).getReg() < B.Def->getOperand(0).getReg();
+    });
+
+    Sorted.append(Temps);
+    Temps.clear();
+      Entries = Cache;
+    }
+
+  }
+
   bool update(RematCandidate &RNew, const LiveIntervals *LIS) {
     //errs() << "Update: "; RNew.Def->dump();
     ////errs() << "Calling update for cand: ";
@@ -569,9 +654,6 @@ public:
         MachineInstr *RematInst = RematEntry.Def;
         //errs() << "R: "; RematInst->dump();
         //errs() << "For Regions: ";
-        for (auto Regi : RematEntry.HighRPRegions) {
-          //errs() << "" << Regi << ", ";
-        }
         //errs() << "\n";
         MachineBasicBlock::iterator RematPt = RematEntry.InsertPt;
         // for (auto RematInst : RematEntry.second) {
