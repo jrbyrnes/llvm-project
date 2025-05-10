@@ -17,6 +17,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PriorityWorklist.h"
 #include "llvm/CodeGen/MachineScheduler.h"
+#include "llvm/CodeGen/MachinePostDominators.h"
 
 namespace llvm {
 
@@ -581,6 +582,44 @@ public:
 
   }
 
+  bool hoistToDominator(MachinePostDominatorTree *PDT, MachineCycleInfo &CI) {
+    DenseMap<MachineInstr *, SmallVector<RematCandidate,4>> RematMap;
+
+    for (auto E : Entries) {
+      RematMap[E.Def].push_back(E);
+    }
+
+    std::set<RematCandidate> Cache;
+
+    for (auto RematInfo : RematMap) {
+      std::set<unsigned> HighRPs;
+      SmallVector<MachineBasicBlock *> MBBs;
+      for (auto R : RematInfo.second) {
+        for (auto HRP : R.HighRPRegions) {
+          HighRPs.insert(HRP);
+        }
+        MBBs.push_back(R.InsertPt->getParent());
+      }
+
+      auto DomBlock = PDT->findNearestCommonDominator(MBBs);
+      if (DomBlock) {
+        RematCandidate New(RematInfo.first, CI.getCycleDepth(DomBlock), HighRPs, DomBlock->begin());
+        Cache.insert(New);
+      }
+      else {
+        for (auto R : RematInfo.second) {
+          Cache.insert(R);
+        }
+      }
+    }
+
+    errs() << "Condensed: " << Entries.size() << " into: " << Cache.size() << "\n";
+    Entries.clear();
+    Entries = Cache;
+    return true;
+
+  }
+
   bool update(RematCandidate &RNew, const LiveIntervals *LIS) {
     //errs() << "Update: "; RNew.Def->dump();
     ////errs() << "Calling update for cand: ";
@@ -714,6 +753,7 @@ private:
   DenseMap<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
 
   MachineCycleInfo CI;
+  MachinePostDominatorTree PDT;
 
   bool canRemat(Register Reg);
 

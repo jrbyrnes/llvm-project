@@ -826,7 +826,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
-    //errs() << "\n\n\nAdvanceStage: " << S.getCurrentStage() << "\n";
+    errs() << "\n\n\nAdvanceStage: " << S.getCurrentStage() << "\n";
     auto Stage = createSchedStage(S.getCurrentStage());
     if (!Stage->initGCNSchedStage())
       continue;
@@ -837,7 +837,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
       //MF.dump();
     }
 
-    //unsigned R = 0;
+    unsigned R = 0;
     for (auto Region : Regions) {
       FoundMFMA = false;
       RegionBegin = Region.first;
@@ -846,7 +846,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
       if (RegionBegin == RegionEnd)
         continue;
 
-      //errs() << "\nRegion: " << R++ << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
+      errs() << "\nRegion: " << R++ << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
@@ -870,12 +870,12 @@ void GCNScheduleDAGMILive::runSchedStages() {
             }
           }
           if (!FoundIt) {
-            //errs() << "LiveThru: " << printReg(LR.first) << "\n";
+            errs() << "LiveThru: " << printReg(LR.first) << "\n";
             LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
           }
         }
-        //errs() << "LiveThruPressure: ";
-        //LiveThru.dump();
+        errs() << "LiveThruPressure: ";
+        LiveThru.dump();
       }
 
       if (GCNTrackers) {
@@ -1275,6 +1275,7 @@ bool PreRARematStage::initGCNSchedStage() {
 
   CI.clear();
   CI.compute(MF);
+  PDT.recalculate(MF);
 
   //errs() << "BEFORE REMAT: "; 
   //MF.dump();
@@ -1484,8 +1485,8 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  //errs() << "Pressure After: "; PressureAfter.dump();
-  //errs() << "Pressure Before: "; PressureBefore.dump();
+  errs() << "Pressure After: "; PressureAfter.dump();
+  errs() << "Pressure Before: "; PressureBefore.dump();
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
@@ -2306,22 +2307,27 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
   LiveIntervals *LIS = DAG.LIS;
   unsigned RematCount = 0;
 
+  RematPlan.hoistToDominator(&PDT, CI);
   RematPlan.sort();
   for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E; I++) {
     auto R = *I;
       MachineInstr *Def = R.Def;
 
-//      errs() << "Remat: "; Def->dump();
-      ////errs() << "Have remat instr: "; Def->dump();
-      //errs() << "\n\n\nTrying to remat: "; Def->dump();
+      errs() << "\nRemat: "; Def->dump();
       //bool Flag = false;
-      //errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
-      MachineBasicBlock::iterator InsertPos =
-          MachineBasicBlock::iterator(R.InsertPt);
+      errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
+      MachineBasicBlock::iterator InsertPos = R.InsertPt->getParent()->begin();
+    
       Register Reg = Def->getOperand(0).getReg();
 
+
+      SmallVector<MachineInstr *, 8> UserInst;
+
+      /// TODO -- fail if we dont hoist all instructions
+      PDT.recalculate(MF);
       for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
-        if (UseI.getParent() == R.InsertPt->getParent()) {
+
+        /*if (UseI.getParent() == R.InsertPt->getParent()) {
                   //errs() << "Have User: "; UseI.dump();
           if (SlotIndex::isEarlierInstr(DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot(), DAG.LIS->getInstructionIndex(UseI).getRegSlot()))
             continue;
@@ -2336,7 +2342,17 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
           }
 
 
+        }*/
+        errs() << "Have User: "; UseI.dump();
+        errs() << "In Block: " << printMBBReference(*UseI.getParent()) << "\n";
+        if (PDT.dominates(UseI.getParent(), InsertPos->getParent())) {
+          errs() << "Is dominated\n";
+          //errs() << "Dominates: "; UseI.dump();
+          //errs() << "In Block: " << printMBBReference(*UseI.getParent()) << "\n";
+          UserInst.push_back(&UseI);
         }
+        else errs() << "Is not dominated\n";
+
       }
 
     
@@ -2366,7 +2382,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
 
 
-      auto InsertIdx = LIS->getSlotIndexes()->getIndexBefore(*InsertPos);
+      //auto InsertIdx = LIS->getSlotIndexes()->getIndexBefore(*InsertPos);
 
 
 
@@ -2394,8 +2410,9 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       for (auto &UseI : X) {
         Users.push_back(&UseI);
       }
-      for (auto UseI : Users) {
-        if (UseI->getParent() == NewMI->getParent()) {
+      for (auto UseI : UserInst) {
+        //errs() << "Replacing operand in: "; UseI->dump();
+        //if (UseI->getParent() == NewMI->getParent()) {
           //errs() << "Tryreplace op UseI: "; UseI->dump();
           for (MachineOperand &Op : UseI->operands()) {
             if (!Op.isReg())
@@ -2405,7 +2422,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
               Op.setReg(NewReg);
           }
           //errs() << "After replace: "; UseI->dump();
-        }
+        //}
       }
 
 
