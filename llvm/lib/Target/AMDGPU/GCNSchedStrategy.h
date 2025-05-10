@@ -591,9 +591,9 @@ public:
 
     std::set<RematCandidate> Cache;
 
-    errs() << "HoistToDominator\n";
+    //errs() << "HoistToDominator\n";
     for (auto RematInfo : RematMap) {
-      errs() << "\nRemat Inst: "; RematInfo.first->dump();
+      //errs() << "\nRemat Inst: "; RematInfo.first->dump();
       std::set<unsigned> HighRPs;
       SmallVector<MachineBasicBlock *> MBBs;
       for (auto R : RematInfo.second) {
@@ -601,12 +601,12 @@ public:
           HighRPs.insert(HRP);
         }
         MBBs.push_back(R.InsertPt->getParent());
-        errs() << "Has remat point in: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
+        //errs() << "Has remat point in: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
       }
 
       auto DomBlock = PDT->findNearestCommonDominator(iterator_range(MBBs));
       if (DomBlock) {
-        errs() << "Found dom block: " << printMBBReference(*DomBlock) << "\n";
+        //errs() << "Found dom block: " << printMBBReference(*DomBlock) << "\n";
         RematCandidate New(RematInfo.first, CI.getCycleDepth(DomBlock), HighRPs, DomBlock->begin());
         Cache.insert(New);
       }
@@ -617,7 +617,7 @@ public:
       }
     }
 
-    errs() << "Condensed: " << Entries.size() << " into: " << Cache.size() << "\n";
+   // errs() << "Condensed: " << Entries.size() << " into: " << Cache.size() << "\n";
     Entries.clear();
     Entries = Cache;
     return true;

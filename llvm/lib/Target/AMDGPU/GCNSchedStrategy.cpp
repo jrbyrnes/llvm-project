@@ -826,7 +826,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
-    errs() << "\n\n\nAdvanceStage: " << S.getCurrentStage() << "\n";
+    //errs() << "\n\n\nAdvanceStage: " << S.getCurrentStage() << "\n";
     auto Stage = createSchedStage(S.getCurrentStage());
     if (!Stage->initGCNSchedStage())
       continue;
@@ -846,7 +846,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
       if (RegionBegin == RegionEnd)
         continue;
 
-      errs() << "\nRegion: " << R++ << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
+      //errs() << "\nRegion: " << R++ << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
@@ -874,8 +874,8 @@ void GCNScheduleDAGMILive::runSchedStages() {
             LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
           }
         }
-        errs() << "LiveThruPressure: ";
-        LiveThru.dump();
+        //errs() << "LiveThruPressure: ";
+        //LiveThru.dump();
       }
 
       if (GCNTrackers) {
@@ -890,8 +890,8 @@ void GCNScheduleDAGMILive::runSchedStages() {
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
         
-        errs() << "Have LiveInPressure: "; DownwardTracker->getPressure().dump();
-        errs() << "Has LiveOutPressure: "; UpwardTracker->getPressure().dump();
+        //errs() << "Have LiveInPressure: "; DownwardTracker->getPressure().dump();
+        //errs() << "Has LiveOutPressure: "; UpwardTracker->getPressure().dump();
 
 
 
@@ -1485,8 +1485,8 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  errs() << "Pressure After: "; PressureAfter.dump();
-  errs() << "Pressure Before: "; PressureBefore.dump();
+  //errs() << "Pressure After: "; PressureAfter.dump();
+  //errs() << "Pressure Before: "; PressureBefore.dump();
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
