@@ -17,7 +17,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PriorityWorklist.h"
 #include "llvm/CodeGen/MachineScheduler.h"
-#include "llvm/CodeGen/MachinePostDominators.h"
+#include "llvm/CodeGen/MachineDominators.h"
 
 namespace llvm {
 
@@ -582,7 +582,7 @@ public:
 
   }
 
-  bool hoistToDominator(MachinePostDominatorTree *PDT, MachineCycleInfo &CI) {
+  bool hoistToDominator(MachineDominatorTree *PDT, MachineCycleInfo &CI) {
     DenseMap<MachineInstr *, SmallVector<RematCandidate,4>> RematMap;
 
     for (auto E : Entries) {
@@ -591,7 +591,9 @@ public:
 
     std::set<RematCandidate> Cache;
 
+    errs() << "HoistToDominator\n";
     for (auto RematInfo : RematMap) {
+      errs() << "\nRemat Inst: "; RematInfo.first->dump();
       std::set<unsigned> HighRPs;
       SmallVector<MachineBasicBlock *> MBBs;
       for (auto R : RematInfo.second) {
@@ -599,10 +601,12 @@ public:
           HighRPs.insert(HRP);
         }
         MBBs.push_back(R.InsertPt->getParent());
+        errs() << "Has remat point in: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
       }
 
-      auto DomBlock = PDT->findNearestCommonDominator(MBBs);
+      auto DomBlock = PDT->findNearestCommonDominator(iterator_range(MBBs));
       if (DomBlock) {
+        errs() << "Found dom block: " << printMBBReference(*DomBlock) << "\n";
         RematCandidate New(RematInfo.first, CI.getCycleDepth(DomBlock), HighRPs, DomBlock->begin());
         Cache.insert(New);
       }
@@ -753,7 +757,9 @@ private:
   DenseMap<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
 
   MachineCycleInfo CI;
-  MachinePostDominatorTree PDT;
+  MachineDominatorTree PDT;
+
+  MachineBasicBlock *TargetBlock = nullptr;
 
   bool canRemat(Register Reg);
 
@@ -767,6 +773,27 @@ private:
 
   bool eliminateDeadMI();
   bool isDead(MachineInstr *MI);
+
+  bool isReachableFrom(MachineBasicBlock *A, MachineBasicBlock *B) {
+    std::set<MachineBasicBlock *> Visited;
+    std::list<MachineBasicBlock *> Worklist;
+
+    Worklist.push_back(A);
+
+    while (!Worklist.empty()) {
+      MachineBasicBlock *TheBlock = Worklist.front();
+      Worklist.pop_front();
+      if (TheBlock == B)
+        return true;
+      if (!Visited.insert(TheBlock).second)
+        continue;
+      
+      for (auto BB : TheBlock->successors()) {
+        Worklist.push_back(BB);
+      }
+    }
+    return false;
+  }
 
 public:
   bool initGCNSchedStage() override;

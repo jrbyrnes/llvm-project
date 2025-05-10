@@ -870,7 +870,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
             }
           }
           if (!FoundIt) {
-            errs() << "LiveThru: " << printReg(LR.first) << "\n";
+            //errs() << "LiveThru: " << printReg(LR.first) << "\n";
             LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
           }
         }
@@ -890,8 +890,8 @@ void GCNScheduleDAGMILive::runSchedStages() {
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
         
-        //errs() << "Have LiveInPressure: "; DownwardTracker->getPressure().dump();
-        //errs() << "Has LiveOutPressure: "; UpwardTracker->getPressure().dump();
+        errs() << "Have LiveInPressure: "; DownwardTracker->getPressure().dump();
+        errs() << "Has LiveOutPressure: "; UpwardTracker->getPressure().dump();
 
 
 
@@ -1941,6 +1941,8 @@ void PreRARematStage::collectRematSeeds() {
     auto Cycle = CI.getCycle(TheBlock);
     if (Cycle) {
       TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
+      if (!TargetBlock)
+        TargetBlock = TheBlock;
     }
     if (!Cycle)
       continue;
@@ -1968,6 +1970,8 @@ void PreRARematStage::collectRematSeeds() {
         //errs() << "Not block use\n";
         MachineInstr *Def = DAG.MRI.getOneDef(TheReg)->getParent();
         for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
+            if (!isReachableFrom(TargetBlock, TheUseInst.getParent()))
+              continue;
             MachineBasicBlock::iterator InstPt = &TheUseInst;
             RematCandidate R(Def, CI.getCycleDepth(InstPt->getParent()), I, InstPt);
             AddedToRematList = Cands.updateOrInsert(R, DAG.LIS);
@@ -2305,7 +2309,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
    DenseMap<MachineInstr *, MachineInstr *> InsertedMIToOldDef;
   LiveIntervals *LIS = DAG.LIS;
-  unsigned RematCount = 0;
+  //unsigned RematCount = 0;
 
   RematPlan.hoistToDominator(&PDT, CI);
   RematPlan.sort();
@@ -2313,9 +2317,9 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
     auto R = *I;
       MachineInstr *Def = R.Def;
 
-      errs() << "\nRemat: "; Def->dump();
+      //errs() << "\nRemat: "; Def->dump();
       //bool Flag = false;
-      errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
+      //errs() << "Into Block: " << printMBBReference(*R.InsertPt->getParent()) << "\n";
       MachineBasicBlock::iterator InsertPos = R.InsertPt->getParent()->begin();
     
       Register Reg = Def->getOperand(0).getReg();
@@ -2343,15 +2347,15 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
 
         }*/
-        errs() << "Have User: "; UseI.dump();
-        errs() << "In Block: " << printMBBReference(*UseI.getParent()) << "\n";
-        if (PDT.dominates(UseI.getParent(), InsertPos->getParent())) {
-          errs() << "Is dominated\n";
+        //errs() << "Have User: "; UseI.dump();
+        //errs() << "In Block: " << printMBBReference(*UseI.getParent()) << "\n";
+        if (PDT.dominates(InsertPos->getParent(), UseI.getParent())) {
+          //errs() << "Is dominated\n";
           //errs() << "Dominates: "; UseI.dump();
           //errs() << "In Block: " << printMBBReference(*UseI.getParent()) << "\n";
           UserInst.push_back(&UseI);
         }
-        else errs() << "Is not dominated\n";
+        //else errs() << "Is not dominated\n";
 
       }
 
@@ -2386,7 +2390,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
 
 
-      auto &LI = LIS->getInterval(Reg);
+      //auto &LI = LIS->getInterval(Reg);
 
       ////errs() << "Def has old LI: "; LI.dump();
 
@@ -2434,7 +2438,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       LIS->createAndComputeVirtRegInterval(NewReg);
       InsertedMIToOldDef[NewMI] = Def;
 
-      ++RematCount;
+      //++RematCount;
 
       ////errs() << "Finisedht eh remat\n";
       for (const MachineOperand &MO : NewMI->operands()) {
