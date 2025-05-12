@@ -1266,10 +1266,62 @@ void AMDGPUInstPrinter::printPackedModifier(const MCInst *MI,
   O << ']';
 }
 
-void AMDGPUInstPrinter::printOpSel(const MCInst *MI, unsigned,
+void AMDGPUInstPrinter::printOpSel(const MCInst *MI, unsigned OpNo,
                                    const MCSubtargetInfo &STI,
                                    raw_ostream &O) {
   unsigned Opc = MI->getOpcode();
+
+  switch(Opc) {
+
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_gfx940_vcd: {
+    unsigned Mod = MI->getOperand(OpNo).getImm();
+    unsigned Index0 = !!(Mod & SISrcMods::OP_SEL_0);
+    unsigned Index1 = !!(Mod & SISrcMods::OP_SEL_1);
+
+
+    if (Index0 || Index1)
+      O << " op_sel_hi:[" << Index0 << ',' << Index1 << ']';
+    return;
+  }
+  default:
+    break;
+  }
+
   if (isCvt_F32_Fp8_Bf8_e64(Opc)) {
     auto SrcMod =
         AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src0_modifiers);
@@ -1296,7 +1348,62 @@ void AMDGPUInstPrinter::printOpSel(const MCInst *MI, unsigned,
 void AMDGPUInstPrinter::printOpSelHi(const MCInst *MI, unsigned OpNo,
                                      const MCSubtargetInfo &STI,
                                      raw_ostream &O) {
-  printPackedModifier(MI, " op_sel_hi:[", SISrcMods::OP_SEL_1, O);
+
+  auto Opc = MI->getOpcode();
+
+  switch(Opc) {
+
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_gfx940_vcd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_gfx940_acd:
+  case AMDGPU::V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_gfx940_vcd: {
+
+    unsigned Mod = MI->getOperand(OpNo).getImm();
+    unsigned Index0 = !!(Mod & SISrcMods::OP_SEL_0);
+    unsigned Index1 = !!(Mod & SISrcMods::OP_SEL_1);
+
+
+    if (Index0 || Index1)
+      O << " op_sel_hi:[" << Index0 << ',' << Index1 << ']';
+    return;
+  }
+
+  default: {
+    printPackedModifier(MI, " op_sel_hi:[", SISrcMods::OP_SEL_1, O);
+  }
+  }
 }
 
 void AMDGPUInstPrinter::printNegLo(const MCInst *MI, unsigned OpNo,
