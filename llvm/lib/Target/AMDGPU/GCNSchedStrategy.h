@@ -582,12 +582,34 @@ public:
 
   }
 
-  bool hoistToDominator(MachineDominatorTree *PDT, MachineCycleInfo &CI) {
+  bool hoistToDominator(MachineDominatorTree *PDT, MachineCycleInfo &CI, MachineBasicBlock *TargetBlock) {
     DenseMap<MachineInstr *, SmallVector<RematCandidate,4>> RematMap;
 
     for (auto E : Entries) {
       RematMap[E.Def].push_back(E);
     }
+
+
+  auto isReachableFrom = [](MachineBasicBlock *A, MachineBasicBlock *B) {
+    std::set<MachineBasicBlock *> Visited;
+    std::list<MachineBasicBlock *> Worklist;
+
+    Worklist.push_back(A);
+
+    while (!Worklist.empty()) {
+      MachineBasicBlock *TheBlock = Worklist.front();
+      Worklist.pop_front();
+      if (TheBlock == B)
+        return true;
+      if (!Visited.insert(TheBlock).second)
+        continue;
+      
+      for (auto BB : TheBlock->successors()) {
+        Worklist.push_back(BB);
+      }
+    }
+    return false;
+  };
 
     std::set<RematCandidate> Cache;
 
@@ -605,7 +627,7 @@ public:
       }
 
       auto DomBlock = PDT->findNearestCommonDominator(iterator_range(MBBs));
-      if (DomBlock) {
+      if (DomBlock && isReachableFrom(TargetBlock, DomBlock)) {
         //errs() << "Found dom block: " << printMBBReference(*DomBlock) << "\n";
         RematCandidate New(RematInfo.first, CI.getCycleDepth(DomBlock), HighRPs, DomBlock->begin());
         Cache.insert(New);

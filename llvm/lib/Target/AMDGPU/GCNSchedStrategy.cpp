@@ -2205,7 +2205,8 @@ bool PreRARematStage::createRematPlan() {
         else {
           UseRematPt = R.InsertPt->getParent()->begin();
         }
-
+        //errs() << "Create Remat cand: "; UseDef->dump();
+        //errs() << "Into block: " <<  printMBBReference(*UseRematPt->getParent()) << "\n";
         RematCandidate RNew(UseDef, CI.getCycleDepth(UseRematPt->getParent()), R.HighRPRegions, UseRematPt);
         NewCandidates.updateOrInsert(RNew, DAG.LIS);
       }
@@ -2311,7 +2312,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
   LiveIntervals *LIS = DAG.LIS;
   //unsigned RematCount = 0;
 
-  RematPlan.hoistToDominator(&PDT, CI);
+  RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
   RematPlan.sort();
   for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E; I++) {
     auto R = *I;
@@ -2499,7 +2500,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
   SmallVector<GCNRegPressure, 32> NewPressure;
   NewPressure.resize(DAG.Pressure.size());
-  /*unsigned NewOccupancy = 10;
+  unsigned NewOccupancy = 10;
   for (unsigned RegionIDx = 0; RegionIdx < Regions.size(); RegionIDx++) {
     GCNDownwardRPTracker RPT(*LIS);
     auto *NonDbgMI = &*skipDebugInstructionsForward(Regions[RegionIDx].first,
@@ -2552,7 +2553,6 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
   SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
   MFI.increaseOccupancy(MF, ++DAG.MinOccupancy);
-
   //errs() << "RET TRUE\n";
 
 
