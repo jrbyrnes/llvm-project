@@ -1857,7 +1857,7 @@ bool MFMAExpSimpleInterleaveOpt::applyIGLPStrategy(
   const unsigned PipelineSyncID = 0;
   for (unsigned I = 0; I < MFMACount * 3; ++I) {
     SchedGroup *SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 8, PipelineSyncID, DAG, TII);
+        SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2590,7 +2590,7 @@ void IGroupLPDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
     } else if (Opc == AMDGPU::SCHED_GROUP_BARRIER) {
       initSchedGroupBarrierPipelineStage(R);
       FoundSB = true;
-    } else if (true || Opc == AMDGPU::IGLP_OPT) {
+    } else if (Opc == AMDGPU::IGLP_OPT) {
       if (!FoundSB && !FoundIGLP) {
         FoundIGLP = true;
         ShouldApplyIGLP = initIGLPOpt(*R);
@@ -2683,7 +2683,7 @@ void IGroupLPDAGMutation::initSchedGroupBarrierPipelineStage(
 
 bool IGroupLPDAGMutation::initIGLPOpt(SUnit &SU) {
   IGLPStrategyID StrategyID =
-      (IGLPStrategyID)3;//SU.getInstr()->getOperand(0).getImm();
+      (IGLPStrategyID)SU.getInstr()->getOperand(0).getImm();
   auto S = createIGLPStrategy(StrategyID, DAG, TII);
   if (!S->shouldApplyStrategy(DAG, Phase))
     return false;
