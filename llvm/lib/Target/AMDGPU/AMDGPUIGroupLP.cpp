@@ -2559,7 +2559,11 @@ void IGroupLPDAGMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
       FoundSB = true;
     } else if (Opc == AMDGPU::IGLP_OPT) {
       if (!FoundSB && !FoundIGLP) {
-        FoundIGLP = true;
+
+  IGLPStrategyID StrategyID =
+      (IGLPStrategyID)R->getInstr()->getOperand(0).getImm();
+
+      FoundIGLP = StrategyID != 10;
         ShouldApplyIGLP = initIGLPOpt(*R);
       }
     }
