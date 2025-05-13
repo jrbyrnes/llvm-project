@@ -39,7 +39,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp0(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -84,7 +84,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp0(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -136,7 +136,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_1_1__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -181,7 +181,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_1_1__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -233,7 +233,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_2_2__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -278,7 +278,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_2_2__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -330,7 +330,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_3_3__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -375,7 +375,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_3_3__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -427,7 +427,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_3__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -472,7 +472,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_3__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -524,7 +524,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_3_0__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -569,7 +569,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_3_0__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -621,7 +621,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_2_3__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -666,7 +666,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_2_3__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -718,7 +718,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_3_2__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -763,7 +763,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_3_2__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -867,7 +867,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] blgp:1
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 blgp:1
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -912,7 +912,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] blgp:1
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 blgp:1
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -1014,7 +1014,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp2(<8 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] blgp:2
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 blgp:2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -1115,7 +1115,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp3(<8 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] blgp:3
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 blgp:3
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -1214,7 +1214,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz0__blgp4(<8 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] blgp:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:11], a[0:15], v28, v29 blgp:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -1316,7 +1316,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp0(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] cbsz:1
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 cbsz:1
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -1361,7 +1361,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp0(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] cbsz:1
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 cbsz:1
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -1464,7 +1464,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp1(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 cbsz:1 blgp:1
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -1509,7 +1509,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp1(<8 x 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] cbsz:1 blgp:1
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 cbsz:1 blgp:1
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -1612,7 +1612,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp2(<8 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:1 blgp:2
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 cbsz:1 blgp:2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -1713,7 +1713,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp3(<8 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:1 blgp:3
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 cbsz:1 blgp:3
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -1812,7 +1812,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz1__blgp4(<8 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:1 blgp:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:11], a[0:15], v28, v29 cbsz:1 blgp:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -1913,7 +1913,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz2__blgp0(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:2
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 cbsz:2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -2014,7 +2014,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz2__blgp1(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:2 blgp:1
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 cbsz:2 blgp:1
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -2113,7 +2113,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz2__blgp2(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:2 blgp:2
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 cbsz:2 blgp:2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -2210,7 +2210,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz2__blgp3(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:2 blgp:3
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 cbsz:2 blgp:3
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -2310,7 +2310,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz3__blgp0(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:3
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 cbsz:3
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -2411,7 +2411,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz3__blgp1(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:3 blgp:1
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 cbsz:3 blgp:1
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -2510,7 +2510,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz3__blgp2(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:3 blgp:2
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 cbsz:3 blgp:2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -2607,7 +2607,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz3__blgp4(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v24
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v25
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:9], a[0:15], v26, v27 op_sel_hi:[0,0,0] cbsz:3 blgp:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:9], a[0:15], v26, v27 cbsz:3 blgp:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -2704,7 +2704,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz3__blgp3(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:3 blgp:3
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:11], a[0:15], v28, v29 cbsz:3 blgp:3
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -2801,7 +2801,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz2__blgp4(<6 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v24
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v25
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:9], a[0:15], v26, v27 op_sel_hi:[0,0,0] cbsz:2 blgp:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:9], a[0:15], v26, v27 cbsz:2 blgp:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -2898,7 +2898,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz4__blgp0(<4 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:11], a[0:15], v28, v29 cbsz:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -2997,7 +2997,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz4__blgp1(<4 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v26
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v27
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:11], a[0:15], v28, v29 op_sel_hi:[0,0,0] cbsz:4 blgp:1
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:11], a[0:15], v28, v29 cbsz:4 blgp:1
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -3096,7 +3096,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz4__blgp2(<4 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v24
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v25
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:9], a[0:15], v26, v27 op_sel_hi:[0,0,0] cbsz:4 blgp:2
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:9], a[0:15], v26, v27 cbsz:4 blgp:2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -3193,7 +3193,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz4__blgp3(<4 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v24
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v25
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:9], a[0:15], v26, v27 op_sel_hi:[0,0,0] cbsz:4 blgp:3
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:9], a[0:15], v26, v27 cbsz:4 blgp:3
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -3290,7 +3290,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__cbsz4__blgp4(<4 x 
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v22
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v23
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:7], a[0:15], v24, v25 op_sel_hi:[0,0,0] cbsz:4 blgp:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:3], v[4:7], a[0:15], v24, v25 cbsz:4 blgp:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
 ; GCN-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -3392,7 +3392,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__sgpr_scaleA__sgpr_
 ; GCN-NEXT:    v_mov_b32_e32 v16, s1
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, v16 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, v16
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -3440,7 +3440,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__sgpr_scaleA__vgpr_
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, v31 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, v31
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -3488,7 +3488,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__vgpr_scaleA__sgpr_
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, s0 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, s0
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -3566,7 +3566,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgprs(<8 x i32> inr
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v18
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, v19
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[28:35], v[20:27], a[0:15], v2, v3 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[28:35], v[20:27], a[0:15], v2, v3
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -3632,7 +3632,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgprs(<8 x i32> inr
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v18
 ; GISEL-NEXT:    v_accvgpr_write_b32 a15, v19
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[20:27], v[28:35], a[0:15], v2, v3 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[20:27], v[28:35], a[0:15], v2, v3
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -3686,7 +3686,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgpr_vgpr_vgpr__sgp
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v22
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, v23
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], s8, v24 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], s8, v24
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -3732,7 +3732,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgpr_vgpr_vgpr__sgp
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v22
 ; GISEL-NEXT:    v_accvgpr_write_b32 a15, v23
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], s8, v24 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], s8, v24
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -3786,7 +3786,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgpr_vgpr_vgpr__vgp
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v22
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, v23
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], v24, s8 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], v24, s8
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -3832,7 +3832,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgpr_vgpr_vgpr__vgp
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v22
 ; GISEL-NEXT:    v_accvgpr_write_b32 a15, v23
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], v24, s8 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[26:33], v[0:7], a[0:15], v24, s8
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -3886,7 +3886,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_vgpr_sgpr_vgpr__vgp
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v22
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, v23
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[26:33], a[0:15], v24, s8 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[26:33], a[0:15], v24, s8
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -3932,7 +3932,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_vgpr_sgpr_vgpr__vgp
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v22
 ; GISEL-NEXT:    v_accvgpr_write_b32 a15, v23
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[26:33], a[0:15], v24, s8 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[26:33], a[0:15], v24, s8
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -3978,7 +3978,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_vgpr_vgpr_sgpr__vgp
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, s14
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, s15
 ; GCN-NEXT:    s_nop 1
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v16, s16 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v16, s16
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -4032,7 +4032,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgpr_vgpr_sgpr__vgp
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, s22
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, s23
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[10:17], v[0:7], a[0:15], v8, s24 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[10:17], v[0:7], a[0:15], v8, s24
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -4078,7 +4078,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0_sgpr_vgpr_sgpr__vgp
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, s22
 ; GISEL-NEXT:    v_accvgpr_write_b32 a15, s23
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[10:17], v[0:7], a[0:15], v8, s24 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[10:17], v[0:7], a[0:15], v8, s24
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -4125,7 +4125,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__scaleA_inlineimm__
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 33, -2 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 33, -2
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -4173,7 +4173,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__scaleA_kimm__scale
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, -2 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, -2
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -4217,7 +4217,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__scaleA_kimm__scale
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, -2 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, -2
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -4266,7 +4266,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__scaleA_kimm__scale
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, v31 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s0, v31
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -4311,7 +4311,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__scaleA_kimm__scale
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -4370,7 +4370,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4__vgprcd(<8 x i32>
 ; SDAG-NEXT:    v_mov_b64_e32 v[14:15], s[50:51]
 ; SDAG-NEXT:    v_mov_b32_e32 v32, s5
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], s4, v32 op_sel_hi:[0,0,0] blgp:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], s4, v32 blgp:2
 ; SDAG-NEXT:    v_mov_b32_e32 v16, 0
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
@@ -4405,7 +4405,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4__vgprcd(<8 x i32>
 ; GISEL-NEXT:    v_mov_b64_e32 v[14:15], s[50:51]
 ; GISEL-NEXT:    v_mov_b32_e32 v32, s21
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], s20, v32 op_sel_hi:[0,0,0] blgp:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], s20, v32 blgp:2
 ; GISEL-NEXT:    v_mov_b32_e32 v16, 0
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
@@ -4453,7 +4453,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4__vgprcd___scaleA_
 ; SDAG-NEXT:    v_mov_b64_e32 v[12:13], s[48:49]
 ; SDAG-NEXT:    v_mov_b64_e32 v[14:15], s[50:51]
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], s2, -2 op_sel_hi:[0,0,0] blgp:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], s2, -2 blgp:2
 ; SDAG-NEXT:    v_mov_b32_e32 v16, 0
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
@@ -4488,7 +4488,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4__vgprcd___scaleA_
 ; GISEL-NEXT:    v_mov_b64_e32 v[12:13], s[48:49]
 ; GISEL-NEXT:    v_mov_b64_e32 v[14:15], s[50:51]
 ; GISEL-NEXT:    s_nop 1
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], v32, -2 op_sel_hi:[0,0,0] blgp:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], v32, -2 blgp:2
 ; GISEL-NEXT:    v_mov_b32_e32 v16, 0
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
@@ -4545,7 +4545,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__nonmac(<8 x 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, s19
 ; SDAG-NEXT:    v_mov_b32_e32 v16, s3
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s2, v16 op_sel_hi:[0,0,0]
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s2, v16
 ; SDAG-NEXT:    v_mov_b32_e32 v0, s16
 ; SDAG-NEXT:    v_mov_b32_e32 v1, s17
 ; SDAG-NEXT:    v_mov_b32_e32 v2, s18
@@ -4620,7 +4620,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_0_0__nonmac(<8 x 
 ; GISEL-NEXT:    v_mov_b32_e32 v16, s3
 ; GISEL-NEXT:    v_mov_b64_e32 v[22:23], 48
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s2, v16 op_sel_hi:[0,0,0]
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], s2, v16
 ; GISEL-NEXT:    v_mov_b64_e32 v[0:1], s[4:5]
 ; GISEL-NEXT:    v_mov_b64_e32 v[16:17], 0
 ; GISEL-NEXT:    v_mov_b64_e32 v[2:3], s[6:7]
@@ -4694,7 +4694,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_25_42__nonmac(<8 
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, s14
 ; SDAG-NEXT:    v_accvgpr_write_b32 a15, s15
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 25, 42 op_sel_hi:[0,0,0] blgp:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 25, 42 blgp:2
 ; SDAG-NEXT:    v_mov_b32_e32 v0, s12
 ; SDAG-NEXT:    v_mov_b32_e32 v1, s13
 ; SDAG-NEXT:    v_mov_b32_e32 v2, s14
@@ -4768,7 +4768,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_25_42__nonmac(<8 
 ; GISEL-NEXT:    v_accvgpr_write_b32 a15, s19
 ; GISEL-NEXT:    v_mov_b64_e32 v[22:23], 48
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 25, 42 op_sel_hi:[0,0,0] blgp:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 25, 42 blgp:2
 ; GISEL-NEXT:    v_mov_b64_e32 v[0:1], s[4:5]
 ; GISEL-NEXT:    v_mov_b64_e32 v[2:3], s[6:7]
 ; GISEL-NEXT:    v_mov_b64_e32 v[4:5], s[8:9]
@@ -4958,7 +4958,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_25_42__vgprcd_non
 ; SDAG-NEXT:    v_mov_b64_e32 v[12:13], s[12:13]
 ; SDAG-NEXT:    v_mov_b64_e32 v[14:15], s[14:15]
 ; SDAG-NEXT:    s_nop 1
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], 25, 42 op_sel_hi:[0,0,0] blgp:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], 25, 42 blgp:2
 ; SDAG-NEXT:    v_mov_b32_e32 v16, s12
 ; SDAG-NEXT:    v_mov_b32_e32 v17, s13
 ; SDAG-NEXT:    v_mov_b32_e32 v18, s14
@@ -5024,7 +5024,7 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_25_42__vgprcd_non
 ; GISEL-NEXT:    v_mov_b64_e32 v[14:15], s[18:19]
 ; GISEL-NEXT:    v_mov_b64_e32 v[38:39], 48
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], 25, 42 op_sel_hi:[0,0,0] blgp:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], 25, 42 blgp:2
 ; GISEL-NEXT:    v_mov_b64_e32 v[18:19], s[6:7]
 ; GISEL-NEXT:    v_mov_b64_e32 v[16:17], s[4:5]
 ; GISEL-NEXT:    v_mov_b64_e32 v[22:23], s[10:11]
@@ -5173,7 +5173,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___constant_scale_0_1(<8
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 0, 1 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 0, 1
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -5220,7 +5220,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___constant_scale_1_0_a(
 ; GCN-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 1, 0 op_sel_hi:[0,0,0]
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 1, 0
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -5273,7 +5273,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp8__v8i32_fp6(
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] blgp:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 blgp:2
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -5318,7 +5318,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp8__v8i32_fp6(
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] blgp:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 blgp:2
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -5370,7 +5370,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp6__v8i32_fp8(
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] cbsz:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 cbsz:2
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -5415,7 +5415,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp6__v8i32_fp8(
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] cbsz:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 cbsz:2
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -5467,7 +5467,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp6__v8i32_fp6(
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] cbsz:2 blgp:2
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 cbsz:2 blgp:2
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
 ; SDAG-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -5511,7 +5511,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp6__v8i32_fp6(
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] cbsz:2 blgp:2
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 cbsz:2 blgp:2
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
 ; GISEL-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -5611,7 +5611,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp8__v8i32_fp4(
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] blgp:4
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 blgp:4
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -5656,7 +5656,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp8__v8i32_fp4(
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] blgp:4
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 blgp:4
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -5708,7 +5708,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp4__v8i32_fp8(
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] cbsz:4
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 cbsz:4
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
@@ -5753,7 +5753,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp4__v8i32_fp8(
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] cbsz:4
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 cbsz:4
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
@@ -5804,7 +5804,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp8__v6i32_fp4(
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] blgp:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:13], a[0:15], v30, v31 blgp:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -5855,7 +5855,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v6i32_fp4__v8i32_fp8(
 ; GCN-NEXT:    v_accvgpr_write_b32 a15, v29
 ; GCN-NEXT:    s_waitcnt vmcnt(0)
 ; GCN-NEXT:    s_nop 0
-; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 op_sel_hi:[0,0,0] cbsz:4
+; GCN-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:5], v[6:13], a[0:15], v30, v31 cbsz:4
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 7
 ; GCN-NEXT:    s_nop 3
@@ -5907,7 +5907,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp4__v8i32_fp4(
 ; SDAG-NEXT:    v_accvgpr_write_b32 a14, v30
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_nop 0
-; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 op_sel_hi:[0,0,0] cbsz:4 blgp:4
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v32, v31 cbsz:4 blgp:4
 ; SDAG-NEXT:    s_nop 7
 ; SDAG-NEXT:    s_nop 3
 ; SDAG-NEXT:    v_accvgpr_read_b32 v0, a0
@@ -5951,7 +5951,7 @@ define <16 x float> @test_mfma_scale_f32_32x32x64_f8f6f4___v8i32_fp4__v8i32_fp4(
 ; GISEL-NEXT:    v_accvgpr_write_b32 a14, v30
 ; GISEL-NEXT:    s_waitcnt vmcnt(0)
 ; GISEL-NEXT:    s_nop 0
-; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 op_sel_hi:[0,0,0] cbsz:4 blgp:4
+; GISEL-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], v31, v32 cbsz:4 blgp:4
 ; GISEL-NEXT:    s_nop 7
 ; GISEL-NEXT:    s_nop 3
 ; GISEL-NEXT:    v_accvgpr_read_b32 v0, a0
