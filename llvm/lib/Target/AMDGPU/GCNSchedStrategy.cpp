@@ -1356,10 +1356,10 @@ bool GCNSchedStage::initGCNRegion() {
 bool UnclusteredHighRPStage::initGCNRegion() {
   // Only reschedule regions with the minimum occupancy or regions that may have
   // spilling (excess register pressure).
-//  if ((!DAG.RegionsWithMinOcc[RegionIdx] ||
-//       DAG.MinOccupancy <= InitialOccupancy) &&
-//      !DAG.RegionsWithExcessRP[RegionIdx])
-//    return false;
+  if ((!DAG.RegionsWithMinOcc[RegionIdx] ||
+       DAG.MinOccupancy <= InitialOccupancy) &&
+      !DAG.RegionsWithExcessRP[RegionIdx])
+    return false;
 
   return GCNSchedStage::initGCNRegion();
 }
