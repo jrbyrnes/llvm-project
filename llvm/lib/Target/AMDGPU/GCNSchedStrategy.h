@@ -774,9 +774,13 @@ private:
     
   DenseMap<MachineInstr *, SmallPtrSet<MachineBasicBlock *, 16>> ToDelete;
 
+  BitVector RelevantRegions;
+
   // Map a trivially rematerializable def to a list of regions at MinOccupancy
   // that has the defined reg as a live-in.
   DenseMap<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
+
+  DenseMap<unsigned, int> OptRegionRPReduction;
 
   MachineCycleInfo CI;
   MachineDominatorTree PDT;
@@ -785,11 +789,11 @@ private:
 
   bool canRemat(Register Reg);
 
-  void collectRematSeeds();
+  void collectRematSeeds(bool Aggressive = false);
 
-  bool createRematPlan();
+  bool createRematPlan(bool Aggressive = false);
 
-  bool implementRematPlan(const TargetInstrInfo *TII);
+  bool implementRematPlan(const TargetInstrInfo *TII, bool Aggressive = false);
 
   bool isTriviallyReMaterializable(const MachineInstr &MI);
 

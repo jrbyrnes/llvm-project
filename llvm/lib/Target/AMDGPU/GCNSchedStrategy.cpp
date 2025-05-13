@@ -1234,11 +1234,14 @@ bool PreRARematStage::eliminateDeadMI() {
 }
 
 bool PreRARematStage::initGCNSchedStage() {
+  errs() << "PreRAREmat init stage\n";
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
 
-  if (DAG.RegionsWithMinOcc.none() || DAG.Regions.size() == 1)
+  if (DAG.RegionsWithMinOcc.none() || DAG.Regions.size() == 1) {
+    errs() << "no remat region\n";
     return false;
+  }
 
   const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
 
@@ -1281,7 +1284,7 @@ bool PreRARematStage::initGCNSchedStage() {
   //MF.dump();
   collectRematSeeds();
   if (Cands.empty()) {
-    //errs() << "Cands empty?\n";
+    errs() << "Cands empty?\n";
     return false;
   }
   
@@ -1295,6 +1298,41 @@ bool PreRARematStage::initGCNSchedStage() {
     return false;
   }
   
+  bool NeedAggressive = false;
+  for (auto I = 0; I < OptRegionRPReduction.size(); I++) {
+    if (OptRegionRPReduction[I] > 0) {
+      NeedAggressive = true;
+      break;
+    }
+
+  }
+
+  errs() << "MeedAggressivwe? " << NeedAggressive << "\n";
+  if (NeedAggressive) {
+    //errs() << "BEFORE REMAT: "; 
+    //MF.dump();
+      DAG.BBLiveInMap = DAG.getRegionLiveInMap();
+      DAG.RegionLiveOuts.buildLiveRegMap();
+
+    
+
+    collectRematSeeds(true);
+    bool GoToNext = true;
+    if (Cands.empty()) {
+      errs() << "Cands empty?\n";
+      GoToNext = false;
+    }
+  
+    if (GoToNext && !createRematPlan(true)) {
+      //errs() << "create remat plan fail, implementing anyway\n";
+      GoToNext =  false;
+    }
+  
+    if (GoToNext && !implementRematPlan(TII, true)) {
+      //errs() << "Could not implement\n";
+      GoToNext = false;
+    }
+  }
 
 
   //errs() << "Finish implement remat plan\n";
@@ -1887,7 +1925,7 @@ Printable print(const RematCandidate &R) {
 }
 
 
-void PreRARematStage::collectRematSeeds() {
+void PreRARematStage::collectRematSeeds(bool Aggressive) {
   //const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(DAG.TRI);
   
   /*
@@ -1926,26 +1964,38 @@ void PreRARematStage::collectRematSeeds() {
   }
 */
 
+  if (!Aggressive) {
+    for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) { 
+    auto TheBlock = DAG.Regions[I].first->getParent();
+    auto Cycle = CI.getCycle(TheBlock);
+      if (Cycle) {
+        TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
+        if (!TargetBlock)
+          TargetBlock = TheBlock;
+      }
+    }
+  }
 
+  RelevantRegions.resize(DAG.Regions.size());
+  RelevantRegions.reset();
   SmallPtrSet<MachineBasicBlock *, 4> Visited;
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
-    if (!DAG.RegionsWithMinOcc[I])
+    if (Aggressive && !DAG.RegionsWithMinOcc[I])
+      continue;
+    
+    else if (!Aggressive && DAG.Regions[I].first->getParent() != TargetBlock)
       continue;
 
-    //errs() << "\nRegion with min occ: " << I << "\n";
+
+    RelevantRegions[I] = true;
+    errs() << "\nRegion with min occ: " << I << "\n";
     //if (I >= 20)
     //  continue;
     //errs() << "Checking region " << I << " for liveThrus\n";
 
     auto TheBlock = DAG.Regions[I].first->getParent();
     auto Cycle = CI.getCycle(TheBlock);
-    if (Cycle) {
-      TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
-      if (!TargetBlock)
-        TargetBlock = TheBlock;
-    }
-    if (!Cycle)
-      continue;
+
     //if (!Visited.insert(TheBlock).second)
     //  continue;
 
@@ -1958,11 +2008,13 @@ void PreRARematStage::collectRematSeeds() {
           bool AddedToRematList = false;
       //errs() << "LiveInReg: " << printReg(TheReg) << "\n";
       bool FoundBlockUse = false;
+      if (!Aggressive) {
       for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
         if (TheUseInst.getParent() == TheBlock) {
           FoundBlockUse = true;
           break;
         }
+      }
       }
       if (!FoundBlockUse && canRemat(TheReg)) {
         //errs() << "Found LiveThru: " << printReg(TheReg) << "\n";
@@ -1970,7 +2022,7 @@ void PreRARematStage::collectRematSeeds() {
         //errs() << "Not block use\n";
         MachineInstr *Def = DAG.MRI.getOneDef(TheReg)->getParent();
         for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
-            if (!isReachableFrom(TargetBlock, TheUseInst.getParent()))
+            if (!Aggressive && !isReachableFrom(TargetBlock, TheUseInst.getParent()))
               continue;
             MachineBasicBlock::iterator InstPt = &TheUseInst;
             RematCandidate R(Def, CI.getCycleDepth(InstPt->getParent()), I, InstPt);
@@ -1999,14 +2051,14 @@ void PreRARematStage::collectRematSeeds() {
   Cands.resolveSameBlockUses(&DAG.MRI, DAG.LIS);
 }
 
-bool PreRARematStage::createRematPlan() {
+bool PreRARematStage::createRematPlan(bool Aggressive) {
   DenseMap<unsigned, unsigned> OptRegions;
-  DenseMap<unsigned, int> OptRegionRPReduction;
+  OptRegionRPReduction.clear();
   DenseMap<unsigned, GCNRPTracker::LiveRegSet> OptRegionLiveIns;
   //errs() << "createRematPlan\n";
 
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
-    if (!DAG.RegionsWithMinOcc[I])
+    if (!RelevantRegions[I])
       continue;
     
 
@@ -2016,14 +2068,15 @@ bool PreRARematStage::createRematPlan() {
     }
 
     unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
-    unsigned NumToIncreaseOcc = NumVGPRs > (ST.getAddressableNumArchVGPRs() - 40) ? (NumVGPRs + 40 - ST.getAddressableNumArchVGPRs()) : 0;
+    unsigned Bias = Aggressive ? 3 : 40;
+    int NumToIncreaseOcc = NumVGPRs + Bias - ST.getAddressableNumArchVGPRs();
     ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
     OptRegionRPReduction[I] = NumToIncreaseOcc;
     OptRegionLiveIns[I] =  DAG.LiveIns[I];
 
     //errs() << "Current VGPR Pressure: " << NumVGPRs << "\n";
-    //errs() << "For Region: " << I << ", need to reduce VGPR pressure by: " << NumToIncreaseOcc << ", to acheive: " << (ST.getOccupancyWithNumVGPRs(NumVGPRs) + 1) << " occ\n";
+    errs() << "For Region: " << I << ", need to reduce VGPR pressure by: " << NumToIncreaseOcc << ", to acheive no spilling\n";
   }
 
     
@@ -2061,11 +2114,17 @@ bool PreRARematStage::createRematPlan() {
         }
       }
 
+
       // should also check loop cycle depth
       if (!ShouldRemat && (Stage < 2)) {
         //errs() << "Does not affect RP\n";
         NewCandidates.insert(R);
         continue;
+      }
+
+
+      if (Aggressive) {
+        errs() << "Found potential remat: "; R.Def->dump();
       }
 
 //      if (Stage < 2 && (R.LoopCost >= RCCache.getDeferCostThreshold())) {
@@ -2140,11 +2199,12 @@ bool PreRARematStage::createRematPlan() {
             LaneBitmask NewLanes = UseLanes & ~OldLiveInMask;
             RPImpact -= NewLanes.getNumLanes() / 2;
           }
+          
           if (RPImpact < 0) {
             ShouldDefer = true;
             break;
           }
-          //errs() << "RP IMpact: " << RPImpact << "\n";
+          if (Aggressive) {errs() << "RP IMpact: " << RPImpact << "\n";}
         }
 
         if (ShouldDefer) {
@@ -2194,8 +2254,11 @@ bool PreRARematStage::createRematPlan() {
         }
       }
 
-      if (FoundInBlockUse)
+      if (Aggressive) {errs() << "FoundInBLockUse: " << FoundInBlockUse << "\n";}
+      if (!Aggressive && FoundInBlockUse)
         continue;
+      
+      if (Aggressive) {errs() << "Remat anyway\n";}
 
 
       MachineInstr *UseDef = DAG.MRI.getOneDef(Reg)->getParent();
@@ -2255,7 +2318,7 @@ bool PreRARematStage::createRematPlan() {
       //errs() << "Overall RPImpact from remat: " << RPImpact << "\n";
 
       OptRegionRPReduction[HighRPRegion] -= RPImpact;
-      //errs() << "New RP reduction needed for " << HighRPRegion << ": " <<  OptRegionRPReduction[HighRPRegion] << "\n";
+      if (Aggressive) {errs() << "New RP reduction needed for " << HighRPRegion << ": " <<  OptRegionRPReduction[HighRPRegion] << "\n";}
     }
 
     //errs() << "Finished all remat cands\n";
@@ -2296,7 +2359,7 @@ bool PreRARematStage::createRematPlan() {
   return !BadRP;
 }
 
-bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
+bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII, bool Aggressive) {
 
   // Temporary copies of cached variables we will be modifying and replacing if
   // sinking succeeds.
@@ -2310,9 +2373,10 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
 
    DenseMap<MachineInstr *, MachineInstr *> InsertedMIToOldDef;
   LiveIntervals *LIS = DAG.LIS;
-  //unsigned RematCount = 0;
+  unsigned RematCount = 0;
 
-  RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
+  if (!Aggressive)
+    RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
   RematPlan.sort();
   for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E; I++) {
     auto R = *I;
@@ -2439,7 +2503,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
       LIS->createAndComputeVirtRegInterval(NewReg);
       InsertedMIToOldDef[NewMI] = Def;
 
-      //++RematCount;
+      ++RematCount;
 
       ////errs() << "Finisedht eh remat\n";
       for (const MachineOperand &MO : NewMI->operands()) {
@@ -2554,7 +2618,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII) {
   SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
   MFI.increaseOccupancy(MF, ++DAG.MinOccupancy);
   //errs() << "RET TRUE\n";
-
+  errs() << "Did " << RematCount << " remats\n";
 
 
   return true;
