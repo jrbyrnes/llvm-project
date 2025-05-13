@@ -1857,7 +1857,7 @@ bool MFMAExpSimpleInterleaveOpt::applyIGLPStrategy(
   const unsigned PipelineSyncID = 0;
   for (unsigned I = 0; I < MFMACount * 3; ++I) {
     SchedGroup *SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::VALU, 6, PipelineSyncID, DAG, TII);
+        SchedGroupMask::VALU, 8, PipelineSyncID, DAG, TII);
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(

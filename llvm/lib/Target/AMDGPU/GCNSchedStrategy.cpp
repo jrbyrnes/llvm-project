@@ -1234,7 +1234,7 @@ bool PreRARematStage::eliminateDeadMI() {
 }
 
 bool PreRARematStage::initGCNSchedStage() {
-  errs() << "PreRAREmat init stage\n";
+  //errs() << "PreRAREmat init stage\n";
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
 
@@ -1284,7 +1284,7 @@ bool PreRARematStage::initGCNSchedStage() {
   //MF.dump();
   collectRematSeeds();
   if (Cands.empty()) {
-    errs() << "Cands empty?\n";
+    //errs() << "Cands empty?\n";
     return false;
   }
   
@@ -1307,7 +1307,7 @@ bool PreRARematStage::initGCNSchedStage() {
 
   }
 
-  errs() << "MeedAggressivwe? " << NeedAggressive << "\n";
+  //errs() << "MeedAggressivwe? " << NeedAggressive << "\n";
   if (NeedAggressive) {
     //errs() << "BEFORE REMAT: "; 
     //MF.dump();
@@ -1319,7 +1319,7 @@ bool PreRARematStage::initGCNSchedStage() {
     collectRematSeeds(true);
     bool GoToNext = true;
     if (Cands.empty()) {
-      errs() << "Cands empty?\n";
+      //errs() << "Cands empty?\n";
       GoToNext = false;
     }
   
@@ -1979,16 +1979,13 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
   RelevantRegions.resize(DAG.Regions.size());
   RelevantRegions.reset();
   SmallPtrSet<MachineBasicBlock *, 4> Visited;
-  for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
-    if (Aggressive && !DAG.RegionsWithMinOcc[I])
-      continue;
-    
-    else if (!Aggressive && DAG.Regions[I].first->getParent() != TargetBlock)
+  for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {   
+    if (DAG.Regions[I].first->getParent() != TargetBlock)
       continue;
 
 
     RelevantRegions[I] = true;
-    errs() << "\nRegion with min occ: " << I << "\n";
+    //errs() << "\nRegion with min occ: " << I << "\n";
     //if (I >= 20)
     //  continue;
     //errs() << "Checking region " << I << " for liveThrus\n";
@@ -2076,7 +2073,7 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
     OptRegionLiveIns[I] =  DAG.LiveIns[I];
 
     //errs() << "Current VGPR Pressure: " << NumVGPRs << "\n";
-    errs() << "For Region: " << I << ", need to reduce VGPR pressure by: " << NumToIncreaseOcc << ", to acheive no spilling\n";
+    //errs() << "For Region: " << I << ", need to reduce VGPR pressure by: " << NumToIncreaseOcc << ", to acheive no spilling\n";
   }
 
     
@@ -2122,10 +2119,6 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
         continue;
       }
 
-
-      if (Aggressive) {
-        errs() << "Found potential remat: "; R.Def->dump();
-      }
 
 //      if (Stage < 2 && (R.LoopCost >= RCCache.getDeferCostThreshold())) {
 //        //errs() << "Defer\n";
@@ -2204,7 +2197,6 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
             ShouldDefer = true;
             break;
           }
-          if (Aggressive) {errs() << "RP IMpact: " << RPImpact << "\n";}
         }
 
         if (ShouldDefer) {
@@ -2254,11 +2246,11 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
         }
       }
 
-      if (Aggressive) {errs() << "FoundInBLockUse: " << FoundInBlockUse << "\n";}
+      //if (Aggressive) {errs() << "FoundInBLockUse: " << FoundInBlockUse << "\n";}
       if (!Aggressive && FoundInBlockUse)
         continue;
       
-      if (Aggressive) {errs() << "Remat anyway\n";}
+      //if (Aggressive) {errs() << "Remat anyway\n";}
 
 
       MachineInstr *UseDef = DAG.MRI.getOneDef(Reg)->getParent();
@@ -2318,7 +2310,7 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
       //errs() << "Overall RPImpact from remat: " << RPImpact << "\n";
 
       OptRegionRPReduction[HighRPRegion] -= RPImpact;
-      if (Aggressive) {errs() << "New RP reduction needed for " << HighRPRegion << ": " <<  OptRegionRPReduction[HighRPRegion] << "\n";}
+      //if (Aggressive) {errs() << "New RP reduction needed for " << HighRPRegion << ": " <<  OptRegionRPReduction[HighRPRegion] << "\n";}
     }
 
     //errs() << "Finished all remat cands\n";
@@ -2618,7 +2610,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII, bool Aggres
   SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
   MFI.increaseOccupancy(MF, ++DAG.MinOccupancy);
   //errs() << "RET TRUE\n";
-  errs() << "Did " << RematCount << " remats\n";
+  //errs() << "Did " << RematCount << " remats\n";
 
 
   return true;
