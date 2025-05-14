@@ -800,6 +800,9 @@ private:
 
   MachineBasicBlock *TargetBlock = nullptr;
 
+  unsigned LiveThruBias = 40;
+  unsigned LiveInBias = 3;
+
   bool canRemat(Register Reg);
 
   void collectRematSeeds(bool Aggressive = false);

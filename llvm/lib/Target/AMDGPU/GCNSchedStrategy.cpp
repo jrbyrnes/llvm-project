@@ -94,11 +94,8 @@ void GCNSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   SGPRExcessLimit =
       Context->RegClassInfo->getNumAllocatableRegs(&AMDGPU::SGPR_32RegClass);
 
-      ////errs() << "SGPRExcess: " << SGPRExcessLimit << "\n";
   VGPRExcessLimit =
       Context->RegClassInfo->getNumAllocatableRegs(&AMDGPU::VGPR_32RegClass);
-
-           // //errs() << "VGPRExcess: " << VGPRExcessLimit << "\n";
 
   SIMachineFunctionInfo &MFI = *MF->getInfo<SIMachineFunctionInfo>();
   // Set the initial TargetOccupnacy to the maximum occupancy that we can
@@ -205,7 +202,6 @@ static void getRegisterPressures(
       NewPressure.getArchVGPRNum();
   Pressure[AMDGPU::RegisterPressureSets::AGPR_32] = NewPressure.getAGPRNum();
 }
-bool FoundMFMA = 0;
 
 void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
                                      bool AtTop,
@@ -218,11 +214,6 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
 
   if (!DAG->isTrackingPressure())
     return;
-
-  if (!FoundMFMA && reinterpret_cast<const SIInstrInfo *>(DAG->TII)->isMFMAorWMMA(*SU->getInstr())) {
-    FoundMFMA = true;
-    //errs() << "Found MFMA\n";
-  }
 
   Pressure.clear();
   MaxPressure.clear();
@@ -977,7 +968,6 @@ void GCNScheduleDAGMILive::runSchedStages() {
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
-    errs() << "SchedStage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
     
@@ -986,12 +976,9 @@ void GCNScheduleDAGMILive::runSchedStages() {
       RegionLiveOuts.buildLiveRegMap();
     }
 
-    unsigned R = 0;
     for (auto Region : Regions) {
-      FoundMFMA = false;
       RegionBegin = Region.first;
       RegionEnd = Region.second;
-      errs() << "Region: " << R++ << "\n";
 
       if (RegionBegin == RegionEnd)
         continue;
@@ -1183,7 +1170,7 @@ bool PreRARematStage::eliminateDeadMI() {
 }
 
 bool PreRARematStage::initGCNSchedStage() {
-  if (!GCNSchedStage::initGCNSchedStage())
+  if (!GCNSchedStage::initGCNSchedStage() || !RematLiveThru)
     return false;
 
   if (DAG.RegionsWithMinOcc.none() || DAG.Regions.size() == 1)
@@ -1202,6 +1189,7 @@ bool PreRARematStage::initGCNSchedStage() {
   // need to be fixed if there is another pass after this pass.
   assert(!S.hasNextStage());
 
+
   CI.clear();
   CI.compute(MF);
   PDT.recalculate(MF);
@@ -1219,16 +1207,16 @@ bool PreRARematStage::initGCNSchedStage() {
   }
   
   bool NeedAggressive = false;
-  for (auto I = 0; I < OptRegionRPReduction.size(); I++) {
-    if (OptRegionRPReduction[I] > 37) {
+  for (unsigned I = 0; I < OptRegionRPReduction.size(); I++) {
+    assert(LiveThruBias >= LiveInBias);
+    if (OptRegionRPReduction[I] > (unsigned)(LiveThruBias - LiveInBias)) {
       NeedAggressive = true;
       break;
     }
 
   }
 
-  if (NeedAggressive) {
-      errs() << "Needs agg\n";
+  if (NeedAggressive && RematLiveIn) {
       DAG.BBLiveInMap = DAG.getRegionLiveInMap();
       DAG.RegionLiveOuts.buildLiveRegMap();
 
@@ -1241,7 +1229,6 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   
     if (GoToNext && !createRematPlan(true)) {
-      errs() << "Create remat plan fail?\n";
       GoToNext =  false;
     }
   
@@ -1272,6 +1259,7 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   }
   return true;
+
 }
 
 void GCNSchedStage::finalizeGCNSchedStage() {
@@ -1423,8 +1411,6 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  errs() << "Pressure After: "; PressureAfter.dump();
-  errs() << "Pressure Before: "; PressureBefore.dump();
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
@@ -1856,11 +1842,8 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
     RelevantRegions[I] = true;
 
     auto TheBlock = DAG.Regions[I].first->getParent();
-    auto Cycle = CI.getCycle(TheBlock);
-
 
     auto TheLiveIns = DAG.LiveIns[I];
-    TheBlock = DAG.Regions[I].first->getParent();
 
     GCNRegPressure LiveThru;
     for (auto LR : TheLiveIns) {
@@ -1909,7 +1892,7 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
     }
 
     unsigned NumVGPRs = RP.getVGPRNum(ST.hasGFX90AInsts());
-    unsigned Bias = Aggressive ? 3 : 40;
+    unsigned Bias = Aggressive ? LiveInBias : LiveThruBias;
     int NumToIncreaseOcc = NumVGPRs + Bias - ST.getAddressableNumArchVGPRs();
     ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
