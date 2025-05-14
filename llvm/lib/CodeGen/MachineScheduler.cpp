@@ -81,7 +81,7 @@ namespace llvm {
 cl::opt<MISched::Direction> PreRADirection(
     "misched-prera-direction", cl::Hidden,
     cl::desc("Pre reg-alloc list scheduling direction"),
-    cl::init(MISched::BottomUp),
+    cl::init(MISched::Unspecified),
     cl::values(
         clEnumValN(MISched::TopDown, "topdown",
                    "Force top-down pre reg-alloc list scheduling"),
