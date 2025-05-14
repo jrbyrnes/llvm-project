@@ -69,12 +69,12 @@ static cl::opt<bool> GCNTrackers(
 static cl::opt<bool> RematLiveThru(
     "amdgpu-remat-livethru", cl::Hidden,
     cl::desc("Rematerialize the LiveThru registers for the first loop found in the code"),
-    cl::init(false));
+    cl::init(true));
 
 static cl::opt<bool> RematLiveIn(
     "amdgpu-remat-into", cl::Hidden,
     cl::desc("Rematerialize any LiveIn registers for the first loop found in the code (may rematerialize into body of loop)"),
-    cl::init(false));
+    cl::init(true));
 
 
 const unsigned ScheduleMetrics::ScaleFactor = 100;
