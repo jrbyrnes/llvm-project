@@ -977,6 +977,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
+    errs() << "SchedStage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
     
@@ -990,6 +991,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
       FoundMFMA = false;
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+      errs() << "Region: " << R++ << "\n";
 
       if (RegionBegin == RegionEnd)
         continue;
@@ -1218,7 +1220,7 @@ bool PreRARematStage::initGCNSchedStage() {
   
   bool NeedAggressive = false;
   for (auto I = 0; I < OptRegionRPReduction.size(); I++) {
-    if (OptRegionRPReduction[I] > 0) {
+    if (OptRegionRPReduction[I] > 37) {
       NeedAggressive = true;
       break;
     }
@@ -1226,6 +1228,7 @@ bool PreRARematStage::initGCNSchedStage() {
   }
 
   if (NeedAggressive) {
+      errs() << "Needs agg\n";
       DAG.BBLiveInMap = DAG.getRegionLiveInMap();
       DAG.RegionLiveOuts.buildLiveRegMap();
 
@@ -1238,6 +1241,7 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   
     if (GoToNext && !createRematPlan(true)) {
+      errs() << "Create remat plan fail?\n";
       GoToNext =  false;
     }
   
@@ -1419,8 +1423,8 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  //errs() << "Pressure After: "; PressureAfter.dump();
-  //errs() << "Pressure Before: "; PressureBefore.dump();
+  errs() << "Pressure After: "; PressureAfter.dump();
+  errs() << "Pressure Before: "; PressureBefore.dump();
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
@@ -1929,8 +1933,10 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
     FoundAny = false;
     RematCandidates RCCache = NewCandidates;
     NewCandidates.clear();
+    RCCache.sort();
 
-    for (const RematCandidate &R : RCCache) {
+    errs() << "Cache has size: " << RCCache.Sorted.size() << "\n";
+    for (const RematCandidate &R : reverse(RCCache.Sorted)) {
       bool ShouldRemat = false;
       for (unsigned HighRPRegion : R.HighRPRegions) {
         if (OptRegionRPReduction[HighRPRegion] > 0) {
@@ -2264,6 +2270,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII, bool Aggres
   if (GCNTrackers)
     DAG.RegionLiveOuts.buildLiveRegMap();
 
+  if (Aggressive) {errs() << "Did: " << RematCount << " remats\n";}
   SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
   MFI.increaseOccupancy(MF, ++DAG.MinOccupancy);
   return true;
