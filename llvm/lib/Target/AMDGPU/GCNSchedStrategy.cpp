@@ -80,7 +80,7 @@ static cl::opt<bool> RematLiveIn(
 static cl::opt<bool> DisableRemat(
     "amdgpu-disable-remat", cl::Hidden,
     cl::desc("Disable rematerialization during AMDGPU scheduling)"),
-    cl::init(true));
+    cl::init(false));
 
 
 const unsigned ScheduleMetrics::ScaleFactor = 100;
@@ -1427,6 +1427,22 @@ void GCNScheduleDAGMILive::runSchedStages() {
         reinterpret_cast<GCNRPTracker *>(UpwardTracker)
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
+
+
+        GCNRegPressure LiveThru;
+        for (auto LR : LiveIns[Stage->getRegionIdx()]) {
+          bool FoundIt = false;
+          for (auto &U : MRI.use_nodbg_instructions(LR.first)) {
+            if (U.getParent() == RegionBegin->getParent()) {
+             FoundIt = true;
+             break;
+            }
+
+          }
+          if (!FoundIt) {
+            LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
+          }
+        }
       }
 
       ScheduleDAGMILive::schedule();
@@ -2559,15 +2575,18 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
   DenseMap<MachineInstr *, MachineInstr *> InsertedMIToOldDef;
   LiveIntervals *LIS = DAG.LIS;
 
-  if (!Aggressive)
-    RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
+// TODO -- enable
+// May result in bad insert points (e.g. before exec set code)
+//  if (!Aggressive)
+//    RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
+
+  Cands.resolveSameBlockUses(&DAG.MRI, DAG.LIS);
   RematPlan.sort();
   for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E;
        I++) {
     auto R = *I;
     MachineInstr *Def = R.Def;
-
-    MachineBasicBlock::iterator InsertPos = R.InsertPt->getParent()->begin();
+    MachineBasicBlock::iterator InsertPos = R.InsertPt;
 
     Register Reg = Def->getOperand(0).getReg();
 
@@ -2578,6 +2597,13 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
     for (auto &UseI : DAG.MRI.use_nodbg_instructions(Reg)) {
       if (PDT.dominates(InsertPos->getParent(), UseI.getParent())) {
         UserInst.push_back(&UseI);
+      }
+      if (UseI.getParent() == InsertPos->getParent()) {
+        if (SlotIndex::isEarlierInstr(
+                DAG.LIS->getInstructionIndex(UseI).getRegSlot(),
+                DAG.LIS->getInstructionIndex(*InsertPos).getRegSlot())) {
+                  InsertPos = MachineBasicBlock::iterator(&UseI);
+                }
       }
     }
 
