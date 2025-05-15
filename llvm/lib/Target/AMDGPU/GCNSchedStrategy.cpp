@@ -77,6 +77,12 @@ static cl::opt<bool> RematLiveIn(
              "the code (may rematerialize into body of loop)"),
     cl::init(true));
 
+static cl::opt<bool> DisableRemat(
+    "amdgpu-disable-remat", cl::Hidden,
+    cl::desc("Disable rematerialization during AMDGPU scheduling)"),
+    cl::init(false));
+
+
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
 GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
@@ -667,7 +673,7 @@ GCNMaxOccupancySchedStrategy::GCNMaxOccupancySchedStrategy(
   SchedStages.push_back(GCNSchedStageID::OccInitialSchedule);
   SchedStages.push_back(GCNSchedStageID::UnclusteredHighRPReschedule);
   SchedStages.push_back(GCNSchedStageID::ClusteredLowOccupancyReschedule);
-  SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
+  if (!DisableRemat) SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
   GCNTrackers = GCNTrackers & !IsLegacyScheduler;
 }
 
