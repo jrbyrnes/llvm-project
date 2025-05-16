@@ -537,7 +537,7 @@ public:
   }
   void clear() { Entries.clear(); }
 
-  void sort() {
+  void sort(const LiveIntervals *LIS) {
     std::set<RematCandidate> Cache = Entries;
     SmallVector<RematCandidate, 8> Temps;
     for (auto RCand : Entries) {
@@ -566,10 +566,24 @@ public:
       }
     }
 
-    std::sort(
-        Temps.begin(), Temps.end(), [](RematCandidate A, RematCandidate B) {
-          return A.Def->getOperand(0).getReg() < B.Def->getOperand(0).getReg();
-        });
+    std::sort(Temps.begin(), Temps.end(),
+              [LIS](RematCandidate A, RematCandidate B) {
+                auto R1 = A.Def->getOperand(0).getReg();
+                auto R2 = B.Def->getOperand(0).getReg();
+
+                if (R1 != R2)
+                  return R1 < R2;
+
+                auto P1 = A.InsertPt->getParent()->getNumber();
+                auto P2 = B.InsertPt->getParent()->getNumber();
+
+                if (P1 != P2)
+                  return P1 < P2;
+
+                return SlotIndex::isEarlierInstr(
+                    LIS->getInstructionIndex(*A.InsertPt),
+                    LIS->getInstructionIndex(*B.InsertPt));
+              });
 
     Sorted.append(Temps);
     Temps.clear();
@@ -604,9 +618,22 @@ public:
         }
       }
       std::sort(Temps.begin(), Temps.end(),
-                [](RematCandidate A, RematCandidate B) {
-                  return A.Def->getOperand(0).getReg() <
-                         B.Def->getOperand(0).getReg();
+                [LIS](RematCandidate A, RematCandidate B) {
+                  auto R1 = A.Def->getOperand(0).getReg();
+                  auto R2 = B.Def->getOperand(0).getReg();
+
+                  if (R1 != R2)
+                    return R1 < R2;
+
+                  auto P1 = A.InsertPt->getParent()->getNumber();
+                  auto P2 = B.InsertPt->getParent()->getNumber();
+
+                  if (P1 != P2)
+                    return P1 < P2;
+
+                  return SlotIndex::isEarlierInstr(
+                      LIS->getInstructionIndex(*A.InsertPt),
+                      LIS->getInstructionIndex(*B.InsertPt));
                 });
 
       Sorted.append(Temps);

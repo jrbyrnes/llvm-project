@@ -2351,7 +2351,7 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
     FoundAny = false;
     RematCandidates RCCache = NewCandidates;
     NewCandidates.clear();
-    RCCache.sort();
+    RCCache.sort(DAG.LIS);
 
     for (const RematCandidate &R : reverse(RCCache.Sorted)) {
       bool ShouldRemat = false;
@@ -2581,7 +2581,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
 //    RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
 
   Cands.resolveSameBlockUses(&DAG.MRI, DAG.LIS);
-  RematPlan.sort();
+  RematPlan.sort(LIS);
   for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E;
        I++) {
     auto R = *I;
