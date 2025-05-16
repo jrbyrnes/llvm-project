@@ -852,7 +852,7 @@ private:
 
   bool canRemat(Register Reg);
 
-  void collectRematSeeds(bool Aggressive = false);
+  void collectRematSeeds(bool Aggressive = false, bool SecondLoop = false);
 
   bool createRematPlan(bool Aggressive = false);
 

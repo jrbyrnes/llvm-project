@@ -1392,23 +1392,27 @@ void GCNScheduleDAGMILive::runSchedStages() {
   }
 
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
+    //errs() << "\n\n\nNew Stage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
 
     if (S.getCurrentStage() == GCNSchedStageID::PreRARematerialize) {
       BBLiveInMap = getRegionLiveInMap();
       RegionLiveOuts.buildLiveRegMap();
+      //MF.dump();
     }
 
+    unsigned R = 0;
     for (auto Region : Regions) {
       RegionBegin = Region.first;
       RegionEnd = Region.second;
 
       if (RegionBegin == RegionEnd)
         continue;
-
+      //errs() << "\nRegion : " << R << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
@@ -1440,9 +1444,14 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
           }
           if (!FoundIt) {
+
+            if (SRI->isVGPRClass(MRI.getRegClass(LR.first))) {
+              //errs() << "LiveThru VGPR: " << printReg(LR.first) << "\n";
+            }
             LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
           }
         }
+        //errs() << "LiveThruPressure: "; LiveThru.dump();
       }
 
       ScheduleDAGMILive::schedule();
@@ -1658,22 +1667,23 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   }
 
-  if (NeedAggressive && RematLiveIn) {
+  if (true) {
+    //errs() << "Aggressive\n";
     DAG.BBLiveInMap = DAG.getRegionLiveInMap();
     DAG.RegionLiveOuts.buildLiveRegMap();
 
-    collectRematSeeds(true);
+    collectRematSeeds(false, true);
     bool GoToNext = true;
     if (Cands.empty()) {
       GoToNext = false;
     }
 
-    if (GoToNext && !createRematPlan(true)) {
-      GoToNext = false;
+    if (GoToNext && !createRematPlan(false)) {
+      ;
     }
 
-    if (GoToNext && !implementRematPlan(TII, true)) {
-      GoToNext = false;
+    if (GoToNext && !implementRematPlan(TII, false)) {
+      ;
     }
   }
 
@@ -1850,6 +1860,8 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
+  //errs() << "PA: "; PressureAfter.dump();
+  //errs() << "PB: "; PressureBefore.dump();
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
@@ -2256,15 +2268,17 @@ Printable print(const RematCandidate &R) {
   });
 }
 
-void PreRARematStage::collectRematSeeds(bool Aggressive) {
+void PreRARematStage::collectRematSeeds(bool Aggressive, bool SecondLoop) {
   if (!Aggressive) {
     for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
       auto TheBlock = DAG.Regions[I].first->getParent();
       auto Cycle = CI.getCycle(TheBlock);
       if (Cycle) {
         TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
-        if (!TargetBlock)
+        if (!TargetBlock || (SecondLoop && TheBlock != TargetBlock)) {
           TargetBlock = TheBlock;
+          //errs() << "TargetBLock: " << printMBBReference(*TargetBlock) << "\n";
+        }
       }
     }
   }
@@ -2579,13 +2593,14 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
 // May result in bad insert points (e.g. before exec set code)
 //  if (!Aggressive)
 //    RematPlan.hoistToDominator(&PDT, CI, TargetBlock);
-
+  unsigned RematCount = 0;
   Cands.resolveSameBlockUses(&DAG.MRI, DAG.LIS);
   RematPlan.sort(LIS);
   for (auto I = RematPlan.Sorted.rbegin(), E = RematPlan.Sorted.rend(); I != E;
        I++) {
     auto R = *I;
     MachineInstr *Def = R.Def;
+    //errs() << "Remat: "; Def->dump();
     MachineBasicBlock::iterator InsertPos = R.InsertPt;
 
     Register Reg = Def->getOperand(0).getReg();
@@ -2633,7 +2648,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
     MachineInstr *NewMI = &*std::prev(InsertPos);
     NewMI->getOperand(0).setSubReg(Def->getOperand(0).getSubReg());
     NewMI->clearRegisterDeads(Def->getOperand(0).getReg());
-
+    ++RematCount;
     const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
     Register NewReg = DAG.MRI.createVirtualRegister(RC);
     NewMI->getOperand(0).setReg(NewReg);
@@ -2688,6 +2703,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
   if (GCNTrackers)
     DAG.RegionLiveOuts.buildLiveRegMap();
 
+  //errs() << "Did " << RematCount << " remats\n";
   SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
   MFI.increaseOccupancy(MF, ++DAG.MinOccupancy);
   return true;
