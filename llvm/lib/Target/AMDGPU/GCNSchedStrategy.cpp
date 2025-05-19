@@ -1395,7 +1395,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
-    //errs() << "\n\n\nNew Stage: " << S.getCurrentStage() << "\n";
+    errs() << "\n\n\nNew Stage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
 
@@ -1412,7 +1412,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
       if (RegionBegin == RegionEnd)
         continue;
-      //errs() << "\nRegion : " << R << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
+      errs() << "\nRegion : " << R << ": " << printMBBReference(*RegionBegin->getParent()) << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
@@ -1446,12 +1446,12 @@ void GCNScheduleDAGMILive::runSchedStages() {
           if (!FoundIt) {
 
             if (SRI->isVGPRClass(MRI.getRegClass(LR.first))) {
-              //errs() << "LiveThru VGPR: " << printReg(LR.first) << "\n";
+              errs() << "LiveThru VGPR: " << printReg(LR.first) << "\n";
             }
             LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
           }
         }
-        //errs() << "LiveThruPressure: "; LiveThru.dump();
+        errs() << "LiveThruPressure: "; LiveThru.dump();
       }
 
       ScheduleDAGMILive::schedule();
@@ -1667,7 +1667,7 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   }
 
-  if (true) {
+  if (false) {
     //errs() << "Aggressive\n";
     DAG.BBLiveInMap = DAG.getRegionLiveInMap();
     DAG.RegionLiveOuts.buildLiveRegMap();
@@ -1860,8 +1860,8 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  //errs() << "PA: "; PressureAfter.dump();
-  //errs() << "PB: "; PressureBefore.dump();
+  errs() << "PA: "; PressureAfter.dump();
+  errs() << "PB: "; PressureBefore.dump();
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
@@ -2277,7 +2277,7 @@ void PreRARematStage::collectRematSeeds(bool Aggressive, bool SecondLoop) {
         TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
         if (!TargetBlock || (SecondLoop && TheBlock != TargetBlock)) {
           TargetBlock = TheBlock;
-          //errs() << "TargetBLock: " << printMBBReference(*TargetBlock) << "\n";
+          errs() << "TargetBLock: " << printMBBReference(*TargetBlock) << "\n";
         }
       }
     }

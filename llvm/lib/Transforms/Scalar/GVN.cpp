@@ -801,14 +801,17 @@ void GVNPass::LeaderMap::verifyRemoved(const Value *V) const {
 //===----------------------------------------------------------------------===//
 
 bool GVNPass::isPREEnabled() const {
+  return false;
   return Options.AllowPRE.value_or(GVNEnablePRE);
 }
 
 bool GVNPass::isLoadPREEnabled() const {
+  return false;
   return Options.AllowLoadPRE.value_or(GVNEnableLoadPRE);
 }
 
 bool GVNPass::isLoadInLoopPREEnabled() const {
+  return false;
   return Options.AllowLoadInLoopPRE.value_or(GVNEnableLoadInLoopPRE);
 }
 

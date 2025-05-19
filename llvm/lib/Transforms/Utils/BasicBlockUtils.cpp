@@ -182,8 +182,11 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DomTreeUpdater *DTU,
                                      MemoryDependenceResults *MemDep,
                                      bool PredecessorWithTwoSuccessors,
                                      DominatorTree *DT) {
-  if (BB->hasAddressTaken())
+                                      errs() << "Merge in pred\n";
+  if (BB->hasAddressTaken()) {
+    errs() << "Address\n";
     return false;
+  }
 
   // Can't merge if there are multiple predecessors, or no predecessors.
   BasicBlock *PredBB = BB->getUniquePredecessor();
