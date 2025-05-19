@@ -1838,6 +1838,34 @@ public:
     return true;
   }
 
+
+    // Whether the combined load width of group is 128 bits
+  class LatencyGap final : public InstructionRule {
+  public:
+    bool apply(const SUnit *SU, const ArrayRef<SUnit *> Collection,
+               SmallVectorImpl<SchedGroup> &SyncPipe) override {
+      auto *MI = SU->getInstr();
+      if (MI->getOpcode() == TargetOpcode::BUNDLE)
+        return false;
+      if (!Collection.size())
+        return true;
+
+      int CurrLatency = 0;
+
+      auto TRI = TII->getRegisterInfo();
+      auto &MRI = MI->getParent()->getParent()->getRegInfo();
+      for (auto &Elt : Collection) {
+        CurrLatency += TII->isEXP(*Elt->getInstr()) ? 2 : 1;
+      }
+
+      auto InstLatency = TII->isEXP(*SU->getInstr()) ? 2 : 1;
+      return CurrLatency + InstLatency <= 6;
+    }
+
+    LatencyGap(const SIInstrInfo *TII, unsigned SGID, bool NeedsCache = false)
+        : InstructionRule(TII, SGID, NeedsCache) {}
+  };
+
   MFMAExpSimpleInterleaveOpt(ScheduleDAGInstrs *DAG, const SIInstrInfo *TII)
       : IGLPStrategy(DAG, TII) {
     IsBottomUp = true;
@@ -1855,9 +1883,10 @@ bool MFMAExpSimpleInterleaveOpt::applyIGLPStrategy(
       ++MFMACount;
 
   const unsigned PipelineSyncID = 0;
-  for (unsigned I = 0; I < MFMACount * 3; ++I) {
+  for (unsigned I = 0; I < MFMACount; ++I) {
     SchedGroup *SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
-        SchedGroupMask::TRANS, 1, PipelineSyncID, DAG, TII);
+        SchedGroupMask::VALU, 6, PipelineSyncID, DAG, TII);
+    SG->addRule(std::make_shared<LatencyGap>(TII, SG->getSGID(), true));
     SG->initSchedGroup(SyncedInstrs[SG->getSyncID()]);
 
     SG = &SyncedSchedGroups[PipelineSyncID].emplace_back(
@@ -2688,7 +2717,8 @@ bool IGroupLPDAGMutation::initIGLPOpt(SUnit &SU) {
     for (auto &SU : DAG->SUnits)
       SU.hasReservedResource = false;
 
-    return false;
+    //return false;
+    StrategyID = (IGLPStrategyID)3;
   }
   auto S = createIGLPStrategy(StrategyID, DAG, TII);
   if (!S->shouldApplyStrategy(DAG, Phase))
