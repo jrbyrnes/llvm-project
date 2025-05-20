@@ -8734,7 +8734,7 @@ void AMDGPUAsmParser::cvtScaledMFMA(MCInst &Inst,
   if (OpselHiIdx != OptionalIdx.end())
     OpSelHi = static_cast<const AMDGPUOperand &>(*Operands[OpselHiIdx->second])
                   .getImm();
-  static const AMDGPU::OpName ModOps[] = {AMDGPU::OpName::src0_modifiers,
+  static const int ModOps[] = {AMDGPU::OpName::src0_modifiers,
                                           AMDGPU::OpName::src1_modifiers};
 
   for (unsigned J = 0; J < 2; ++J) {
