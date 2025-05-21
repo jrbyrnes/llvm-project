@@ -2112,9 +2112,6 @@ bool SILoadStoreOptimizer::promoteConstantOffsetToImm(
         auto Payload = SDefMI->getOperand(1);
         if (Payload.isImm()) {
           auto PayImm = Payload.getImm();
-          if (PayImm % 16)
-            return false;
-          PayImm /= 16;
           auto CurrOff = MI.getOperand(2).getImm();
           auto NewV = PayImm + CurrOff;
           MI.getOperand(2).setImm(NewV);
