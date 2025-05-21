@@ -68,6 +68,10 @@ using namespace llvm;
 
 #define DEBUG_TYPE "si-load-store-opt"
 
+static cl::opt<bool> DSRFoldHack("amdgpu-fold-dsr-hack", cl::Hidden,
+                                 cl::desc("Hack to fold ds_read offsets"),
+                                 cl::init(false));
+
 namespace {
 enum InstClassEnum {
   UNKNOWN,
@@ -2070,6 +2074,55 @@ bool SILoadStoreOptimizer::promoteConstantOffsetToImm(
     MachineInstr &MI,
     MemInfoMap &Visited,
     SmallPtrSet<MachineInstr *, 4> &AnchorList) const {
+
+  if (DSRFoldHack && SIInstrInfo::isDS(MI) && MI.mayLoad()) {
+    if (MI.getOpcode() != AMDGPU::DS_READ_B128_gfx9)
+      return false;
+    auto Op1 = MI.getOperand(1);
+
+    if (!Op1.isReg() || Op1.getReg().isPhysical())
+      return false;
+    auto OneDef = MRI->getOneDef(Op1.getReg());
+    if (!OneDef)
+      return false;
+    auto DefMI = OneDef->getParent();
+    auto Opc = DefMI->getOpcode();
+    if (Opc != AMDGPU::V_ADD_U32_e64)
+      return false;
+
+    auto AddOp1 = DefMI->getOperand(1);
+    auto AddOp2 = DefMI->getOperand(2);
+    if (!AddOp1.isReg() || AddOp1.getReg().isPhysical())
+      return false;
+    if (!AddOp2.isReg() || AddOp2.getReg().isPhysical())
+      return false;
+    if (TRI->isSGPRReg(*MRI, AddOp1.getReg())) {
+      return false;
+    }
+    if (TRI->isSGPRReg(*MRI, AddOp2.getReg())) {
+      auto TheReg = AddOp2.getReg();
+
+      auto SOneDef = MRI->getOneDef(TheReg);
+      if (!SOneDef)
+        return false;
+      auto SDefMI = SOneDef->getParent();
+
+      auto SOpc = SDefMI->getOpcode();
+      if (SOpc == AMDGPU::S_MOV_B32) {
+        auto Payload = SDefMI->getOperand(1);
+        if (Payload.isImm()) {
+          auto PayImm = Payload.getImm();
+          if (PayImm % 16)
+            return false;
+          PayImm /= 16;
+          auto CurrOff = MI.getOperand(2).getImm();
+          auto NewV = PayImm + CurrOff;
+          MI.getOperand(2).setImm(NewV);
+          MI.getOperand(1).setReg(AddOp1.getReg());
+        }
+      }
+    }
+  }
 
   if (!STM->hasFlatInstOffsets() || !SIInstrInfo::isFLAT(MI))
     return false;
