@@ -1163,6 +1163,9 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
                               SinkAndHoistLICMFlags &Flags,
                               OptimizationRemarkEmitter *ORE) {
   // If we don't understand the instruction, bail early.
+  if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+    return II->getIntrinsicID() == 3036;
+  }
   if (!isHoistableAndSinkableInst(I))
     return false;
 
