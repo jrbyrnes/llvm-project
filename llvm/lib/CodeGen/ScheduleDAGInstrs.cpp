@@ -69,6 +69,11 @@ static cl::opt<bool>
 static cl::opt<bool> UseTBAA("use-tbaa-in-sched-mi", cl::Hidden,
     cl::init(true), cl::desc("Enable use of TBAA during MI DAG construction"));
 
+
+static cl::opt<bool>
+    AliasEdges("handle-aliasing-sched", cl::Hidden, cl::init(true),
+                    cl::desc("Try to be correct for aliasing during scheduling"));
+
 // Note: the two options below might be used in tuning compile time vs
 // output quality. Setting HugeRegion so large that it will never be
 // reached means best-effort, but may be slow.
@@ -936,6 +941,9 @@ void ScheduleDAGInstrs::buildSchedGraph(AAResults *AA,
     // If it's not a store or a variant load, we're done.
     if (!MI.mayStore() &&
         !(MI.mayLoad() && !MI.isDereferenceableInvariantLoad()))
+      continue;
+    
+    if (!AliasEdges)
       continue;
 
     // Always add dependecy edge to BarrierChain if present.
