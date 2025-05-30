@@ -8839,10 +8839,32 @@ void AMDGPUAsmParser::cvtScaledMFMA(MCInst &Inst,
     } else if (Op.isImmModifier()) {
       OptionalIdx[Op.getImmTy()] = I;
     } else {
+      if (Op.isVCSrc_b32()) {
+        if (Op.isImm()) {
+          auto HiBits = Op.getImm() >> 32;
+          if (HiBits != 0) {
+            union {
+            int64_t val; 
+            double f;
+            } u = { Op.getImm() };
+
+
+            float TheValue = static_cast<float>(u.f);
+
+            union {
+            float f;
+            uint32_t val; 
+            } u2 = { TheValue };
+
+            Op.setImm(static_cast<uint64_t>(u2.val));
+          }
+        }
+      }
+
+
       Op.addRegOrImmOperands(Inst, 1);
     }
   }
-
   // Insert CBSZ and BLGP operands for F8F6F4 variants
   int InsertPos = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::cbsz);
   addOptionalImmOperand(Inst, Operands, OptionalIdx, AMDGPUOperand::ImmTyCBSZ,
