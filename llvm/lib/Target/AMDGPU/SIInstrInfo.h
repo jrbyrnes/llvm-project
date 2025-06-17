@@ -823,6 +823,8 @@ public:
     return MI.getDesc().TSFlags & SIInstrFlags::IsDOT;
   }
 
+  bool isXDL(const MachineInstr &MI) const;
+
   static bool isWMMA(const MachineInstr &MI) {
     return MI.getDesc().TSFlags & SIInstrFlags::IsWMMA;
   }

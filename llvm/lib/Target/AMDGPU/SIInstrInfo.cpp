@@ -15,6 +15,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUInstrInfo.h"
 #include "GCNHazardRecognizer.h"
+#include "GCNSchedStrategy.h"
 #include "GCNSubtarget.h"
 #include "SIMachineFunctionInfo.h"
 #include "Utils/AMDGPUBaseInfo.h"
@@ -8957,8 +8958,12 @@ SIInstrInfo::CreateTargetMIHazardRecognizer(const InstrItineraryData *II,
   // We would like to restrict this hazard recognizer to only
   // post-RA scheduling; we can tell that we're post-RA because we don't
   // track VRegLiveness.
-  if (!DAG->hasVRegLiveness())
-    return new GCNHazardRecognizer(DAG->MF);
+  if (!DAG->hasVRegLiveness()) {
+    GCNPostScheduleDAGMILive *LiveDAG = static_cast<GCNPostScheduleDAGMILive *>(
+        const_cast<ScheduleDAGMI *>(DAG));
+    if (!LiveDAG->S->CustomResTracking)
+      return new GCNHazardRecognizer(DAG->MF);
+  }
   return TargetInstrInfo::CreateTargetMIHazardRecognizer(II, DAG);
 }
 
@@ -10107,4 +10112,18 @@ bool SIInstrInfo::isGlobalMemoryObject(const MachineInstr *MI) const {
     return false;
 
   return TargetInstrInfo::isGlobalMemoryObject(MI);
+}
+
+bool SIInstrInfo::isXDL(const MachineInstr &MI) const {
+  unsigned Opcode = MI.getOpcode();
+
+  if (!SIInstrInfo::isMAI(MI) || 
+      Opcode == AMDGPU::V_ACCVGPR_WRITE_B32_e64 ||
+      Opcode == AMDGPU::V_ACCVGPR_READ_B32_e64)
+    return false;
+
+  if (!ST.hasGFX940Insts())
+    return true;
+
+  return AMDGPU::getMAIIsGFX940XDL(Opcode);
 }
