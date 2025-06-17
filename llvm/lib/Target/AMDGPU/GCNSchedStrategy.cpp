@@ -643,10 +643,10 @@ bool GCNSchedStrategy::tryLoopLoad(SchedCandidate &Cand, SchedCandidate &TryCand
   if (!TII->isVALU(*TCInst) || TII->isMFMA(*TCInst))
     return false;
   
-  errs() << "TryLoopLoad for: "; TCInst->dump();
+//  errs() << "TryLoopLoad for: "; TCInst->dump();
   auto TheOpsCache = TCInst->operands();
   for (auto Op : TheOpsCache) {
-    errs() << "Have Op: "; Op.dump();
+//    errs() << "Have Op: "; Op.dump();
     if (!Op.isReg())
       continue;
     
@@ -654,25 +654,25 @@ bool GCNSchedStrategy::tryLoopLoad(SchedCandidate &Cand, SchedCandidate &TryCand
     if (TheReg.isPhysical())
       continue;
 
-    errs() << "Checking reg: " << printReg(TheReg) << "\n";
+//    errs() << "Checking reg: " << printReg(TheReg) << "\n";
     
     for (auto &Def : DAG->MRI.def_instructions(TheReg)) {
       if (!Def.mayLoad())
         continue;
       
-      errs() << "For inst: "; TCInst->dump();
-      errs() << "Have load def: "; Def.dump();
+//      errs() << "For inst: "; TCInst->dump();
+//      errs() << "Have load def: "; Def.dump();
       return true;
 
       if (Def.getParent() != TCInst->getParent())
         continue;
 
-      errs() << "Diff parent\n";
+//      errs() << "Diff parent\n";
       auto DefSU = DAG->getSUnit(&Def);
 
       if (!DefSU || DAG->IsReachable(DefSU, TryCand.SU)) {
         TryCand.Reason = Defer;
-        errs() << "Defer: "; TCInst->dump();
+//        errs() << "Defer: "; TCInst->dump();
         return true;     
       }
        

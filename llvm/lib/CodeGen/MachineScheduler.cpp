@@ -343,7 +343,7 @@ static cl::opt<bool> EnableMachineSched(
 static cl::opt<bool> EnablePostRAMachineSched(
     "enable-post-misched",
     cl::desc("Enable the post-ra machine instruction scheduling pass."),
-    cl::init(true), cl::Hidden);
+    cl::init(false), cl::Hidden);
 
 /// Decrement this iterator until reaching the top or a non-debug instr.
 static MachineBasicBlock::const_iterator
@@ -3375,6 +3375,7 @@ void GenericScheduler::checkAcyclicLatency() {
 
 void GenericScheduler::registerRoots() {
   Rem.CriticalPath = DAG->ExitSU.getDepth();
+  errs() << "Register roots, microopbuf: " << SchedModel->getMicroOpBufferSize()  << "\n";
 
   // Some roots may not feed into ExitSU. Check all of them in case.
   for (const SUnit *SU : Bot.Available) {
