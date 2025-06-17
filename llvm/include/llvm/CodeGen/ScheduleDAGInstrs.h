@@ -395,6 +395,8 @@ namespace llvm {
 
   /// Returns an existing SUnit for this MI, or nullptr.
   inline SUnit *ScheduleDAGInstrs::getSUnit(MachineInstr *MI) const {
+    if (!MISUnitMap.contains(MI))
+      return nullptr;
     return MISUnitMap.lookup(MI);
   }
 

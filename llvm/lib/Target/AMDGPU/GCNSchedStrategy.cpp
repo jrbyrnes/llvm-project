@@ -559,6 +559,10 @@ bool GCNMaxOccupancySchedStrategy::tryCandidate(SchedCandidate &Cand,
                   Cand, RegMax, TRI, DAG->MF))
     return TryCand.Reason != NoCand;
 
+  if (CustomResTracking && tryLoopLoad(Cand, TryCand, Zone))
+    return TryCand.Reason != NoCand;
+
+
   if (CustomResTracking && tryXDL(Cand, TryCand, Zone))
     return TryCand.Reason != NoCand;
 
@@ -628,6 +632,53 @@ bool GCNMaxOccupancySchedStrategy::tryCandidate(SchedCandidate &Cand,
     }
   }
 
+  return false;
+}
+
+bool GCNSchedStrategy::tryLoopLoad(SchedCandidate &Cand, SchedCandidate &TryCand,
+                              SchedBoundary *Zone) const {
+
+  MachineInstr *TCInst = TryCand.SU->getInstr();
+  const SIInstrInfo *TII = DAG->MF.getSubtarget<GCNSubtarget>().getInstrInfo();
+  if (!TII->isVALU(*TCInst) || TII->isMFMA(*TCInst))
+    return false;
+  
+  errs() << "TryLoopLoad for: "; TCInst->dump();
+  auto TheOpsCache = TCInst->operands();
+  for (auto Op : TheOpsCache) {
+    errs() << "Have Op: "; Op.dump();
+    if (!Op.isReg())
+      continue;
+    
+    auto TheReg = Op.getReg();
+    if (TheReg.isPhysical())
+      continue;
+
+    errs() << "Checking reg: " << printReg(TheReg) << "\n";
+    
+    for (auto &Def : DAG->MRI.def_instructions(TheReg)) {
+      if (!Def.mayLoad())
+        continue;
+      
+      errs() << "For inst: "; TCInst->dump();
+      errs() << "Have load def: "; Def.dump();
+      return true;
+
+      if (Def.getParent() != TCInst->getParent())
+        continue;
+
+      errs() << "Diff parent\n";
+      auto DefSU = DAG->getSUnit(&Def);
+
+      if (!DefSU || DAG->IsReachable(DefSU, TryCand.SU)) {
+        TryCand.Reason = Defer;
+        errs() << "Defer: "; TCInst->dump();
+        return true;     
+      }
+       
+
+    }
+  }
   return false;
 }
 

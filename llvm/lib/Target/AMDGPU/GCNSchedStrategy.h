@@ -74,6 +74,8 @@ protected:
   bool tryXDL(SchedCandidate &Cand, SchedCandidate &TryCand,
               SchedBoundary *Zone) const;
 
+  bool tryLoopLoad(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone) const;
+
   std::vector<unsigned> Pressure;
 
   std::vector<unsigned> MaxPressure;

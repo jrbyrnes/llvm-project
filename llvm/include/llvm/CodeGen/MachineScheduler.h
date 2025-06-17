@@ -1071,7 +1071,7 @@ public:
   enum CandReason : uint8_t {
     NoCand, Only1, PhysReg, RegExcess, RegCritical, Stall, Cluster, Weak,
     RegMax, ResourceReduce, ResourceDemand, BotHeightReduce, BotPathReduce,
-    TopDepthReduce, TopPathReduce, NextDefUse, NodeOrder};
+    TopDepthReduce, TopPathReduce, NextDefUse, NodeOrder, Defer};
 
 #ifndef NDEBUG
   static const char *getReasonStr(GenericSchedulerBase::CandReason Reason);
@@ -1151,6 +1151,8 @@ public:
     // Copy the status of another candidate without changing policy.
     void setBest(SchedCandidate &Best) {
       assert(Best.Reason != NoCand && "uninitialized Sched candidate");
+      if (Best.Reason == Defer && SU)
+        return;
       SU = Best.SU;
       Reason = Best.Reason;
       AtTop = Best.AtTop;

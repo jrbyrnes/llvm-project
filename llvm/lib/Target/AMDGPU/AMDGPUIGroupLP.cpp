@@ -2654,7 +2654,7 @@ void IGroupLPDAGMutation::initSchedGroupBarrierPipelineStage(
 
 bool IGroupLPDAGMutation::initIGLPOpt(SUnit &SU) {
   IGLPStrategyID StrategyID =
-      (IGLPStrategyID)SU.getInstr()->getOperand(0).getImm();
+      (IGLPStrategyID)10;//SU.getInstr()->getOperand(0).getImm();
 
   if (StrategyID == 10) {
     for (auto &SU : DAG->SUnits)
