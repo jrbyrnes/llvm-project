@@ -640,13 +640,13 @@ bool GCNSchedStrategy::tryLoopLoad(SchedCandidate &Cand, SchedCandidate &TryCand
 
   MachineInstr *TCInst = TryCand.SU->getInstr();
   const SIInstrInfo *TII = DAG->MF.getSubtarget<GCNSubtarget>().getInstrInfo();
-  if (!TII->isVALU(*TCInst) || TII->isMFMA(*TCInst))
-    return false;
-  
+ 
 //  errs() << "TryLoopLoad for: "; TCInst->dump();
-  auto TheOpsCache = TCInst->operands();
-  for (auto Op : TheOpsCache) {
-//    errs() << "Have Op: "; Op.dump();
+  auto TOpsCache = TCInst->operands();
+  bool TryLoad = false;
+  ptrdiff_t TryDist = 0;
+  for (auto Op : TOpsCache) {
+//    errs() << "Have TOpsCache: "; Op.dump();
     if (!Op.isReg())
       continue;
     
@@ -654,32 +654,56 @@ bool GCNSchedStrategy::tryLoopLoad(SchedCandidate &Cand, SchedCandidate &TryCand
     if (TheReg.isPhysical())
       continue;
 
-//    errs() << "Checking reg: " << printReg(TheReg) << "\n";
-    
     for (auto &Def : DAG->MRI.def_instructions(TheReg)) {
       if (!Def.mayLoad())
         continue;
       
-//      errs() << "For inst: "; TCInst->dump();
-//      errs() << "Have load def: "; Def.dump();
-      return true;
-
-      if (Def.getParent() != TCInst->getParent())
-        continue;
-
-//      errs() << "Diff parent\n";
-      auto DefSU = DAG->getSUnit(&Def);
-
-      if (!DefSU || DAG->IsReachable(DefSU, TryCand.SU)) {
-        TryCand.Reason = Defer;
-//        errs() << "Defer: "; TCInst->dump();
-        return true;     
-      }
-       
-
+      auto Dist = std::distance(Def.getParent()->begin(), (MachineBasicBlock::iterator)Def.getIterator());
+      if (Dist > TryDist) {
+        TryDist = Dist;
+        TryLoad = true;
+      }      
     }
   }
-  return false;
+
+  MachineInstr *CInst = TryCand.SU->getInstr();
+ 
+  auto COpsCache = CInst->operands();
+  bool CLoad = false;
+  ptrdiff_t CDist = 0;
+  for (auto Op : COpsCache) {
+    if (!Op.isReg())
+      continue;
+    
+    auto TheReg = Op.getReg();
+    if (TheReg.isPhysical())
+      continue;
+
+    for (auto &Def : DAG->MRI.def_instructions(TheReg)) {
+      if (!Def.mayLoad())
+        continue;
+      
+      auto Dist = std::distance(Def.getParent()->begin(), (MachineBasicBlock::iterator)Def.getIterator());
+      if (Dist > CDist) {
+        CDist = Dist;
+        CLoad = true;
+      }      
+    }
+  }
+
+  if (!(TryLoad && CLoad)) {
+    if (TryLoad)
+      return false;
+    
+    TryCand.Reason = ResourceDemand;
+    return true;
+  }
+
+  if (TryDist >= CDist)
+    return false;
+
+  TryCand.Reason = ResourceDemand;
+  return true;
 }
 
 bool GCNSchedStrategy::tryXDL(SchedCandidate &Cand, SchedCandidate &TryCand,
