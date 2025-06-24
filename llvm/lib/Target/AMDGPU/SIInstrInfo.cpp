@@ -563,7 +563,7 @@ bool SIInstrInfo::shouldClusterMemOps(ArrayRef<const MachineOperand *> BaseOps1,
 
     const SIMachineFunctionInfo *MFI =
         FirstLdSt.getMF()->getInfo<SIMachineFunctionInfo>();
-    MaxMemoryClusterDWords = MFI->getMaxMemoryClusterDWords();
+    MaxMemoryClusterDWords = 0;//MFI->getMaxMemoryClusterDWords();
   } else if (!BaseOps1.empty() || !BaseOps2.empty()) {
     // If only one base op is empty, they do not have the same base ptr
     return false;
