@@ -3628,7 +3628,7 @@ static std::optional<DecomposedBitMaskMul> matchBitmaskMul(Value *V) {
 }
 
 struct CombinedBitmaskMul {
-  std::optional<DecomposedBitMaskMul> Decomp = std::nullopt;
+  std::optional<DecomposedBitMaskMul> Decomp;
   Value *DecompOp = nullptr;
   Value *OtherOp = nullptr;
 };
