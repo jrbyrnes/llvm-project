@@ -318,8 +318,7 @@ unsigned DefaultPriorityAdvisor::getPriority(const LiveInterval &LI) const {
     // Giant live ranges fall back to the global assignment heuristic, which
     // prevents excessive spilling in pathological cases.
     const TargetRegisterClass &RC = *MRI->getRegClass(Reg);
-    errs() << "Reg: "; LI.dump();
-    errs() << "Has RCID: " << RC.getID() << "\n";
+
     bool ForceGlobal = RC.GlobalPriority ||
                        (!ReverseLocalAssignment &&
                         (Size / SlotIndex::InstrDist) >
@@ -362,7 +361,7 @@ unsigned DefaultPriorityAdvisor::getPriority(const LiveInterval &LI) const {
     Prio = std::min(Prio, (unsigned)maxUIntN(24));
     assert(isUInt<5>(RC.AllocationPriority) && "allocation priority overflow");
 
-    unsigned RCPrio = RC.getID() == 223 ? 0 : 31;
+    unsigned RCPrio = RC.AllocationPriority;// RC.getID() == 223 ? 0 : 31;
     if (RegClassPriorityTrumpsGlobalness)
       Prio |= RCPrio << 25 | GlobalBit << 24;
     else
