@@ -3689,15 +3689,15 @@ Value *InstCombinerImpl::reassociateDisjointOr(Value *LHS, Value *RHS) {
     if (Value *Res = foldDisjointOr(Y, RHS))
       return Builder.CreateOr(Res, X, "", /*IsDisjoint=*/true);
   }
-
+/*
   Value *X1, *Y1;
   if (match(LHS, m_OneUse(m_DisjointOr(m_Value(X), m_Value(Y)))) &&
       (match(RHS, m_OneUse(m_DisjointOr(m_Value(X1), m_Value(Y1)))))) {
     auto TryFold = [this](Value *Op0, Value *Op1, Value *Rem0,
                           Value *Rem1) -> Value * {
       if (Value *Res = foldDisjointOr(Op0, Op1)) {
-        auto Disjoint = Builder.CreateOr(Rem0, Rem1, "", /*IsDisjoint=*/true);
-        return Builder.CreateOr(Disjoint, Res, "", /*IsDisjoint=*/true);
+        auto Disjoint = Builder.CreateOr(Rem0, Rem1, "", /*IsDisjoint=true);
+        return Builder.CreateOr(Disjoint, Res, "", /*IsDisjoint=true);
       }
       return nullptr;
     };
@@ -3713,7 +3713,7 @@ Value *InstCombinerImpl::reassociateDisjointOr(Value *LHS, Value *RHS) {
 
     if (Value *Res = TryFold(Y, Y1, X, X1))
       return Res;
-  }
+  }*/
   return nullptr;
 }
 
