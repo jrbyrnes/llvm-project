@@ -128,6 +128,9 @@ bool AMDGPURewriteAGPRCopyMFMAImpl::run(MachineFunction &MF) const {
         continue;
 
       Register CopySrcReg = DefMI->getOperand(1).getReg();
+      if (!DefMI->getOperand(1).getReg().isVirtual())
+        continue;
+
       LiveInterval &CopySrcLI = LIS.getInterval(CopySrcReg);
 
       LiveQueryResult LRQ = CopySrcLI.Query(VNI->def.getRegSlot());
