@@ -841,6 +841,22 @@ class MAIFrag<SDPatternOperator Op, code pred, bit HasAbid = true, bit Scaled = 
 >;
 
 defvar MayNeedAGPRs = [{
+  const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
+  const SIInstrInfo *TII = ST.getInstrInfo();
+  if (ST.hasGFX90AInsts()) {
+  for (auto User : N->users()) {
+    if (User->isMachineOpcode()) {
+      auto Opc = User->getMachineOpcode();
+      if (TII->isVMEM(Opc) || TII->isDS(Opc) || TII->isFLAT(Opc))
+        continue;
+      if (TII->isMAI(Opc) && AMDGPU::getMFMASrcCVDstAGPROp(Opc) == -1)
+        continue;
+    }
+
+    return false;
+  }
+  }
+
   return MF->getInfo<SIMachineFunctionInfo>()->mayNeedAGPRs();
 }];
 
@@ -849,6 +865,21 @@ defvar MayNeedAGPRs_gisel = [{
 }];
 
 defvar MayNotNeedAGPRs = [{
+  const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
+  const SIInstrInfo *TII = ST.getInstrInfo();
+  if (ST.hasGFX90AInsts()) {
+  for (auto User : N->users()) {
+    if (User->isMachineOpcode()) {
+      auto Opc = User->getMachineOpcode();
+      if (TII->isVMEM(Opc) || TII->isDS(Opc) || TII->isFLAT(Opc))
+        continue;
+      if (TII->isMAI(Opc) && AMDGPU::getMFMASrcCVDstAGPROp(Opc) == -1)
+        continue;
+    }
+
+    return true;
+  }
+  }
   return !MF->getInfo<SIMachineFunctionInfo>()->mayNeedAGPRs();
 }];
 
