@@ -28,11 +28,12 @@ class GCNSchedStage;
 
 enum class GCNSchedStageID : unsigned {
   OccInitialSchedule = 0,
-  UnclusteredHighRPReschedule = 1,
-  ClusteredLowOccupancyReschedule = 2,
-  PreRARematerialize = 3,
-  ILPInitialSchedule = 4,
-  MemoryClauseInitialSchedule = 5
+  AVGPRRewriteSchedule = 1,
+  UnclusteredHighRPReschedule = 2,
+  ClusteredLowOccupancyReschedule = 3,
+  PreRARematerialize = 4,
+  ILPInitialSchedule = 5,
+  MemoryClauseInitialSchedule = 6
 };
 
 #ifndef NDEBUG
@@ -224,6 +225,7 @@ using RegionBoundaries =
 class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   friend class GCNSchedStage;
   friend class OccInitialScheduleStage;
+  friend class AVGPRRewriteScheduleStage;
   friend class UnclusteredHighRPStage;
   friend class ClusteredLowOccStage;
   friend class PreRARematStage;
@@ -250,8 +252,14 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   // limit. Register pressure in these regions usually will result in spilling.
   BitVector RegionsWithExcessRP;
 
+  // Regions that have VGPR RP which exceed the addressable limit.
+  BitVector RegionsWithExcessVGPRRP;
+
   // Regions that has the same occupancy as the latest MinOccupancy
   BitVector RegionsWithMinOcc;
+
+  // Regions which use the AV RC.
+  BitVector RegionsWithAVRegs;
 
   // Regions that have IGLP instructions (SCHED_GROUP_BARRIER or IGLP_OPT).
   BitVector RegionsWithIGLPInstrs;
@@ -398,6 +406,18 @@ public:
   bool shouldRevertScheduling(unsigned WavesAfter) override;
 
   OccInitialScheduleStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
+      : GCNSchedStage(StageID, DAG) {}
+};
+
+class AVGPRRewriteScheduleStage : public GCNSchedStage {
+private:
+  bool reconstrainRegClass(Register Reg,
+                           const TargetRegisterClass *NewRC) const;
+
+public:
+  bool initGCNSchedStage() override;
+
+  AVGPRRewriteScheduleStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG) {}
 };
 

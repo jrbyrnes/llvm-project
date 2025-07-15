@@ -528,6 +528,7 @@ GCNMaxOccupancySchedStrategy::GCNMaxOccupancySchedStrategy(
     const MachineSchedContext *C, bool IsLegacyScheduler)
     : GCNSchedStrategy(C) {
   SchedStages.push_back(GCNSchedStageID::OccInitialSchedule);
+  SchedStages.push_back(GCNSchedStageID::AVGPRRewriteSchedule);
   SchedStages.push_back(GCNSchedStageID::UnclusteredHighRPReschedule);
   SchedStages.push_back(GCNSchedStageID::ClusteredLowOccupancyReschedule);
   SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
@@ -778,6 +779,8 @@ GCNScheduleDAGMILive::createSchedStage(GCNSchedStageID SchedStageID) {
   switch (SchedStageID) {
   case GCNSchedStageID::OccInitialSchedule:
     return std::make_unique<OccInitialScheduleStage>(SchedStageID, *this);
+  case GCNSchedStageID::AVGPRRewriteSchedule:
+    return std::make_unique<AVGPRRewriteScheduleStage>(SchedStageID, *this);
   case GCNSchedStageID::UnclusteredHighRPReschedule:
     return std::make_unique<UnclusteredHighRPStage>(SchedStageID, *this);
   case GCNSchedStageID::ClusteredLowOccupancyReschedule:
@@ -941,10 +944,14 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
   Pressure.resize(Regions.size());
   RegionsWithHighRP.resize(Regions.size());
   RegionsWithExcessRP.resize(Regions.size());
+  RegionsWithAVRegs.resize(Regions.size());
+  RegionsWithExcessVGPRRP.resize(Regions.size());
   RegionsWithMinOcc.resize(Regions.size());
   RegionsWithIGLPInstrs.resize(Regions.size());
   RegionsWithHighRP.reset();
   RegionsWithExcessRP.reset();
+  RegionsWithAVRegs.reset();
+  RegionsWithExcessVGPRRP.reset();
   RegionsWithMinOcc.reset();
   RegionsWithIGLPInstrs.reset();
 
@@ -1003,6 +1010,9 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, const GCNSchedStageID &StageID) {
   case GCNSchedStageID::OccInitialSchedule:
     OS << "Max Occupancy Initial Schedule";
     break;
+  case GCNSchedStageID::AVGPRRewriteSchedule:
+    OS << "AVGPR Rewriting Reschedule";
+    break;
   case GCNSchedStageID::UnclusteredHighRPReschedule:
     OS << "Unclustered High Register Pressure Reschedule";
     break;
@@ -1034,6 +1044,78 @@ bool GCNSchedStage::initGCNSchedStage() {
 
   LLVM_DEBUG(dbgs() << "Starting scheduling stage: " << StageID << "\n");
   return true;
+}
+
+bool AVGPRRewriteScheduleStage::reconstrainRegClass(
+    Register Reg, const TargetRegisterClass *NewRC) const {
+  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+  const TargetRegisterClass *OldRC = DAG.MRI.getRegClass(Reg);
+  const TargetRegisterInfo *TRI = DAG.MRI.getTargetRegisterInfo();
+  const TargetRegisterClass *ConstrainRC = NewRC;
+  const SIRegisterInfo *SRI = MF.getSubtarget<GCNSubtarget>().getRegisterInfo();
+
+  // Stop early if there is nothing to do.
+  if (!NewRC || NewRC == OldRC)
+    return false;
+
+  // Accumulate constraints from all uses.
+  for (MachineOperand &MO : DAG.MRI.reg_nodbg_operands(Reg)) {
+    // Apply the effect of the given operand to NewRC.
+    MachineInstr *MI = MO.getParent();
+    unsigned OpNo = &MO - &MI->getOperand(0);
+    ConstrainRC = MI->getRegClassConstraintEffect(OpNo, ConstrainRC, TII, TRI);
+    if (!ConstrainRC)
+      return false;
+    if (MI->isCopy()) {
+      MachineOperand &OtherOp = MI->getOperand(1 - OpNo);
+      if (!OtherOp.isReg())
+        continue;
+
+      if (!SRI->isVGPR(DAG.MRI, OtherOp.getReg()))
+        return false;
+    }
+  }
+  DAG.MRI.setRegClass(Reg, ConstrainRC);
+  return true;
+}
+
+bool AVGPRRewriteScheduleStage::initGCNSchedStage() {
+  const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
+
+  // The main benefit of AVReg usage is that the register can be assigned to
+  // either VGPR or AGPR. However, for the unified RF case, we should only be
+  // using AGPR if strictly necessary. That is, if the required number of VGPRs
+  // exceeds the addressable limit.  Otherwise, we should be stricly using VGPRs
+  // to minimize cross RC copies. Thus, if we are underc this limit, we should
+  // constrain AVReg- > VReg.
+  // TODO: AVReg constraining for non unified case.
+  if (!ST.hasGFX90AInsts() || DAG.RegionsWithAVRegs.empty() ||
+      DAG.RegionsWithExcessVGPRRP.any())
+    return false;
+
+  const SIRegisterInfo *SRI = ST.getRegisterInfo();
+
+  for (unsigned I = 0, E = DAG.MRI.getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    if (!DAG.LIS->hasInterval(Reg))
+      continue;
+    const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
+    if (!SRI->isVectorSuperClass(RC))
+      continue;
+
+    reconstrainRegClass(Reg, SRI->getEquivalentVGPRClass(RC));
+  }
+
+  // TODO -- opposite case, inflate to AV when we have AVGPR + VGPR RP greater
+  // than addressable limit.
+
+  // TODO - after we separate out AVGPR pressure from the e.g. getVGPRNum
+  // pressure queries, we may need to update the cached RP.
+
+  // TODO - there is a benefit to rescheduling with the constraints, as the
+  // generic trackers do not track AVGPR pressure. But we should teach the
+  // default trackers about AVGPR rather than doing rescheduling here.
+  return false;
 }
 
 bool UnclusteredHighRPStage::initGCNSchedStage() {
@@ -1278,6 +1360,9 @@ void GCNSchedStage::checkScheduling() {
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
 
+  if (PressureAfter.getAVGPRNum())
+    DAG.RegionsWithAVRegs[RegionIdx] = true;
+
   unsigned DynamicVGPRBlockSize = DAG.MFI.getDynamicVGPRBlockSize();
 
   if (PressureAfter.getSGPRNum() <= S.SGPRCriticalLimit &&
@@ -1330,6 +1415,9 @@ void GCNSchedStage::checkScheduling() {
   // file.
   unsigned MaxArchVGPRs = std::min(MaxVGPRs, ST.getAddressableNumArchVGPRs());
   unsigned MaxSGPRs = ST.getMaxNumSGPRs(MF);
+
+  if (PressureAfter.getArchVGPRNum() > ST.getAddressableNumArchVGPRs())
+    DAG.RegionsWithExcessVGPRRP[RegionIdx] = true;
 
   if (PressureAfter.getVGPRNum(ST.hasGFX90AInsts()) > MaxVGPRs ||
       PressureAfter.getArchVGPRNum() > MaxArchVGPRs ||
