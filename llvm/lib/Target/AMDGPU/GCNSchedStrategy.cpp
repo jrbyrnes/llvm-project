@@ -555,8 +555,8 @@ bool GCNMaxILPSchedStrategy::tryCandidate(SchedCandidate &Cand,
     return TryCand.Reason != NoCand;
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
-  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
-                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop, RegionPolicy),
+                 biasPhysReg(Cand.SU, Cand.AtTop, RegionPolicy), TryCand, Cand, PhysReg))
     return TryCand.Reason != NoCand;
 
   bool SameBoundary = Zone != nullptr;
@@ -648,8 +648,8 @@ bool GCNMaxMemoryClauseSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
-  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
-                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop, RegionPolicy),
+                 biasPhysReg(Cand.SU, Cand.AtTop, RegionPolicy), TryCand, Cand, PhysReg))
     return TryCand.Reason != NoCand;
 
   if (DAG->isTrackingPressure()) {

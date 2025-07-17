@@ -3866,7 +3866,7 @@ unsigned getWeakLeft(const SUnit *SU, bool isTop) {
 /// copies which can be prescheduled. The rest (e.g. x86 MUL) could be bundled
 /// with the operation that produces or consumes the physreg. We'll do this when
 /// regalloc has support for parallel copies.
-int biasPhysReg(const SUnit *SU, bool isTop) {
+int biasPhysReg(const SUnit *SU, bool isTop, MachineSchedPolicy RegionPolicy) {
   const MachineInstr *MI = SU->getInstr();
 
   if (MI->isCopy()) {
@@ -3876,6 +3876,13 @@ int biasPhysReg(const SUnit *SU, bool isTop) {
     // schedule the copy.
     if (MI->getOperand(ScheduledOper).getReg().isPhysical())
       return 1;
+    
+    // PhysReg rescheduling only works if the physreg copy and it's dependent are in the
+    // same zone. Thus, in the bidrectional case, we cannot assume that we will be able
+    // to do late hoist / sinking of the copy.
+    if (!RegionPolicy.OnlyTopDown && !RegionPolicy.OnlyBottomUp)
+      return -1;
+
     // If the physreg is at the boundary, defer it. Otherwise schedule it
     // immediately to free the dependent. We can hoist the copy later.
     bool AtBoundary = isTop ? !SU->NumSuccsLeft : !SU->NumPredsLeft;
@@ -3961,8 +3968,8 @@ bool GenericScheduler::tryCandidate(SchedCandidate &Cand,
   }
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
-  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
-                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop, RegionPolicy),
+                 biasPhysReg(Cand.SU, Cand.AtTop, RegionPolicy), TryCand, Cand, PhysReg))
     return TryCand.Reason != NoCand;
 
   // Avoid exceeding the target's limit.

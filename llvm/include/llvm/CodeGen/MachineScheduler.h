@@ -1232,7 +1232,7 @@ LLVM_ABI bool tryPressure(const PressureChange &TryP,
                           const TargetRegisterInfo *TRI,
                           const MachineFunction &MF);
 LLVM_ABI unsigned getWeakLeft(const SUnit *SU, bool isTop);
-LLVM_ABI int biasPhysReg(const SUnit *SU, bool isTop);
+LLVM_ABI int biasPhysReg(const SUnit *SU, bool isTop, MachineSchedPolicy RegionPolicy);
 
 /// GenericScheduler shrinks the unscheduled zone using heuristics to balance
 /// the schedule.
