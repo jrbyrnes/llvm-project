@@ -43,13 +43,11 @@ struct GCNRegPressure {
 
   /// \returns the SGPR32 pressure
   unsigned getSGPRNum() const { return Value[SGPR]; }
-  /// \returns the aggregated ArchVGPR32, AccVGPR32, and Pseudo AVGPR pressure
-  /// dependent upon \p UnifiedVGPRFile
-  unsigned getVGPRNum(bool UnifiedVGPRFile) const {
+  unsigned getVGPRNum(bool UnifiedVGPRFile, unsigned AddressableArchVGPR) const {
     if (UnifiedVGPRFile) {
-      return Value[AGPR]
-                 ? getUnifiedVGPRNum(Value[VGPR], Value[AGPR], Value[AVGPR])
-                 : Value[VGPR] + Value[AVGPR];
+      return Value[AGPR] || Value[AVGPR]
+                 ? getUnifiedVGPRNum(Value[VGPR], Value[AGPR], Value[AVGPR], AddressableArchVGPR)
+                 : Value[VGPR];
     }
     // Until we hit the VGPRThreshold, we will assign AV as VGPR. After that
     // point, we will assign as AGPR.
@@ -61,33 +59,44 @@ struct GCNRegPressure {
   /// VGPR file.
   inline static unsigned getUnifiedVGPRNum(unsigned NumArchVGPRs,
                                            unsigned NumAGPRs,
-                                           unsigned NumAVGPRs) {
+                                           unsigned NumAVGPRs,
+                                           unsigned AddressableArchVGPR) {
 
     // Until we hit the VGPRThreshold, we will assign AV as VGPR. After that
     // point, we will assign as AGPR.
-    return alignTo(NumArchVGPRs + NumAVGPRs,
+    unsigned AVGPRsAsVGPRs = NumArchVGPRs < AddressableArchVGPR ? (AddressableArchVGPR - NumArchVGPRs) : 0;
+    unsigned AVGPRsAsAGPRs = NumAVGPRs > AVGPRsAsVGPRs ? NumAVGPRs - AVGPRsAsVGPRs : 0;
+    return alignTo(NumArchVGPRs + AVGPRsAsVGPRs,
                    AMDGPU::IsaInfo::getArchVGPRAllocGranule()) +
-           NumAGPRs;
+           NumAGPRs + AVGPRsAsAGPRs;
   }
 
   /// \returns the ArchVGPR32 pressure, plus the AVGPRS which we assume will be
   /// allocated as VGPR
-  unsigned getArchVGPRNum() const { return Value[VGPR] + Value[AVGPR]; }
+  unsigned getArchVGPRNum(unsigned AddressableArchVGPR) const { 
+    return std::min(Value[VGPR] + Value[AVGPR], AddressableArchVGPR); 
+  }
   /// \returns the AccVGPR32 pressure
-  unsigned getAGPRNum() const { return Value[AGPR]; }
+  unsigned getAGPRNum(unsigned AddressableArchVGPR) const { 
+    unsigned VGPRsForAGPRs = Value[VGPR] + Value[AVGPR] > AddressableArchVGPR ? (Value[VGPR] + Value[AVGPR] - AddressableArchVGPR) : 0;
+    return Value[AGPR] + VGPRsForAGPRs; 
+  }
   /// \returns the AVGPR32 pressure
   unsigned getAVGPRNum() const { return Value[AVGPR]; }
 
-  unsigned getVGPRTuplesWeight() const {
-    return std::max(Value[TOTAL_KINDS + VGPR] + Value[TOTAL_KINDS + AVGPR],
-                    Value[TOTAL_KINDS + AGPR]);
+  unsigned getVGPRTuplesWeight(unsigned AddressableArchVGPR) const {
+    unsigned AVGPRsAsVGPRs = Value[TOTAL_KINDS + VGPR] < AddressableArchVGPR ? (AddressableArchVGPR - Value[TOTAL_KINDS + VGPR]) : 0;
+    unsigned AVGPRsAsAGPRs = Value[TOTAL_KINDS + AVGPR] > AVGPRsAsVGPRs ? Value[TOTAL_KINDS + AVGPR] - AVGPRsAsVGPRs : 0;
+
+    return std::max(Value[TOTAL_KINDS + VGPR] + AVGPRsAsVGPRs,
+                    Value[TOTAL_KINDS + AGPR] + AVGPRsAsAGPRs);
   }
   unsigned getSGPRTuplesWeight() const { return Value[TOTAL_KINDS + SGPR]; }
 
   unsigned getOccupancy(const GCNSubtarget &ST,
                         unsigned DynamicVGPRBlockSize) const {
     return std::min(ST.getOccupancyWithNumSGPRs(getSGPRNum()),
-                    ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts()),
+                    ST.getOccupancyWithNumVGPRs(getVGPRNum(ST.hasGFX90AInsts(), ST.getAddressableNumArchVGPRs()),
                                                 DynamicVGPRBlockSize));
   }
 
@@ -152,7 +161,7 @@ private:
   friend GCNRegPressure max(const GCNRegPressure &P1,
                             const GCNRegPressure &P2);
 
-  friend Printable print(const GCNRegPressure &RP, const GCNSubtarget *ST,
+  friend Printable print(const GCNRegPressure &RP,
                          unsigned DynamicVGPRBlockSize);
 };
 
@@ -221,15 +230,15 @@ public:
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   friend raw_ostream &operator<<(raw_ostream &OS, const GCNRPTarget &Target) {
     OS << "Actual/Target: " << Target.RP.getSGPRNum() << '/' << Target.MaxSGPRs
-       << " SGPRs, " << Target.RP.getArchVGPRNum() << '/' << Target.MaxVGPRs
-       << " ArchVGPRs, " << Target.RP.getAGPRNum() << '/' << Target.MaxVGPRs
+       << " SGPRs, " << Target.RP.getArchVGPRNum(Target.AddressableNumArchVGPRs) << '/' << Target.MaxVGPRs
+       << " ArchVGPRs, " << Target.RP.getAGPRNum(Target.AddressableNumArchVGPRs) << '/' << Target.MaxVGPRs
        << " AGPRs";
 
     if (Target.MaxUnifiedVGPRs) {
-      OS << ", " << Target.RP.getVGPRNum(true) << '/' << Target.MaxUnifiedVGPRs
+      OS << ", " << Target.RP.getVGPRNum(true, Target.AddressableNumArchVGPRs) << '/' << Target.MaxUnifiedVGPRs
          << " VGPRs (unified)";
     } else if (Target.CombineVGPRSavings) {
-      OS << ", " << Target.RP.getArchVGPRNum() + Target.RP.getAGPRNum() << '/'
+      OS << ", " << Target.RP.getArchVGPRNum(Target.AddressableNumArchVGPRs) + Target.RP.getAGPRNum(Target.AddressableNumArchVGPRs) << '/'
          << 2 * Target.MaxVGPRs << " VGPRs (combined target)";
     }
     return OS;
@@ -239,7 +248,6 @@ public:
 private:
   /// Current register pressure.
   GCNRegPressure RP;
-
   /// Target number of SGPRs.
   unsigned MaxSGPRs;
   /// Target number of ArchVGPRs and AGPRs.
@@ -247,6 +255,8 @@ private:
   /// Target number of overall VGPRs for subtargets with unified RFs. Always 0
   /// for subtargets with non-unified RFs.
   unsigned MaxUnifiedVGPRs;
+  /// The maximum number of arch vgprs allowed by the subtarget.
+  unsigned AddressableNumArchVGPRs;
   /// Whether we consider that the register allocator will be able to swap
   /// between ArchVGPRs and AGPRs by copying them to a super register class.
   /// Concretely, this allows savings in one of the VGPR banks to help toward
@@ -255,12 +265,12 @@ private:
 
   inline bool satisifiesVGPRBanksTarget() const {
     assert(CombineVGPRSavings && "only makes sense with combined savings");
-    return RP.getArchVGPRNum() + RP.getAGPRNum() <= 2 * MaxVGPRs;
+    return RP.getArchVGPRNum(AddressableNumArchVGPRs) + RP.getAGPRNum(AddressableNumArchVGPRs) <= 2 * MaxVGPRs;
   }
 
   /// Always satisified when the subtarget doesn't have a unified RF.
   inline bool satisfiesUnifiedTarget() const {
-    return !MaxUnifiedVGPRs || RP.getVGPRNum(true) <= MaxUnifiedVGPRs;
+    return !MaxUnifiedVGPRs || RP.getVGPRNum(true, AddressableNumArchVGPRs) <= MaxUnifiedVGPRs;
   }
 
   inline bool isVGPRBankSaveBeneficial(unsigned NumVGPRs) const {
