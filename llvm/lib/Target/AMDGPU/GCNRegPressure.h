@@ -64,7 +64,7 @@ struct GCNRegPressure {
 
     // Until we hit the VGPRThreshold, we will assign AV as VGPR. After that
     // point, we will assign as AGPR.
-    unsigned AVGPRsAsVGPRs = NumArchVGPRs < AddressableArchVGPR ? (AddressableArchVGPR - NumArchVGPRs) : 0;
+    unsigned AVGPRsAsVGPRs = NumArchVGPRs < AddressableArchVGPR ? std::min((AddressableArchVGPR - NumArchVGPRs), NumAVGPRs) : 0;
     unsigned AVGPRsAsAGPRs = NumAVGPRs > AVGPRsAsVGPRs ? NumAVGPRs - AVGPRsAsVGPRs : 0;
     return alignTo(NumArchVGPRs + AVGPRsAsVGPRs,
                    AMDGPU::IsaInfo::getArchVGPRAllocGranule()) +
@@ -85,7 +85,7 @@ struct GCNRegPressure {
   unsigned getAVGPRNum() const { return Value[AVGPR]; }
 
   unsigned getVGPRTuplesWeight(unsigned AddressableArchVGPR) const {
-    unsigned AVGPRsAsVGPRs = Value[TOTAL_KINDS + VGPR] < AddressableArchVGPR ? (AddressableArchVGPR - Value[TOTAL_KINDS + VGPR]) : 0;
+    unsigned AVGPRsAsVGPRs = Value[TOTAL_KINDS + VGPR] < AddressableArchVGPR ? std::min(AddressableArchVGPR - Value[TOTAL_KINDS + VGPR], Value[TOTAL_KINDS + AVGPR]) : 0;
     unsigned AVGPRsAsAGPRs = Value[TOTAL_KINDS + AVGPR] > AVGPRsAsVGPRs ? Value[TOTAL_KINDS + AVGPR] - AVGPRsAsVGPRs : 0;
 
     return std::max(Value[TOTAL_KINDS + VGPR] + AVGPRsAsVGPRs,

@@ -1417,7 +1417,7 @@ void GCNSchedStage::checkScheduling() {
   unsigned MaxArchVGPRs = std::min(MaxVGPRs, ST.getAddressableNumArchVGPRs());
   unsigned MaxSGPRs = ST.getMaxNumSGPRs(MF);
 
-  if (PressureAfter.getArchVGPRNum(AddressableArchVGPR) > AddressableArchVGPR)
+  if (PressureAfter.getArchVGPRNum(AddressableArchVGPR) >= AddressableArchVGPR)
     DAG.RegionsWithExcessVGPRRP[RegionIdx] = true;
 
   if (PressureAfter.getVGPRNum(ST.hasGFX90AInsts(), AddressableArchVGPR) > MaxVGPRs ||
