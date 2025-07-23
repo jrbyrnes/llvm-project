@@ -190,10 +190,14 @@ static void getRegisterPressures(
     TempUpwardTracker.recede(*MI);
     NewPressure = TempUpwardTracker.getPressure();
   }
+  unsigned ArchVGPRThreshold = DAG->MF.getSubtarget<GCNSubtarget>()
+                                   .getMaxNumVectorRegs(DAG->MF.getFunction())
+                                   .first;
   Pressure[AMDGPU::RegisterPressureSets::SReg_32] = NewPressure.getSGPRNum();
   Pressure[AMDGPU::RegisterPressureSets::VGPR_32] =
-      NewPressure.getArchVGPRNum();
-  Pressure[AMDGPU::RegisterPressureSets::AGPR_32] = NewPressure.getAGPRNum();
+      NewPressure.getArchVGPRNum(ArchVGPRThreshold);
+  Pressure[AMDGPU::RegisterPressureSets::AGPR_32] =
+      NewPressure.getAGPRNum(ArchVGPRThreshold);
 }
 
 void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
@@ -339,7 +343,10 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
                             ? static_cast<GCNRPTracker *>(&UpwardTracker)
                             : static_cast<GCNRPTracker *>(&DownwardTracker);
       SGPRPressure = T->getPressure().getSGPRNum();
-      VGPRPressure = T->getPressure().getArchVGPRNum();
+      VGPRPressure = T->getPressure().getArchVGPRNum(
+          DAG->MF.getSubtarget<GCNSubtarget>()
+              .getMaxNumVectorRegs(DAG->MF.getFunction())
+              .first);
     }
   }
   ReadyQueue &Q = Zone.Available;
@@ -1141,8 +1148,7 @@ void UnclusteredHighRPStage::finalizeGCNSchedStage() {
   if (DAG.MinOccupancy > InitialOccupancy) {
     for (unsigned IDX = 0; IDX < DAG.Pressure.size(); ++IDX)
       DAG.RegionsWithMinOcc[IDX] =
-          DAG.Pressure[IDX].getOccupancy(
-              DAG.ST, DAG.MFI.getDynamicVGPRBlockSize()) == DAG.MinOccupancy;
+          DAG.Pressure[IDX].getOccupancy(DAG.MF) == DAG.MinOccupancy;
 
     LLVM_DEBUG(dbgs() << StageID
                       << " stage successfully increased occupancy to "
@@ -1194,8 +1200,10 @@ bool GCNSchedStage::initGCNRegion() {
       dbgs() << "Pressure before scheduling:\nRegion live-ins:"
              << print(DAG.LiveIns[RegionIdx], DAG.MRI)
              << "Region live-in pressure:  "
-             << print(llvm::getRegPressure(DAG.MRI, DAG.LiveIns[RegionIdx]))
-             << "Region register pressure: " << print(PressureBefore));
+             << print(llvm::getRegPressure(DAG.MRI, DAG.LiveIns[RegionIdx]),
+                      &ST, 0, &MF)
+             << "Region register pressure: "
+             << print(PressureBefore, &ST, 0, &MF));
 
   S.HasHighPressure = false;
   S.KnownExcessRP = isRegionWithExcessRP();
@@ -1276,17 +1284,17 @@ void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
 
-  LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
+  LLVM_DEBUG(dbgs() << "Pressure after scheduling: "
+                    << print(PressureAfter, &ST, 0, &MF));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
 
-  unsigned DynamicVGPRBlockSize = DAG.MFI.getDynamicVGPRBlockSize();
-
+  unsigned ArchVGPRThreshold = ST.getMaxNumVectorRegs(MF.getFunction()).first;
   if (PressureAfter.getSGPRNum() <= S.SGPRCriticalLimit &&
-      PressureAfter.getVGPRNum(ST.hasGFX90AInsts()) <= S.VGPRCriticalLimit) {
+      PressureAfter.getVGPRNum(ST.hasGFX90AInsts(), ArchVGPRThreshold) <=
+          S.VGPRCriticalLimit) {
     DAG.Pressure[RegionIdx] = PressureAfter;
     DAG.RegionsWithMinOcc[RegionIdx] =
-        PressureAfter.getOccupancy(ST, DynamicVGPRBlockSize) ==
-        DAG.MinOccupancy;
+        PressureAfter.getOccupancy(DAG.MF) == DAG.MinOccupancy;
 
     // Early out if we have achieved the occupancy target.
     LLVM_DEBUG(dbgs() << "Pressure in desired limits, done.\n");
@@ -1295,10 +1303,10 @@ void GCNSchedStage::checkScheduling() {
 
   unsigned TargetOccupancy = std::min(
       S.getTargetOccupancy(), ST.getOccupancyWithWorkGroupSizes(MF).second);
-  unsigned WavesAfter = std::min(
-      TargetOccupancy, PressureAfter.getOccupancy(ST, DynamicVGPRBlockSize));
-  unsigned WavesBefore = std::min(
-      TargetOccupancy, PressureBefore.getOccupancy(ST, DynamicVGPRBlockSize));
+  unsigned WavesAfter =
+      std::min(TargetOccupancy, PressureAfter.getOccupancy(DAG.MF));
+  unsigned WavesBefore =
+      std::min(TargetOccupancy, PressureBefore.getOccupancy(DAG.MF));
   LLVM_DEBUG(dbgs() << "Occupancy before scheduling: " << WavesBefore
                     << ", after " << WavesAfter << ".\n");
 
@@ -1332,9 +1340,10 @@ void GCNSchedStage::checkScheduling() {
   unsigned MaxArchVGPRs = std::min(MaxVGPRs, ST.getAddressableNumArchVGPRs());
   unsigned MaxSGPRs = ST.getMaxNumSGPRs(MF);
 
-  if (PressureAfter.getVGPRNum(ST.hasGFX90AInsts()) > MaxVGPRs ||
-      PressureAfter.getArchVGPRNum() > MaxArchVGPRs ||
-      PressureAfter.getAGPRNum() > MaxArchVGPRs ||
+  if (PressureAfter.getVGPRNum(ST.hasGFX90AInsts(), ArchVGPRThreshold) >
+          MaxVGPRs ||
+      PressureAfter.getArchVGPRNum(ArchVGPRThreshold) > MaxArchVGPRs ||
+      PressureAfter.getAGPRNum(ArchVGPRThreshold) > MaxArchVGPRs ||
       PressureAfter.getSGPRNum() > MaxSGPRs) {
     DAG.RegionsWithHighRP[RegionIdx] = true;
     DAG.RegionsWithExcessRP[RegionIdx] = true;
@@ -1347,8 +1356,7 @@ void GCNSchedStage::checkScheduling() {
   } else {
     DAG.Pressure[RegionIdx] = PressureAfter;
     DAG.RegionsWithMinOcc[RegionIdx] =
-        PressureAfter.getOccupancy(ST, DynamicVGPRBlockSize) ==
-        DAG.MinOccupancy;
+        PressureAfter.getOccupancy(DAG.MF) == DAG.MinOccupancy;
   }
 }
 
@@ -1472,12 +1480,13 @@ bool GCNSchedStage::shouldRevertScheduling(unsigned WavesAfter) {
 
   // For dynamic VGPR mode, we don't want to waste any VGPR blocks.
   if (DAG.MFI.isDynamicVGPREnabled()) {
+    unsigned ArchVGPRThreshold = ST.getMaxNumVectorRegs(MF.getFunction()).first;
     unsigned BlocksBefore = AMDGPU::IsaInfo::getAllocatedNumVGPRBlocks(
         &ST, DAG.MFI.getDynamicVGPRBlockSize(),
-        PressureBefore.getVGPRNum(false));
+        PressureBefore.getVGPRNum(false, ArchVGPRThreshold));
     unsigned BlocksAfter = AMDGPU::IsaInfo::getAllocatedNumVGPRBlocks(
         &ST, DAG.MFI.getDynamicVGPRBlockSize(),
-        PressureAfter.getVGPRNum(false));
+        PressureAfter.getVGPRNum(false, ArchVGPRThreshold));
     if (BlocksAfter > BlocksBefore)
       return true;
   }
@@ -1501,8 +1510,7 @@ bool OccInitialScheduleStage::shouldRevertScheduling(unsigned WavesAfter) {
 bool UnclusteredHighRPStage::shouldRevertScheduling(unsigned WavesAfter) {
   // If RP is not reduced in the unclustered reschedule stage, revert to the
   // old schedule.
-  if ((WavesAfter <=
-           PressureBefore.getOccupancy(ST, DAG.MFI.getDynamicVGPRBlockSize()) &&
+  if ((WavesAfter <= PressureBefore.getOccupancy(DAG.MF) &&
        mayCauseSpilling(WavesAfter)) ||
       GCNSchedStage::shouldRevertScheduling(WavesAfter)) {
     LLVM_DEBUG(dbgs() << "Unclustered reschedule did not help.\n");
@@ -1524,9 +1532,8 @@ bool UnclusteredHighRPStage::shouldRevertScheduling(unsigned WavesAfter) {
   ScheduleMetrics MAfter = getScheduleMetrics(DAG);
   unsigned OldMetric = MBefore.getMetric();
   unsigned NewMetric = MAfter.getMetric();
-  unsigned WavesBefore = std::min(
-      S.getTargetOccupancy(),
-      PressureBefore.getOccupancy(ST, DAG.MFI.getDynamicVGPRBlockSize()));
+  unsigned WavesBefore =
+      std::min(S.getTargetOccupancy(), PressureBefore.getOccupancy(DAG.MF));
   unsigned Profit =
       ((WavesAfter * ScheduleMetrics::ScaleFactor) / WavesBefore *
        ((OldMetric + ScheduleMetricBias) * ScheduleMetrics::ScaleFactor) /
@@ -1579,8 +1586,7 @@ bool GCNSchedStage::mayCauseSpilling(unsigned WavesAfter) {
 
 void GCNSchedStage::revertScheduling() {
   DAG.RegionsWithMinOcc[RegionIdx] =
-      PressureBefore.getOccupancy(ST, DAG.MFI.getDynamicVGPRBlockSize()) ==
-      DAG.MinOccupancy;
+      PressureBefore.getOccupancy(DAG.MF) == DAG.MinOccupancy;
   LLVM_DEBUG(dbgs() << "Attempting to revert scheduling.\n");
   DAG.RegionEnd = DAG.RegionBegin;
   int SkippedDebugInstr = 0;
@@ -2004,8 +2010,12 @@ void PreRARematStage::rematerialize() {
       }
     }
     DAG.Pressure[I] = RP;
+<<<<<<< HEAD
     AchievedOcc =
         std::min(AchievedOcc, RP.getOccupancy(ST, DynamicVGPRBlockSize));
+=======
+    AchievedOcc = std::min(AchievedOcc, RP.getOccupancy(DAG.MF));
+>>>>>>> 929584982b8f ([AMDGPU] More accurately account for AVGPR pressure)
   }
   REMAT_DEBUG(dbgs() << "Achieved occupancy " << AchievedOcc << "\n");
 }
