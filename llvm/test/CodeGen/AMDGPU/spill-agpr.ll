@@ -38,6 +38,61 @@ st:
 ; GCN:     v_accvgpr_write_b32 a{{[0-9]+}}, v[[VSPILL]]
 ; GCN:     ScratchSize: 0
 define amdgpu_kernel void @max_10_vgprs_used_9a() #1 {
+; GFX908-LABEL: max_10_vgprs_used_9a:
+; GFX908:       ; %bb.0:
+; GFX908-NEXT:    ;;#ASMSTART
+; GFX908-NEXT:    ;;#ASMEND
+; GFX908-NEXT:    v_accvgpr_read_b32 v0, a0
+; GFX908-NEXT:    v_accvgpr_read_b32 v3, a3
+; GFX908-NEXT:    v_accvgpr_read_b32 v1, a1
+; GFX908-NEXT:    v_accvgpr_read_b32 v2, a2
+; GFX908-NEXT:    ;;#ASMSTART
+; GFX908-NEXT:    ;;#ASMEND
+; GFX908-NEXT:    ;;#ASMSTART
+; GFX908-NEXT:    ;;#ASMEND
+; GFX908-NEXT:    ;;#ASMSTART
+; GFX908-NEXT:    ;;#ASMEND
+; GFX908-NEXT:    v_accvgpr_read_b32 v5, a2
+; GFX908-NEXT:    v_accvgpr_read_b32 v4, a1
+; GFX908-NEXT:    v_accvgpr_write_b32 a4, v3
+; GFX908-NEXT:    v_accvgpr_write_b32 a1, v0
+; GFX908-NEXT:    v_accvgpr_write_b32 a3, v2
+; GFX908-NEXT:    v_accvgpr_write_b32 a2, v1
+; GFX908-NEXT:    ;;#ASMSTART
+; GFX908-NEXT:    ;;#ASMEND
+; GFX908-NEXT:    v_accvgpr_write_b32 a0, v4
+; GFX908-NEXT:    v_accvgpr_write_b32 a1, v5
+; GFX908-NEXT:    ;;#ASMSTART
+; GFX908-NEXT:    ;;#ASMEND
+; GFX908-NEXT:    s_endpgm
+;
+; GFX90A-LABEL: max_10_vgprs_used_9a:
+; GFX90A:       ; %bb.0:
+; GFX90A-NEXT:    ;;#ASMSTART
+; GFX90A-NEXT:    ;;#ASMEND
+; GFX90A-NEXT:    v_accvgpr_read_b32 v0, a0
+; GFX90A-NEXT:    v_accvgpr_read_b32 v1, a1
+; GFX90A-NEXT:    v_accvgpr_read_b32 v2, a2
+; GFX90A-NEXT:    v_accvgpr_read_b32 v3, a3
+; GFX90A-NEXT:    ;;#ASMSTART
+; GFX90A-NEXT:    ;;#ASMEND
+; GFX90A-NEXT:    ;;#ASMSTART
+; GFX90A-NEXT:    ;;#ASMEND
+; GFX90A-NEXT:    ;;#ASMSTART
+; GFX90A-NEXT:    ;;#ASMEND
+; GFX90A-NEXT:    v_accvgpr_read_b32 v5, a3
+; GFX90A-NEXT:    v_accvgpr_read_b32 v4, a2
+; GFX90A-NEXT:    v_accvgpr_write_b32 a5, v3
+; GFX90A-NEXT:    v_accvgpr_write_b32 a4, v2
+; GFX90A-NEXT:    v_accvgpr_write_b32 a3, v1
+; GFX90A-NEXT:    v_accvgpr_write_b32 a2, v0
+; GFX90A-NEXT:    ;;#ASMSTART
+; GFX90A-NEXT:    ;;#ASMEND
+; GFX90A-NEXT:    v_accvgpr_write_b32 a0, v4
+; GFX90A-NEXT:    v_accvgpr_write_b32 a1, v5
+; GFX90A-NEXT:    ;;#ASMSTART
+; GFX90A-NEXT:    ;;#ASMEND
+; GFX90A-NEXT:    s_endpgm
   %a1 = call <4 x i32> asm sideeffect "", "=a"()
   %a2 = call <4 x i32> asm sideeffect "", "=a"()
   %a3 = call i32 asm sideeffect "", "=a"()
