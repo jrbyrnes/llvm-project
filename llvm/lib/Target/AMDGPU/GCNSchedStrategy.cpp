@@ -912,10 +912,9 @@ GCNScheduleDAGMILive::getRegionLiveInMap() const {
     const MachineBasicBlock *MBB = I->first->getParent();
     auto *MI = &*skipDebugInstructionsForward(I->first, I->second);
     RegionFirstMIs.push_back(MI);
-    do {
-      ++I;
-    } while (I != E && I->first->getParent() == MBB);
+    ++I;
   } while (I != E);
+
   return getLiveRegMap(RegionFirstMIs, /*After=*/false, *LIS);
 }
 
@@ -1234,6 +1233,19 @@ bool RewriteScheduleStage::initGCNSchedStage() {
   DAG.RegionsWithExcessArchVGPR.reset();
   DAG.RegionsWithExcessRP.reset();
 
+  DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
+  DenseMap<MachineInstr *, unsigned> LastMIToRegion;
+
+  for (unsigned I = 0; I < DAG.Regions.size(); I++) {
+    auto Entry = DAG.Regions[I];
+    if (Entry.first == Entry.second)
+      continue;
+
+    FirstMIToRegion[&*Entry.first] = I;
+    if (Entry.second != Entry.first->getParent()->end())
+      LastMIToRegion[&*Entry.second] = I;
+  }
+
   // Insert cross RC copies for the users of the MFMA result
   for (auto MI : CrossRCUseCopies) {
     auto DefReg = MI->getOperand(0).getReg();
@@ -1241,7 +1253,12 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     for (auto &UseMI : DAG.MRI.use_nodbg_instructions(DefReg))
       UseInstrs.push_back(&UseMI);
 
-    DenseMap<Register, DenseMap<MachineBasicBlock *, MachineInstr *>> NewCopies;
+    DenseMap<Register,
+             DenseMap<MachineBasicBlock *, MachineBasicBlock::iterator>>
+        CopyTracker;
+    DenseMap<Register,
+             DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 4>>>
+        ReplaceOps;
     for (auto UseMI : UseInstrs) {
       for (unsigned OpNo = 0; OpNo < UseMI->getNumOperands(); OpNo++) {
         auto &TheOp = UseMI->getOperand(OpNo);
@@ -1255,34 +1272,46 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         if (!RequiredRC || SRI->hasAGPRs(RequiredRC))
           continue;
 
-        Register DestVGPR;
-        if (!NewCopies.contains(DefReg) ||
-            !NewCopies[DefReg].contains(UseMI->getParent())) {
-          Register DestVGPR = DAG.MRI.createVirtualRegister(
-              SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(DefReg)));
+        if (!CopyTracker.contains(DefReg) ||
+            !CopyTracker[DefReg].contains(UseMI->getParent())) {
+          MachineBasicBlock::iterator InstPt = UseMI->getIterator();
 
-          // Insert copy near the user to avoid inserting inside loops.
-          // TODO  insert point
-          MachineInstrBuilder VGPRCopy =
-              BuildMI(*UseMI->getParent(), UseMI->getParent()->getFirstNonPHI(),
-                      UseMI->getDebugLoc(), TII->get(TargetOpcode::COPY))
-                  .addDef(DestVGPR, 0, 0)
-                  .addUse(DefReg, 0, 0);
+          CopyTracker[DefReg][UseMI->getParent()] = InstPt;
+          ReplaceOps[DefReg][UseMI->getParent()] = {&TheOp};
+        } else {
+          MachineBasicBlock::iterator CurrentInstPt =
+              CopyTracker[DefReg][UseMI->getParent()];
+          MachineBasicBlock::iterator InstPt = UseMI->getIterator();
+          auto CurrIdx = DAG.LIS->getInstructionIndex(*CurrentInstPt);
+          auto NewIdx = DAG.LIS->getInstructionIndex(*InstPt);
+          if (SlotIndex::isEarlierInstr(NewIdx, CurrIdx))
+            CopyTracker[DefReg][UseMI->getParent()] = InstPt;
 
-          NewCopies[DefReg][UseMI->getParent()] = VGPRCopy;
+          ReplaceOps[DefReg][UseMI->getParent()].push_back(&TheOp);
         }
-        DestVGPR =
-            NewCopies[DefReg][UseMI->getParent()]->getOperand(0).getReg();
-        TheOp.setReg(DestVGPR);
       }
     }
-    if (NewCopies.contains(DefReg)) {
-      for (auto NewCopy : NewCopies[DefReg]) {
-        DAG.LIS->InsertMachineInstrInMaps(*NewCopy.second);
-        DAG.LIS->removeInterval(DefReg);
-        DAG.LIS->createAndComputeVirtRegInterval(DefReg);
-        DAG.LIS->createAndComputeVirtRegInterval(
-            NewCopy.second->getOperand(0).getReg());
+    if (CopyTracker.contains(DefReg)) {
+      for (auto NewCopy : CopyTracker[DefReg]) {
+        Register DestVGPR = DAG.MRI.createVirtualRegister(
+            SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(DefReg)));
+        MachineInstrBuilder VGPRCopy =
+            BuildMI(*NewCopy.first, NewCopy.second,
+                    NewCopy.second->getDebugLoc(), TII->get(TargetOpcode::COPY))
+                .addDef(DestVGPR, 0, 0)
+                .addUse(DefReg, 0, 0);
+        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+
+        if (FirstMIToRegion.contains(&*NewCopy.second)) {
+          auto Region = FirstMIToRegion[&*NewCopy.second];
+          DAG.Regions[Region] = std::make_pair(VGPRCopy->getIterator(),
+                                               DAG.Regions[Region].second);
+          FirstMIToRegion.erase(&*NewCopy.second);
+        }
+
+        for (MachineOperand *ReplaceOp : ReplaceOps[DefReg][NewCopy.first]) {
+          ReplaceOp->setReg(DestVGPR);
+        }
       }
     }
   }
@@ -1299,7 +1328,12 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     for (auto &DefMI : DAG.MRI.def_instructions(Src2Reg))
       DefInstrs.push_back(&DefMI);
 
-    DenseMap<Register, DenseMap<MachineBasicBlock *, MachineInstr *>> NewCopies;
+    DenseMap<Register,
+             DenseMap<MachineBasicBlock *, MachineBasicBlock::iterator>>
+        CopyTracker;
+    DenseMap<Register,
+             DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 4>>>
+        ReplaceOps;
     for (auto DefMI : DefInstrs) {
       for (unsigned OpNo = 0; OpNo < DefMI->getNumOperands(); OpNo++) {
         auto &TheOp = DefMI->getOperand(OpNo);
@@ -1313,45 +1347,60 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         if (!RequiredRC || SRI->hasAGPRs(RequiredRC))
           continue;
 
-        Register SrcVGPR;
-        if (!NewCopies.contains(Src2Reg) ||
-            !NewCopies[Src2Reg].contains(DefMI->getParent())) {
-          Register SrcVGPR = DAG.MRI.createVirtualRegister(
-              SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(Src2Reg)));
-
-          // Insert copy near the def to avoid inserting inside loops.
-          MachineInstrBuilder VGPRCopy =
-              BuildMI(*DefMI->getParent(), DefMI->getParent()->end(),
-                      DefMI->getDebugLoc(), TII->get(TargetOpcode::COPY))
-                  .addDef(Src2Reg, 0, 0)
-                  .addUse(SrcVGPR, 0, 0);
-
-          NewCopies[Src2Reg][DefMI->getParent()] = VGPRCopy;
+        if (!CopyTracker.contains(Src2Reg) ||
+            !CopyTracker[Src2Reg].contains(DefMI->getParent())) {
+          MachineBasicBlock::iterator InstPt = ++DefMI->getIterator();
+          CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
+          ReplaceOps[Src2Reg][DefMI->getParent()] = {&TheOp};
         }
 
-        SrcVGPR =
-            NewCopies[Src2Reg][DefMI->getParent()]->getOperand(1).getReg();
-        TheOp.setReg(SrcVGPR);
+        else {
+          MachineBasicBlock::iterator CurrentInstPt =
+              CopyTracker[Src2Reg][DefMI->getParent()];
+          MachineBasicBlock::iterator InstPt =
+              DefMI->getParent()->getFirstNonPHI();
+          auto CurrIdx = DAG.LIS->getInstructionIndex(*CurrentInstPt);
+          auto NewIdx = DAG.LIS->getInstructionIndex(*InstPt);
+          if (SlotIndex::isEarlierInstr(CurrIdx, NewIdx))
+            CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
+
+          ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&TheOp);
+        }
       }
     }
 
-    if (NewCopies.contains(Src2Reg)) {
-      for (auto NewCopy : NewCopies[Src2Reg]) {
-        DAG.LIS->InsertMachineInstrInMaps(*NewCopy.second);
-        DAG.LIS->removeInterval(Src2Reg);
-        DAG.LIS->createAndComputeVirtRegInterval(Src2Reg);
-        DAG.LIS->createAndComputeVirtRegInterval(
-            NewCopy.second->getOperand(1).getReg());
+    if (CopyTracker.contains(Src2Reg)) {
+      for (auto NewCopy : CopyTracker[Src2Reg]) {
+
+        Register SrcVGPR = DAG.MRI.createVirtualRegister(
+            SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(Src2Reg)));
+        MachineInstrBuilder VGPRCopy =
+            BuildMI(*NewCopy.first, NewCopy.second,
+                    NewCopy.second->getDebugLoc(), TII->get(TargetOpcode::COPY))
+                .addDef(Src2Reg, 0, 0)
+                .addUse(SrcVGPR, 0, 0);
+        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+
+        if (LastMIToRegion.contains(&*NewCopy.second)) {
+          auto Region = LastMIToRegion[&*NewCopy.second];
+          DAG.Regions[Region] = std::make_pair(DAG.Regions[Region].first,
+                                               VGPRCopy->getIterator());
+          LastMIToRegion.erase(&*NewCopy.second);
+        }
+
+        for (MachineOperand *ReplaceOp : ReplaceOps[Src2Reg][NewCopy.first]) {
+          ReplaceOp->setReg(SrcVGPR);
+        }
       }
     }
   }
 
+  DAG.LIS->reanalyze(DAG.MF);
+
   // Liveins may have been modified for cross RC copies
   RegionPressureMap LiveInUpdater(&DAG, false);
-  LiveInUpdater.buildLiveRegMap();
 
-  for (unsigned RegionIdx = 0; RegionIdx < DAG.Regions.size(); RegionIdx++)
-    DAG.LiveIns[RegionIdx] = LiveInUpdater.getLiveRegsForRegionIdx(RegionIdx);
+  LiveInUpdater.buildLiveRegMap();
 
   return true;
 }
