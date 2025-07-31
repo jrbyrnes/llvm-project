@@ -909,7 +909,6 @@ GCNScheduleDAGMILive::getRegionLiveInMap() const {
   RegionFirstMIs.reserve(Regions.size());
   auto I = Regions.rbegin(), E = Regions.rend();
   do {
-    const MachineBasicBlock *MBB = I->first->getParent();
     auto *MI = &*skipDebugInstructionsForward(I->first, I->second);
     RegionFirstMIs.push_back(MI);
     ++I;
@@ -951,12 +950,10 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
   Pressure.resize(Regions.size());
   RegionsWithHighRP.resize(Regions.size());
   RegionsWithExcessRP.resize(Regions.size());
-  RegionsWithExcessArchVGPR.resize(Regions.size());
   RegionsWithMinOcc.resize(Regions.size());
   RegionsWithIGLPInstrs.resize(Regions.size());
   RegionsWithHighRP.reset();
   RegionsWithExcessRP.reset();
-  RegionsWithExcessArchVGPR.reset();
   RegionsWithMinOcc.reset();
   RegionsWithIGLPInstrs.reset();
 
@@ -1053,7 +1050,17 @@ bool GCNSchedStage::initGCNSchedStage() {
 
 bool RewriteScheduleStage::initGCNSchedStage() {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
-  if (!ST.hasGFX90AInsts() || DAG.RegionsWithExcessArchVGPR.none())
+  unsigned ArchVGPRThreshold =
+      ST.getMaxNumVectorRegs(DAG.MF.getFunction()).first;
+
+  for (unsigned I = 0; I < DAG.Regions.size(); I++) {
+    auto PressureBefore = DAG.Pressure[I];
+    if (PressureBefore.getArchVGPRNum(ArchVGPRThreshold) >
+        ST.getAddressableNumArchVGPRs())
+      RegionsWithExcessArchVGPR[RegionIdx] = true;
+  }
+
+  if (!ST.hasGFX90AInsts() || RegionsWithExcessArchVGPR.none())
     return false;
 
   const SIInstrInfo *TII = ST.getInstrInfo();
@@ -1087,7 +1094,6 @@ bool RewriteScheduleStage::initGCNSchedStage() {
 
           DAG.MRI.setRegClass(Src2->getReg(), AGPRRC);
         }
-
         DAG.MRI.setRegClass(MI.getOperand(0).getReg(), AGPRRC);
 
         auto OriginalOpc = MI.getOpcode();
@@ -1097,13 +1103,10 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     }
   }
 
-  unsigned ArchVGPRThreshold =
-      ST.getMaxNumVectorRegs(DAG.MF.getFunction()).first;
-
   int64_t Cost = 0;
   MBFI.calculate(MF, MBPI, *DAG.MLI);
   for (unsigned RegionIdx = 0; RegionIdx < DAG.Regions.size(); RegionIdx++) {
-    if (!DAG.RegionsWithExcessArchVGPR[RegionIdx])
+    if (!RegionsWithExcessArchVGPR[RegionIdx])
       continue;
 
     unsigned MaxCombinedVGPRs = ST.getMaxNumVGPRs(MF);
@@ -1154,7 +1157,6 @@ bool RewriteScheduleStage::initGCNSchedStage() {
 
     unsigned SpillCostAfter =
         std::max(UnifiedSpillAfter, (ArchSpillAfter + AGPRSpillAfter));
-
     uint64_t EntryFreq = MBFI.getEntryFreq().getFrequency();
     uint64_t BlockFreq =
         EntryFreq ? MBFI.getBlockFreq(DAG.Regions[RegionIdx].first->getParent())
@@ -1162,7 +1164,8 @@ bool RewriteScheduleStage::initGCNSchedStage() {
                         EntryFreq
                   : 1;
 
-    // Assumes perfect spilling -- giving edge to VGPR form.
+    // Assumes perfect spilling. Maye double count savings, if the MFMA operands
+    // are live-in/out to another regions with excess VGPR pressure.
     Cost += ((int)SpillCostAfter - (int)SpillCostBefore) * (int)BlockFreq;
   }
 
@@ -1230,7 +1233,6 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     return false;
   }
 
-  DAG.RegionsWithExcessArchVGPR.reset();
   DAG.RegionsWithExcessRP.reset();
 
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
@@ -1342,29 +1344,35 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         if (TheOp.getReg() != Src2Reg)
           continue;
 
-        auto RequiredRC = DefMI->getRegClassConstraint(OpNo, DAG.TII, DAG.TRI);
-
-        if (!RequiredRC || SRI->hasAGPRs(RequiredRC))
-          continue;
+        // Assume that the def needs a copy.
 
         if (!CopyTracker.contains(Src2Reg) ||
             !CopyTracker[Src2Reg].contains(DefMI->getParent())) {
-          MachineBasicBlock::iterator InstPt = ++DefMI->getIterator();
+          MachineBasicBlock::iterator InstPt = DefMI->getIterator();
           CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
-          ReplaceOps[Src2Reg][DefMI->getParent()] = {&TheOp};
+          for (auto &ReplaceOp : DAG.MRI.use_nodbg_operands(Src2Reg)) {
+            if (TII->isMAI(*ReplaceOp.getParent()))
+              continue;
+
+            ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&ReplaceOp);
+          }
         }
 
         else {
           MachineBasicBlock::iterator CurrentInstPt =
               CopyTracker[Src2Reg][DefMI->getParent()];
-          MachineBasicBlock::iterator InstPt =
-              DefMI->getParent()->getFirstNonPHI();
+          MachineBasicBlock::iterator InstPt = DefMI->getIterator();
           auto CurrIdx = DAG.LIS->getInstructionIndex(*CurrentInstPt);
           auto NewIdx = DAG.LIS->getInstructionIndex(*InstPt);
           if (SlotIndex::isEarlierInstr(CurrIdx, NewIdx))
             CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
 
-          ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&TheOp);
+          for (auto ReplaceOp : DAG.MRI.use_nodbg_operands(Src2Reg)) {
+            if (TII->isMAI(*ReplaceOp.getParent()))
+              continue;
+
+            ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&ReplaceOp);
+          }
         }
       }
     }
@@ -1375,13 +1383,16 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         Register SrcVGPR = DAG.MRI.createVirtualRegister(
             SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(Src2Reg)));
         MachineInstrBuilder VGPRCopy =
-            BuildMI(*NewCopy.first, NewCopy.second,
-                    NewCopy.second->getDebugLoc(), TII->get(TargetOpcode::COPY))
-                .addDef(Src2Reg, 0, 0)
-                .addUse(SrcVGPR, 0, 0);
+            BuildMIAfter(*NewCopy.first, NewCopy.second,
+                         NewCopy.second->getDebugLoc(),
+                         TII->get(TargetOpcode::COPY))
+                .addDef(SrcVGPR, 0, 0)
+                .addUse(Src2Reg, 0, 0);
         DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
 
-        if (LastMIToRegion.contains(&*NewCopy.second)) {
+        auto NextPos = std::next(NewCopy.second->getIterator());
+        if (LastMIToRegion.contains(&*NewCopy.second) ||
+            NextPos == NewCopy.first->end()) {
           auto Region = LastMIToRegion[&*NewCopy.second];
           DAG.Regions[Region] = std::make_pair(DAG.Regions[Region].first,
                                                VGPRCopy->getIterator());
@@ -1396,11 +1407,12 @@ bool RewriteScheduleStage::initGCNSchedStage() {
   }
 
   DAG.LIS->reanalyze(DAG.MF);
-
   // Liveins may have been modified for cross RC copies
   RegionPressureMap LiveInUpdater(&DAG, false);
-
   LiveInUpdater.buildLiveRegMap();
+
+  for (unsigned Region = 0; Region < DAG.Regions.size(); Region++)
+    DAG.LiveIns[Region] = LiveInUpdater.getLiveRegsForRegionIdx(Region);
 
   return true;
 }
@@ -1648,7 +1660,6 @@ void GCNSchedStage::checkScheduling() {
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: "
                     << print(PressureAfter, &ST, 0, &MF));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
-
   unsigned ArchVGPRThreshold = ST.getMaxNumVectorRegs(MF.getFunction()).first;
   if (PressureAfter.getSGPRNum() <= S.SGPRCriticalLimit &&
       PressureAfter.getVGPRNum(ST.hasGFX90AInsts(), ArchVGPRThreshold) <=
@@ -1709,10 +1720,6 @@ void GCNSchedStage::checkScheduling() {
     DAG.RegionsWithHighRP[RegionIdx] = true;
     DAG.RegionsWithExcessRP[RegionIdx] = true;
   }
-
-  if (PressureAfter.getArchVGPRNum(ArchVGPRThreshold) >
-      ST.getAddressableNumArchVGPRs())
-    DAG.RegionsWithExcessArchVGPR[RegionIdx] = true;
 
   // Revert if this region's schedule would cause a drop in occupancy or
   // spilling.

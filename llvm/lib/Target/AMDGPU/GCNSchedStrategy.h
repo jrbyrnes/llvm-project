@@ -255,11 +255,6 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   // limit. Register pressure in these regions usually will result in spilling.
   BitVector RegionsWithExcessRP;
 
-  // Record regions with excess archvgpr register pressure over the physical
-  // register limit. Register pressure in these regions usually will result in
-  // spilling.
-  BitVector RegionsWithExcessArchVGPR;
-
   // Regions that has the same occupancy as the latest MinOccupancy
   BitVector RegionsWithMinOcc;
 
@@ -413,6 +408,11 @@ public:
 
 class RewriteScheduleStage : public GCNSchedStage {
 private:
+  // Record regions with excess archvgpr register pressure over the physical
+  // register limit. Register pressure in these regions usually will result in
+  // spilling.
+  BitVector RegionsWithExcessArchVGPR;
+
   const TargetRegisterClass *
   recomputeRegClassExceptRewritable(Register Reg,
                                     const TargetRegisterClass *OldRC,
