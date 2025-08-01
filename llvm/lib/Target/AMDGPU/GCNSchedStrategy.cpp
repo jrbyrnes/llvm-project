@@ -1054,11 +1054,12 @@ bool RewriteScheduleStage::initGCNSchedStage() {
       ST.getMaxNumVectorRegs(DAG.MF.getFunction()).first;
 
   RegionsWithExcessArchVGPR.resize(DAG.Regions.size());
-  for (unsigned I = 0; I < DAG.Regions.size(); I++) {
-    auto PressureBefore = DAG.Pressure[I];
+  RegionsWithExcessArchVGPR.reset();
+  for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
+    auto PressureBefore = DAG.Pressure[Region];
     if (PressureBefore.getArchVGPRNum(ArchVGPRThreshold) >
         ST.getAddressableNumArchVGPRs())
-      RegionsWithExcessArchVGPR[RegionIdx] = true;
+      RegionsWithExcessArchVGPR[Region] = true;
   }
 
   if (!ST.hasGFX90AInsts() || RegionsWithExcessArchVGPR.none())
@@ -1067,7 +1068,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
   const SIInstrInfo *TII = ST.getInstrInfo();
   const SIRegisterInfo *SRI = ST.getRegisterInfo();
   SmallPtrSet<MachineInstr *, 16> CrossRCUseCopies;
-  SmallPtrSet<MachineInstr *, 16> CrossRCDefCopies;
+  std::set<Register> CrossRCDefCopies;
   std::vector<std::pair<MachineInstr *, unsigned>> RewriteInsts;
 
   for (auto &MBB : MF) {
@@ -1091,7 +1092,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
           const TargetRegisterClass *Src2ConstrainExceptRC =
               recomputeRegClassExceptRewritable(Src2->getReg(), VGPRRC, AGPRRC);
           if ((!Src2ConstrainExceptRC || Src2ConstrainExceptRC != AGPRRC))
-            CrossRCDefCopies.insert(&MI);
+            CrossRCDefCopies.insert(Src2->getReg());
 
           DAG.MRI.setRegClass(Src2->getReg(), AGPRRC);
         }
@@ -1106,13 +1107,13 @@ bool RewriteScheduleStage::initGCNSchedStage() {
 
   int64_t Cost = 0;
   MBFI.calculate(MF, MBPI, *DAG.MLI);
-  for (unsigned RegionIdx = 0; RegionIdx < DAG.Regions.size(); RegionIdx++) {
-    if (!RegionsWithExcessArchVGPR[RegionIdx])
+  for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
+    if (!RegionsWithExcessArchVGPR[Region])
       continue;
 
     unsigned MaxCombinedVGPRs = ST.getMaxNumVGPRs(MF);
 
-    auto PressureBefore = DAG.Pressure[RegionIdx];
+    auto PressureBefore = DAG.Pressure[Region];
     unsigned UnifiedPressureBefore =
         PressureBefore.getVGPRNum(true, ArchVGPRThreshold);
     unsigned ArchPressureBefore =
@@ -1138,7 +1139,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     // addressable limit), rewriting alone should bring pressure to manageable
     // level. If we find any such region, then the rewrite is potentially
     // beneficial.
-    auto PressureAfter = DAG.getRealRegPressure(RegionIdx);
+    auto PressureAfter = DAG.getRealRegPressure(Region);
     unsigned UnifiedPressureAfter =
         PressureAfter.getVGPRNum(true, ArchVGPRThreshold);
     unsigned ArchPressureAfter =
@@ -1160,15 +1161,17 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         std::max(UnifiedSpillAfter, (ArchSpillAfter + AGPRSpillAfter));
     uint64_t EntryFreq = MBFI.getEntryFreq().getFrequency();
     uint64_t BlockFreq =
-        EntryFreq ? MBFI.getBlockFreq(DAG.Regions[RegionIdx].first->getParent())
+        EntryFreq ? MBFI.getBlockFreq(DAG.Regions[Region].first->getParent())
                             .getFrequency() /
                         EntryFreq
                   : 1;
 
     // Assumes perfect spilling. Maye double count savings, if the MFMA operands
     // are live-in/out to another regions with excess VGPR pressure.
+ 
     Cost += ((int)SpillCostAfter - (int)SpillCostBefore) * (int)BlockFreq;
   }
+
 
   // If we find that we'll need to insert cross RC copies inside loop bodies,
   // then bail
@@ -1210,6 +1213,8 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     }
   }
 
+  ShouldRewrite = Cost < 0;
+
   // If we haven't found the beneficial conditions, prefer the VGPR form which
   // may result in less cross RC copies.
   if (!ShouldRewrite) {
@@ -1239,14 +1244,14 @@ bool RewriteScheduleStage::initGCNSchedStage() {
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
 
-  for (unsigned I = 0; I < DAG.Regions.size(); I++) {
-    auto Entry = DAG.Regions[I];
+  for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
+    auto Entry = DAG.Regions[Region];
     if (Entry.first == Entry.second)
       continue;
 
-    FirstMIToRegion[&*Entry.first] = I;
+    FirstMIToRegion[&*Entry.first] = Region;
     if (Entry.second != Entry.first->getParent()->end())
-      LastMIToRegion[&*Entry.second] = I;
+      LastMIToRegion[&*Entry.second] = Region;
   }
 
   // Insert cross RC copies for the users of the MFMA result
@@ -1320,13 +1325,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
   }
 
   // Insert cross RC copies for the use operands of the MFMA
-  for (auto MI : CrossRCDefCopies) {
-    MachineOperand *Src2 = TII->getNamedOperand(*MI, AMDGPU::OpName::src2);
-    if (!Src2)
-      continue;
-    if (!Src2->isReg())
-      continue;
-    auto Src2Reg = Src2->getReg();
+  for (auto Src2Reg : CrossRCDefCopies) {
     SmallVector<MachineInstr *, 4> DefInstrs;
     for (auto &DefMI : DAG.MRI.def_instructions(Src2Reg))
       DefInstrs.push_back(&DefMI);
@@ -1338,6 +1337,8 @@ bool RewriteScheduleStage::initGCNSchedStage() {
              DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 4>>>
         ReplaceOps;
     for (auto DefMI : DefInstrs) {
+      if (TII->isMAI(*DefMI))
+        continue;
       for (unsigned OpNo = 0; OpNo < DefMI->getNumOperands(); OpNo++) {
         auto &TheOp = DefMI->getOperand(OpNo);
         if (!TheOp.isReg() || !TheOp.isDef())
@@ -1346,13 +1347,19 @@ bool RewriteScheduleStage::initGCNSchedStage() {
           continue;
 
         // Assume that the def needs a copy.
+        const TargetRegisterClass *AGPRRC =
+            DAG.MRI.getRegClass(TheOp.getReg());
+
+        const TargetRegisterClass *VGPRRC = SRI->getEquivalentVGPRClass(AGPRRC);
+
+        DAG.MRI.setRegClass(TheOp.getReg(), VGPRRC);
 
         if (!CopyTracker.contains(Src2Reg) ||
             !CopyTracker[Src2Reg].contains(DefMI->getParent())) {
           MachineBasicBlock::iterator InstPt = DefMI->getIterator();
           CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
-          for (auto &ReplaceOp : DAG.MRI.use_nodbg_operands(Src2Reg)) {
-            if (TII->isMAI(*ReplaceOp.getParent()))
+          for (auto &ReplaceOp : DAG.MRI.reg_nodbg_operands(Src2Reg)) {
+            if (!TII->isMAI(*ReplaceOp.getParent()))
               continue;
 
             ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&ReplaceOp);
@@ -1368,8 +1375,8 @@ bool RewriteScheduleStage::initGCNSchedStage() {
           if (SlotIndex::isEarlierInstr(CurrIdx, NewIdx))
             CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
 
-          for (auto ReplaceOp : DAG.MRI.use_nodbg_operands(Src2Reg)) {
-            if (TII->isMAI(*ReplaceOp.getParent()))
+          for (auto ReplaceOp : DAG.MRI.reg_nodbg_operands(Src2Reg)) {
+            if (!TII->isMAI(*ReplaceOp.getParent()))
               continue;
 
             ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&ReplaceOp);
@@ -1381,31 +1388,32 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     if (CopyTracker.contains(Src2Reg)) {
       for (auto NewCopy : CopyTracker[Src2Reg]) {
 
-        Register SrcVGPR = DAG.MRI.createVirtualRegister(
-            SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(Src2Reg)));
-        MachineInstrBuilder VGPRCopy =
+        Register SrcAGPR = DAG.MRI.createVirtualRegister(
+            SRI->getEquivalentAGPRClass(DAG.MRI.getRegClass(Src2Reg)));
+        MachineInstrBuilder AGPRCopy =
             BuildMIAfter(*NewCopy.first, NewCopy.second,
                          NewCopy.second->getDebugLoc(),
                          TII->get(TargetOpcode::COPY))
-                .addDef(SrcVGPR, 0, 0)
+                .addDef(SrcAGPR, 0, 0)
                 .addUse(Src2Reg, 0, 0);
-        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+        DAG.LIS->InsertMachineInstrInMaps(*AGPRCopy);
 
         auto NextPos = std::next(NewCopy.second->getIterator());
         if (LastMIToRegion.contains(&*NewCopy.second) ||
             NextPos == NewCopy.first->end()) {
           auto Region = LastMIToRegion[&*NewCopy.second];
           DAG.Regions[Region] = std::make_pair(DAG.Regions[Region].first,
-                                               VGPRCopy->getIterator());
+                                               AGPRCopy->getIterator());
           LastMIToRegion.erase(&*NewCopy.second);
         }
 
         for (MachineOperand *ReplaceOp : ReplaceOps[Src2Reg][NewCopy.first]) {
-          ReplaceOp->setReg(SrcVGPR);
+          ReplaceOp->setReg(SrcAGPR);
         }
       }
     }
   }
+
 
   DAG.LIS->reanalyze(DAG.MF);
   // Liveins may have been modified for cross RC copies
