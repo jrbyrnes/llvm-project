@@ -1048,6 +1048,15 @@ bool GCNSchedStage::initGCNSchedStage() {
   return true;
 }
 
+
+static SlotIndex findReachingDef(MachineOperand &UseMO, LiveIntervals *LIS) {
+  assert(UseMO.isReg());
+  MachineInstr *UseMI = UseMO.getParent();
+  auto VNInfo = LIS->getInterval(UseMO.getReg()).getVNInfoAt(LIS->getInstructionIndex(*UseMI));
+  return VNInfo->def;
+
+}
+
 bool RewriteScheduleStage::initGCNSchedStage() {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   unsigned ArchVGPRThreshold =
@@ -1062,14 +1071,16 @@ bool RewriteScheduleStage::initGCNSchedStage() {
       RegionsWithExcessArchVGPR[Region] = true;
   }
 
-  if (!ST.hasGFX90AInsts() || RegionsWithExcessArchVGPR.none())
-    return false;
+  //if (!ST.hasGFX90AInsts() || RegionsWithExcessArchVGPR.none())
+  //  return false;
 
   const SIInstrInfo *TII = ST.getInstrInfo();
   const SIRegisterInfo *SRI = ST.getRegisterInfo();
   SmallPtrSet<MachineInstr *, 16> CrossRCUseCopies;
   std::set<Register> CrossRCDefCopies;
   std::vector<std::pair<MachineInstr *, unsigned>> RewriteInsts;
+
+  DenseMap<MachineInstr *, SmallVector<MachineInstr *, 4>> MFMAUsers;
 
   for (auto &MBB : MF) {
     for (auto &MI : MBB) {
@@ -1084,15 +1095,44 @@ bool RewriteScheduleStage::initGCNSchedStage() {
             recomputeRegClassExceptRewritable(MI.getOperand(0).getReg(), VGPRRC,
                                               AGPRRC);
 
+        // If we some user of the dest of AGPR needs VGPR, we must copy.
         if (!DestConstrainExceptRC)
           CrossRCUseCopies.insert(&MI);
+
+        // If some user of the AGPR can use AGPR, note this user.
+        // TODO -- should we just be switching to this structure in general?
+        auto DefIdx = DAG.LIS->getInstructionIndex(MI);
+        for (auto &UseMI : DAG.MRI.use_nodbg_instructions(MI.getOperand(0).getReg())) {
+          if (TII->isMAI(UseMI))
+            continue;
+
+          for (unsigned I = 0; I < UseMI.getNumOperands(); I++) {
+            auto TheOp = UseMI.getOperand(I);
+            if (!TheOp.isReg() || TheOp.getReg() != MI.getOperand(0).getReg())
+              continue;
+            
+
+            SlotIndex ReachingDefIdx = findReachingDef(TheOp, DAG.LIS);
+            if (!SlotIndex::isSameInstr(ReachingDefIdx, DefIdx))
+              break;
+
+            // Collect any users of the MFMAs which can be AGPR -- if we have Src2 def which must be
+            // VGPR and tied def, then these will not be updated to the right register
+            auto UseRC = UseMI.getRegClassConstraintEffect(I, AGPRRC, DAG.TII, DAG.TRI);
+            if (!SRI->hasAGPRs(UseRC))
+              break;
+            
+            MFMAUsers[&MI].push_back(&UseMI);
+          }
+        }
 
         MachineOperand *Src2 = TII->getNamedOperand(MI, AMDGPU::OpName::src2);
         if (Src2 && Src2->isReg()) {
           const TargetRegisterClass *Src2ConstrainExceptRC =
               recomputeRegClassExceptRewritable(Src2->getReg(), VGPRRC, AGPRRC);
-          if ((!Src2ConstrainExceptRC || Src2ConstrainExceptRC != AGPRRC))
+          if ((!Src2ConstrainExceptRC || Src2ConstrainExceptRC != AGPRRC)) {
             CrossRCDefCopies.insert(Src2->getReg());
+          }
 
           DAG.MRI.setRegClass(Src2->getReg(), AGPRRC);
         }
@@ -1104,6 +1144,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
       }
     }
   }
+
 
   int64_t Cost = 0;
   MBFI.calculate(MF, MBPI, *DAG.MLI);
@@ -1175,7 +1216,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
 
   // If we find that we'll need to insert cross RC copies inside loop bodies,
   // then bail
-  bool ShouldRewrite = Cost < 0;
+  bool ShouldRewrite = true;//Cost < 0;
   if (ShouldRewrite) {
     uint64_t EntryFreq = MBFI.getEntryFreq().getFrequency();
 
@@ -1213,7 +1254,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     }
   }
 
-  ShouldRewrite = Cost < 0;
+  ShouldRewrite = true;//Cost < 0;
 
   // If we haven't found the beneficial conditions, prefer the VGPR form which
   // may result in less cross RC copies.
@@ -1254,75 +1295,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
       LastMIToRegion[&*Entry.second] = Region;
   }
 
-  // Insert cross RC copies for the users of the MFMA result
-  for (auto MI : CrossRCUseCopies) {
-    auto DefReg = MI->getOperand(0).getReg();
-    SmallVector<MachineInstr *, 4> UseInstrs;
-    for (auto &UseMI : DAG.MRI.use_nodbg_instructions(DefReg))
-      UseInstrs.push_back(&UseMI);
-
-    DenseMap<Register,
-             DenseMap<MachineBasicBlock *, MachineBasicBlock::iterator>>
-        CopyTracker;
-    DenseMap<Register,
-             DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 4>>>
-        ReplaceOps;
-    for (auto UseMI : UseInstrs) {
-      for (unsigned OpNo = 0; OpNo < UseMI->getNumOperands(); OpNo++) {
-        auto &TheOp = UseMI->getOperand(OpNo);
-        if (!TheOp.isReg() || !TheOp.isUse())
-          continue;
-        if (TheOp.getReg() != DefReg)
-          continue;
-
-        auto RequiredRC = UseMI->getRegClassConstraint(OpNo, DAG.TII, DAG.TRI);
-
-        if (!RequiredRC || SRI->hasAGPRs(RequiredRC))
-          continue;
-
-        if (!CopyTracker.contains(DefReg) ||
-            !CopyTracker[DefReg].contains(UseMI->getParent())) {
-          MachineBasicBlock::iterator InstPt = UseMI->getIterator();
-
-          CopyTracker[DefReg][UseMI->getParent()] = InstPt;
-          ReplaceOps[DefReg][UseMI->getParent()] = {&TheOp};
-        } else {
-          MachineBasicBlock::iterator CurrentInstPt =
-              CopyTracker[DefReg][UseMI->getParent()];
-          MachineBasicBlock::iterator InstPt = UseMI->getIterator();
-          auto CurrIdx = DAG.LIS->getInstructionIndex(*CurrentInstPt);
-          auto NewIdx = DAG.LIS->getInstructionIndex(*InstPt);
-          if (SlotIndex::isEarlierInstr(NewIdx, CurrIdx))
-            CopyTracker[DefReg][UseMI->getParent()] = InstPt;
-
-          ReplaceOps[DefReg][UseMI->getParent()].push_back(&TheOp);
-        }
-      }
-    }
-    if (CopyTracker.contains(DefReg)) {
-      for (auto NewCopy : CopyTracker[DefReg]) {
-        Register DestVGPR = DAG.MRI.createVirtualRegister(
-            SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(DefReg)));
-        MachineInstrBuilder VGPRCopy =
-            BuildMI(*NewCopy.first, NewCopy.second,
-                    NewCopy.second->getDebugLoc(), TII->get(TargetOpcode::COPY))
-                .addDef(DestVGPR, 0, 0)
-                .addUse(DefReg, 0, 0);
-        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
-
-        if (FirstMIToRegion.contains(&*NewCopy.second)) {
-          auto Region = FirstMIToRegion[&*NewCopy.second];
-          DAG.Regions[Region] = std::make_pair(VGPRCopy->getIterator(),
-                                               DAG.Regions[Region].second);
-          FirstMIToRegion.erase(&*NewCopy.second);
-        }
-
-        for (MachineOperand *ReplaceOp : ReplaceOps[DefReg][NewCopy.first]) {
-          ReplaceOp->setReg(DestVGPR);
-        }
-      }
-    }
-  }
+  DenseMap<Register, Register> RewriteMap;
 
   // Insert cross RC copies for the use operands of the MFMA
   for (auto Src2Reg : CrossRCDefCopies) {
@@ -1336,9 +1309,14 @@ bool RewriteScheduleStage::initGCNSchedStage() {
     DenseMap<Register,
              DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 4>>>
         ReplaceOps;
+    DenseMap<Register,
+             SmallVector<MachineOperand *, 4>>
+        RewriteOps;
     for (auto DefMI : DefInstrs) {
       if (TII->isMAI(*DefMI))
         continue;
+      
+      auto DefIdx = DAG.LIS->getInstructionIndex(*DefMI);
       for (unsigned OpNo = 0; OpNo < DefMI->getNumOperands(); OpNo++) {
         auto &TheOp = DefMI->getOperand(OpNo);
         if (!TheOp.isReg() || !TheOp.isDef())
@@ -1346,23 +1324,32 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         if (TheOp.getReg() != Src2Reg)
           continue;
 
-        // Assume that the def needs a copy.
         const TargetRegisterClass *AGPRRC =
             DAG.MRI.getRegClass(TheOp.getReg());
 
         const TargetRegisterClass *VGPRRC = SRI->getEquivalentVGPRClass(AGPRRC);
-
+          
+        // Just rewrite back to VGPR -- the defining instruction may need to use VGPR.
+        errs() << "Rewriting to vgpr\n";
         DAG.MRI.setRegClass(TheOp.getReg(), VGPRRC);
 
         if (!CopyTracker.contains(Src2Reg) ||
             !CopyTracker[Src2Reg].contains(DefMI->getParent())) {
           MachineBasicBlock::iterator InstPt = DefMI->getIterator();
-          CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
+
+          bool NeedCopy = true;
           for (auto &ReplaceOp : DAG.MRI.reg_nodbg_operands(Src2Reg)) {
             if (!TII->isMAI(*ReplaceOp.getParent()))
               continue;
+            
+            auto ReachingDefIdx = findReachingDef(ReplaceOp, DAG.LIS);
 
+            SlotIndex::isSameInstr(ReachingDefIdx, DefIdx);
             ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&ReplaceOp);
+          }
+
+          if (NeedCopy) {
+            CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
           }
         }
 
@@ -1372,15 +1359,19 @@ bool RewriteScheduleStage::initGCNSchedStage() {
           MachineBasicBlock::iterator InstPt = DefMI->getIterator();
           auto CurrIdx = DAG.LIS->getInstructionIndex(*CurrentInstPt);
           auto NewIdx = DAG.LIS->getInstructionIndex(*InstPt);
-          if (SlotIndex::isEarlierInstr(CurrIdx, NewIdx))
-            CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
+          bool NeedCopy = true;
+
 
           for (auto ReplaceOp : DAG.MRI.reg_nodbg_operands(Src2Reg)) {
             if (!TII->isMAI(*ReplaceOp.getParent()))
               continue;
 
+            auto ReachingDefIdx = findReachingDef(ReplaceOp, DAG.LIS);
             ReplaceOps[Src2Reg][DefMI->getParent()].push_back(&ReplaceOp);
           }
+
+          if (NeedCopy && SlotIndex::isEarlierInstr(CurrIdx, NewIdx))
+            CopyTracker[Src2Reg][DefMI->getParent()] = InstPt;
         }
       }
     }
@@ -1408,8 +1399,135 @@ bool RewriteScheduleStage::initGCNSchedStage() {
         }
 
         for (MachineOperand *ReplaceOp : ReplaceOps[Src2Reg][NewCopy.first]) {
+          RewriteMap[SrcAGPR] = Src2Reg;
           ReplaceOp->setReg(SrcAGPR);
         }
+      }
+    }
+
+
+
+
+    errs() << "\n\nAfter a round of cross def copies: "; DAG.MF.dump();
+  }
+
+
+
+
+
+  DAG.LIS->dump();
+  // Insert cross RC copies for the users of the MFMA result
+  for (auto MI : CrossRCUseCopies) {
+    auto DefReg = MI->getOperand(0).getReg();
+
+    errs() << "Have MFMA: "; MI->dump();
+    errs() << "DefReg: " << printReg(DefReg) << "\n";
+    Register ReplaceReg = DefReg;
+    if (RewriteMap.contains(DefReg))
+      DefReg = RewriteMap[DefReg];
+
+    errs() << "After checking map: " << printReg(DefReg) << "\n";
+    SmallVector<MachineInstr *, 4> UseInstrs;
+    for (auto &UseMI : DAG.MRI.use_nodbg_instructions(DefReg))
+      UseInstrs.push_back(&UseMI);
+
+    DenseMap<Register,
+             DenseMap<MachineBasicBlock *, MachineBasicBlock::iterator>>
+        CopyTracker;
+    DenseMap<Register,
+             DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 4>>>
+        ReplaceOps;
+    for (auto UseMI : UseInstrs) {
+      for (unsigned OpNo = 0; OpNo < UseMI->getNumOperands(); OpNo++) {
+        auto &TheOp = UseMI->getOperand(OpNo);
+        if (!TheOp.isReg() || !TheOp.isUse())
+          continue;
+        if (TheOp.getReg() != DefReg)
+          continue;
+
+        auto RequiredRC = UseMI->getRegClassConstraint(OpNo, DAG.TII, DAG.TRI);
+
+        if (!RequiredRC || SRI->hasAGPRs(RequiredRC))
+          continue;
+
+        errs() << "\n\nFor MFMA: "; MI->dump();
+        errs() << "Found bad useMI "; UseMI->dump();
+
+        // Due to tied-def, we may have multiple defs. Find the def 
+        auto &LI = DAG.LIS->getInterval(TheOp.getReg());
+        LI.dump();
+
+        auto UseSegment = LI.getSegmentContaining(DAG.LIS->getInstructionIndex(*UseMI));
+        errs() << "HasUseSegment: "; UseSegment->dump();
+        auto DefMI = DAG.LIS->getInstructionFromIndex(UseSegment->start);
+        errs() << "With DefMI: "; DefMI->dump();
+
+        if (!TII->isMAI(*DefMI))
+          break;
+
+        errs() << "Need copy\n";
+        errs() << "DefReg: " << printReg(DefReg) << "\n";
+
+
+        if (!CopyTracker.contains(ReplaceReg) ||
+            !CopyTracker[ReplaceReg].contains(UseMI->getParent())) {
+          MachineBasicBlock::iterator InstPt = UseMI->getIterator();
+
+          CopyTracker[ReplaceReg][UseMI->getParent()] = InstPt;
+          ReplaceOps[ReplaceReg][UseMI->getParent()] = {&TheOp};
+        } else {
+          MachineBasicBlock::iterator CurrentInstPt =
+              CopyTracker[ReplaceReg][UseMI->getParent()];
+          MachineBasicBlock::iterator InstPt = UseMI->getIterator();
+          auto CurrIdx = DAG.LIS->getInstructionIndex(*CurrentInstPt);
+          auto NewIdx = DAG.LIS->getInstructionIndex(*InstPt);
+          if (SlotIndex::isEarlierInstr(NewIdx, CurrIdx))
+            CopyTracker[ReplaceReg][UseMI->getParent()] = InstPt;
+
+          ReplaceOps[ReplaceReg][UseMI->getParent()].push_back(&TheOp);
+        }
+      }
+    }
+    if (CopyTracker.contains(ReplaceReg)) {
+      for (auto NewCopy : CopyTracker[ReplaceReg]) {
+        Register DestVGPR = DAG.MRI.createVirtualRegister(
+            SRI->getEquivalentVGPRClass(DAG.MRI.getRegClass(ReplaceReg)));
+        MachineInstrBuilder VGPRCopy =
+            BuildMI(*NewCopy.first, NewCopy.second,
+                    NewCopy.second->getDebugLoc(), TII->get(TargetOpcode::COPY))
+                .addDef(DestVGPR, 0, 0)
+                .addUse(ReplaceReg, 0, 0);
+        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+
+        if (FirstMIToRegion.contains(&*NewCopy.second)) {
+          auto Region = FirstMIToRegion[&*NewCopy.second];
+          DAG.Regions[Region] = std::make_pair(VGPRCopy->getIterator(),
+                                               DAG.Regions[Region].second);
+          FirstMIToRegion.erase(&*NewCopy.second);
+        }
+
+        for (MachineOperand *ReplaceOp : ReplaceOps[ReplaceReg][NewCopy.first]) {
+          ReplaceOp->setReg(DestVGPR);
+        }
+      }
+    }
+  }
+
+  for (auto Entry : MFMAUsers) {
+    MachineInstr *MFMA = Entry.first;
+    auto MappedReg = RewriteMap[MFMA->getOperand(0).getReg()];
+
+    bool Contains = RewriteMap.contains(MFMA->getOperand(0).getReg());
+    errs() << "Have MFMA: "; MFMA->dump();
+    errs() << "Have entry in map? " << Contains << "\n";
+    if (Contains) errs() << printReg(MappedReg) << "\n";
+    for (auto UserMI : Entry.second) {
+      for (auto &Op : UserMI->operands()) {
+        if (!Op.isReg())
+          continue;
+        if (Op.getReg() != MappedReg)
+          continue;
+        Op.setReg(MFMA->getOperand(0).getReg());
       }
     }
   }
