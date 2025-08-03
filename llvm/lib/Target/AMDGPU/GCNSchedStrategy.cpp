@@ -1049,10 +1049,70 @@ bool GCNSchedStage::initGCNSchedStage() {
 }
 
 
-static SlotIndex findReachingDef(MachineOperand &UseMO, LiveIntervals *LIS) {
+SlotIndex RewriteScheduleStage::findReachingDef(MachineOperand &UseMO, LiveIntervals *LIS, SmallVectorImpl<SlotIndex> &DefIdxs) {
   assert(UseMO.isReg());
   MachineInstr *UseMI = UseMO.getParent();
-  auto VNInfo = LIS->getInterval(UseMO.getReg()).getVNInfoAt(LIS->getInstructionIndex(*UseMI));
+  LiveInterval &UseLI = LIS->getInterval(UseMO.getReg());
+  auto VNInfo = UseLI.getVNInfoAt(LIS->getInstructionIndex(*UseMI));
+
+
+  SlotIndex DefMBBStart = LIS->getMBBStartIdx(LIS->getMBBFromIndex(VNInfo->def));
+
+  if (DefMBBStart != VNInfo->def) {
+    DefIdxs.push_back(VNInfo->def);
+    return VNInfo->def;
+  }
+
+
+
+
+
+  SmallPtrSet<MachineBasicBlock *, 8> Visited;
+  SmallVector<MachineBasicBlock *, 8> Worklist;
+
+  Visited.insert(UseMI->getParent());
+  for (auto PredMBB : UseMI->getParent()->predecessors()) {
+    Worklist.push_back(PredMBB);
+    // Allow visiting already inserted MBB for the case where the use is in a loop.
+    Visited.insert(PredMBB);
+  }
+  
+  unsigned Count = 0;
+  while (!Worklist.empty()) {
+    MachineBasicBlock *CurrMBB = Worklist.pop_back_val();
+
+    
+
+    SlotIndex CurrMBBEnd = LIS->getMBBEndIdx(CurrMBB);
+
+    errs() << "Check MBB end at: "; CurrMBBEnd.dump();
+
+    auto VNInfo = UseLI.getVNInfoAt(CurrMBBEnd.getPrevSlot());
+
+    errs() << "Has Def: "; VNInfo->def.dump();
+    MachineBasicBlock *DefMBB = LIS->getMBBFromIndex(VNInfo->def);
+    SlotIndex DefMBBStart = LIS->getMBBStartIdx(DefMBB);
+    if (DefMBBStart != VNInfo->def) {
+      DefIdxs.push_back(VNInfo->def);
+      ++Count;
+
+      continue;
+    }
+
+    for (auto PredMBB : DefMBB->predecessors()) {
+      if (Visited.insert(PredMBB).second)
+        Worklist.push_back(PredMBB);
+    }
+
+  }
+
+  /*errs() << "Count: " << Count << "\n";
+  errs() << "Found " << DefIdxs.size() << " reaching defs for: " << printReg(UseMO.getReg()) << "\n";
+  DefIdxs.resize(Count);
+  for (unsigned I = 0; I < Count; ++I) {
+    errs() << "Checking " << I << "\n";
+    errs() << "RD: "; DefIdxs[I].dump();
+  }*/
   return VNInfo->def;
 
 }
@@ -1082,6 +1142,352 @@ bool RewriteScheduleStage::initGCNSchedStage() {
 
   DenseMap<MachineInstr *, SmallVector<MachineInstr *, 4>> MFMAUsers;
 
+
+  SmallVector<MachineInstr *, 32> MFMAInstrs;
+  DenseMap<MachineInstr *, DenseMap<MachineOperand *, Register>> MFMAVGPRUsers;
+  DenseMap<MachineInstr *, DenseMap<MachineOperand *, SmallVector<std::pair<MachineInstr *, MachineOperand*>, 4>>> MFMAAGPRUsers;
+
+  errs() << "Before the rewrite: \n";
+  DAG.LIS->dump();
+
+  for (auto &MBB : MF) {
+    for (auto &MI : MBB) {
+      if (TII->isMAI(MI)) {
+        int ReplacementOp = AMDGPU::getMFMASrcCVDstAGPROp(MI.getOpcode());
+        if (ReplacementOp == -1)
+          continue;
+
+        // Save the MFMA for analyzing.
+        MFMAInstrs.push_back(&MI);
+        const TargetRegisterClass *DstRC =
+            DAG.MRI.getRegClass(MI.getOperand(0).getReg());
+
+        const TargetRegisterClass *AGPRRC = SRI->getEquivalentAGPRClass(DstRC);
+        
+        
+        Register DstReg = MI.getOperand(0).getReg();
+        SlotIndex DefIdx = DAG.LIS->getInstructionIndex(MI);
+        errs() << "MFMA at defidx: " << DefIdx << "\n";
+
+        // Collect reachable users by reg class. We must do this before rewriting the src2, because
+        // the src2 may be tied to the def and we may need to replace the src2 / dst with a 
+        // cross RC copy (in the case that the def of src2 must be VGPR).
+        for (auto &UseMO : DAG.MRI.use_nodbg_operands(DstReg)) {
+          MachineInstr *UseMI = UseMO.getParent();
+          // Do not collect user MFMAs, as we do not need to insert copies between them
+          if (TII->isMAI(*UseMI))
+            continue;
+          
+          errs() << "Checking UseMI: "; UseMI->dump();
+          SmallVector<SlotIndex, 4> ReachingDefs;
+          findReachingDef(UseMO, DAG.LIS, ReachingDefs);
+
+          for (auto RD : ReachingDefs) {
+            errs() << "Have Reaching def: "; RD.dump();
+          }
+
+          bool IsDefinedByMFMA = std::find_if(ReachingDefs.begin(), ReachingDefs.end(), [DefIdx](SlotIndex ReachingDefIdx) {
+            if (!ReachingDefIdx.isValid())
+              return false;
+            return SlotIndex::isSameInstr(DefIdx, ReachingDefIdx);
+          }) != ReachingDefs.end();
+        
+          if (!IsDefinedByMFMA) {
+            errs() << "Not defined by MFMA\n";
+            continue;
+          }
+          
+          errs() << "is defined by mfma\n";
+          auto UseRC = UseMI->isKill() || UseMO.getParent()->getRegClassConstraintEffect(UseMI->getOperandNo(&UseMO), AGPRRC, DAG.TII, DAG.TRI);          
+          if (UseRC) {
+            errs() << "AGPR users\n";
+            for (SlotIndex ReachingDef : ReachingDefs) {
+              MachineInstr *ReachingDefMI = DAG.LIS->getInstructionFromIndex(ReachingDef);
+              for (auto &DefOp : ReachingDefMI->operands()) {
+                if (!DefOp.isDef())
+                  continue;
+                
+                if (!DefOp.getReg() == DstReg)
+                  continue;
+                
+                const TargetRegisterClass *CurrRC = DAG.MRI.getRegClass(DefOp.getReg());
+                const TargetRegisterClass *AGPRRC = SRI->getEquivalentAGPRClass(CurrRC);
+
+                const TargetRegisterClass *DefRC = ReachingDefMI->getRegClassConstraintEffect(ReachingDefMI->getOperandNo(&DefOp), AGPRRC, DAG.TII, DAG.TRI);
+
+                // The reaching def is AGPR def, just add it to the list.
+                if (DefRC && SRI->hasAGPRs(DefRC)) {
+                  MFMAAGPRUsers[&MI][&UseMO].push_back({ReachingDefMI, &DefOp});
+                  break;
+                }
+
+                // We need a new reg so that it does not get rewritten to AGPR.
+                const TargetRegisterClass *VGPRRC = SRI->getEquivalentVGPRClass(CurrRC);
+                Register DestVGPR = DAG.MRI.createVirtualRegister(VGPRRC);
+                DefOp.setReg(DestVGPR);
+
+                // We need a copy so the VGPR def does not get rewritten to AGPR.
+                MachineInstrBuilder VGPRCopy =
+                BuildMIAfter(*ReachingDefMI->getParent(), ReachingDefMI->getIterator(),
+                      ReachingDefMI->getDebugLoc(), TII->get(TargetOpcode::COPY))
+                    .addDef(DstReg, 0, 0)
+                    .addUse(DefOp.getReg(), 0, 0);
+                DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+
+                // Need to replace the use-def chain for any connected component to this subreg.
+
+                MFMAAGPRUsers[&MI][&UseMO].push_back({VGPRCopy, &VGPRCopy->getOperand(0)});
+                break;
+              }
+            }
+
+          }
+          else {
+            errs() << "VGPRUser\n";
+            Register OriginalReg = Register();
+            // If we have multiple reaching defs of this VGPR user, keep track of the original VGPR register. 
+            // We will copy the MFMA AGPR dest back to this register.
+            errs() << "Is VGPR user\n";
+            errs() << "Reaching defs size: " << ReachingDefs.size() << "\n";
+            if (ReachingDefs.size() > 1) {
+              errs() << "Has multiple reaching defs\n";
+              OriginalReg = DstReg;
+            }
+            MFMAVGPRUsers[&MI][&UseMO] = OriginalReg;
+          }
+        }
+      }
+    }
+  }
+
+  errs() << "Fin collecting the MFMAs\n";
+  DAG.LIS->dump();
+
+  for (MachineInstr *TheMI : MFMAInstrs) {
+
+      MachineInstr &MI = *TheMI;
+
+        const TargetRegisterClass *DstRC =
+            DAG.MRI.getRegClass(MI.getOperand(0).getReg());
+
+        const TargetRegisterClass *AGPRRC = SRI->getEquivalentAGPRClass(DstRC);
+
+        MachineOperand *Src2 = TII->getNamedOperand(MI, AMDGPU::OpName::src2);
+        if (!Src2->isReg())
+          continue;
+
+        int ReplacementOp = AMDGPU::getMFMASrcCVDstAGPROp(MI.getOpcode());
+        assert(ReplacementOp != 1);
+        auto OriginalOpc = MI.getOpcode();
+        MI.setDesc(TII->get(ReplacementOp));
+        
+        Register Src2Reg = Src2->getReg();
+        const TargetRegisterClass *Src2RC =
+            DAG.MRI.getRegClass(Src2Reg);
+        
+        // We may have already handled this reg by an earlier bulk rewrite.
+        if (SRI->hasAGPRs(Src2RC))
+          continue;
+
+        errs() << "Need to rewrite: "; TheMI->dump();        
+        // Set src2 to AGPR.
+        AGPRRC = SRI->getEquivalentAGPRClass(Src2RC);
+        DAG.MRI.setRegClass(Src2Reg, AGPRRC);
+
+        // Handle the case where the def needs to be VGPR. Rewrite to VGPR and insert copies.
+        // Check if the def itself needs to be VGPR
+        SmallVector<SlotIndex, 4> ReachingDefs;
+        SlotIndex ReachingDefIdx = findReachingDef(*Src2, DAG.LIS, ReachingDefs);
+        errs() << "Have reaching def: " << ReachingDefIdx << "\n";
+        MachineInstr *ReachingDef = DAG.LIS->getInstructionFromIndex(ReachingDefIdx);
+        errs() << "Is Instr: "; ReachingDef->dump(); 
+        
+        // Ignore Src2 operands coming from a MFMA definition.
+        if (TII->isMAI(*ReachingDef))
+          continue;
+
+        unsigned I = 0;
+        for (; I < ReachingDef->getNumOperands(); I++) {
+          MachineOperand &MO = ReachingDef->getOperand(I);
+          if (!MO.isDef())
+            continue;
+          if (!MO.isReg())
+            continue;
+          
+          if (MO.getReg() == Src2Reg)
+            break;
+        }
+        auto DefRC = DAG.LIS->getInstructionFromIndex(ReachingDefIdx)->getRegClassConstraintEffect(I, AGPRRC, DAG.TII, DAG.TRI);
+        bool NeedRewrite = !DefRC || !SRI->hasAGPRs(DefRC);
+
+        // Check if the users of the def need to be VGPR.
+        if (!NeedRewrite) {
+          for (auto &UseMO : DAG.MRI.use_nodbg_operands(Src2Reg)) {
+            MachineInstr *UseMI = UseMO.getParent();
+            if (TII->isMAI(*UseMI))
+              continue;
+            
+            SmallVector<SlotIndex, 4> ReachingDefs;
+            SlotIndex UseReachingDefIdx = findReachingDef(UseMO, DAG.LIS, ReachingDefs);
+
+            if (!SlotIndex::isSameInstr(UseReachingDefIdx, ReachingDefIdx))
+              continue;
+            
+            unsigned I = UseMI->getOperandNo(&UseMO);
+            auto UseRC = UseMI->getRegClassConstraintEffect(I, AGPRRC, DAG.TII, DAG.TRI);
+            NeedRewrite = !UseRC || !SRI->hasAGPRs(UseRC);
+
+            if (NeedRewrite)
+              break;
+          }
+        }
+
+        // Our job is done for this MFMA src2.
+        if (!NeedRewrite)
+          continue;
+
+        // We need to convert back to VGPR, and insert a copy for the MFMA.
+        // Due to the possibility of tied-def, due a bulk rewrite here, and early 
+        // exit in future iterations of
+        DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 16>> MFMARewriteOps;
+
+
+        auto VGPRRC = SRI->getEquivalentVGPRClass(Src2RC);
+        DAG.MRI.setRegClass(Src2Reg, VGPRRC);
+
+        Register SrcAGPR = DAG.MRI.createVirtualRegister(
+            SRI->getEquivalentAGPRClass(Src2RC));
+        MachineInstrBuilder AGPRCopy =
+            BuildMIAfter(*ReachingDef->getParent(), ReachingDef->getIterator(),
+                         ReachingDef->getDebugLoc(),
+                         TII->get(TargetOpcode::COPY))
+                .addDef(SrcAGPR, 0, 0)
+                .addUse(Src2Reg, 0, 0);
+        
+        DAG.LIS->InsertMachineInstrInMaps(*AGPRCopy);
+        SmallVector<MachineOperand *, 16> MFMAReplaceOps;
+        for (MachineOperand &MO : DAG.MRI.reg_nodbg_operands(Src2Reg)) {
+          if (!TII->isMAI(*MO.getParent()))
+            continue;
+          
+          MFMAReplaceOps.push_back(&MO);
+        }
+
+        for (auto ReplaceOp : MFMAReplaceOps) {
+          ReplaceOp->setReg(SrcAGPR);
+        }
+  }
+
+  errs() << "Did the Src2 rewrite\n";
+  DAG.LIS->dump();
+
+
+
+
+  for (MachineInstr *MI : MFMAInstrs) {
+    Register DstReg = MI->getOperand(0).getReg();
+    const TargetRegisterClass *DstRC =
+            DAG.MRI.getRegClass(DstReg);
+    
+    const TargetRegisterClass *AGPRRC = SRI->getEquivalentAGPRClass(DstRC);
+    if (!SRI->hasAGPRs(DstRC)) {
+      DAG.MRI.setRegClass(DstReg, AGPRRC);
+    }
+
+
+    DenseMap<MachineBasicBlock *, MachineBasicBlock::iterator> InsertMap;
+    DenseMap<MachineBasicBlock *, SmallVector<MachineOperand *, 8>> ReplaceMap;
+    Register MultiDefSrcReg = Register();
+
+    // Insert copies for each user that requires VGPR
+    errs() << "Insert copies for uses\n";
+    const TargetRegisterClass *VGPRRC = SRI->getEquivalentVGPRClass(DstRC);
+    for (auto &MFMAUserEntry : MFMAVGPRUsers[MI]) {
+      MachineOperand *VGPRUse = MFMAUserEntry.first;
+      MachineInstr *VGPRUser = VGPRUse->getParent();
+      MachineBasicBlock *UserBlock = VGPRUser->getParent();
+      Register OriginalReg = MFMAUserEntry.second;
+      if (OriginalReg) {
+        MultiDefSrcReg = OriginalReg;
+        continue;
+      }
+      
+      // If we don't need to map back to the original regsiter, then copy to a new virtreg 
+      // and replace the register operand.
+      ReplaceMap[UserBlock].push_back(VGPRUse);
+      if (!InsertMap.contains(UserBlock)) {
+        InsertMap[UserBlock] = VGPRUser->getIterator();
+        continue;
+      }
+
+      // Insert the copy at the earliest point in this block.
+      SlotIndex CurrIdx = DAG.LIS->getInstructionIndex(*InsertMap[UserBlock]);
+      SlotIndex UserIdx = DAG.LIS->getInstructionIndex(*VGPRUser);
+
+      if (SlotIndex::isEarlierInstr(UserIdx, CurrIdx))
+        InsertMap[UserBlock] = VGPRUser->getIterator();
+
+    }
+
+    for (auto &InsertEntry : InsertMap) {
+        Register DestVGPR = DAG.MRI.createVirtualRegister(VGPRRC);
+        MachineInstrBuilder VGPRCopy =
+            BuildMI(*InsertEntry.first, InsertEntry.second,
+                    InsertEntry.second->getDebugLoc(), TII->get(TargetOpcode::COPY))
+                .addDef(DestVGPR, 0, 0)
+                .addUse(DstReg, 0, 0);
+        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+
+        for (MachineOperand *ReplaceOp : ReplaceMap[InsertEntry.first])
+          ReplaceOp->setReg(DestVGPR);
+    }
+
+
+    if (MultiDefSrcReg) {
+        MachineInstrBuilder VGPRCopy =
+            BuildMIAfter(*MI->getParent(), MI->getIterator(),
+                    MI->getDebugLoc(), TII->get(TargetOpcode::COPY))
+                .addDef(MultiDefSrcReg, 0, 0)
+                .addUse(DstReg, 0, 0);
+        DAG.LIS->InsertMachineInstrInMaps(*VGPRCopy);
+    }
+
+    // We may have introduced a new register for copying src2 definition to AGPR. If our MFMA src2 is tied-def, then
+    // the users of the MFMA defs are out of sync. Be sure we connect these users to the right defs.
+    for (auto AGPRUseEntry : MFMAAGPRUsers[MI]) {
+      MachineOperand *AGPRUse = AGPRUseEntry.first;
+      if (AGPRUse->getReg() != DstReg)
+        AGPRUse->setReg(DstReg);
+      
+      for (std::pair<MachineInstr *, MachineOperand *> &ReachingDef : AGPRUseEntry.second) {
+        MachineInstr *ReachingDefMI = ReachingDef.first;
+        // The MFMA that we've already handled.
+        if (ReachingDefMI == MI)
+         continue;
+        
+        MachineOperand *ReachingDefMO = ReachingDef.second;
+
+        ReachingDefMO->setReg(DstReg);
+        
+
+
+      }
+    }
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+/*
   for (auto &MBB : MF) {
     for (auto &MI : MBB) {
       if (TII->isMAI(MI)) {
@@ -1531,6 +1937,7 @@ bool RewriteScheduleStage::initGCNSchedStage() {
       }
     }
   }
+  */
 
 
   DAG.LIS->reanalyze(DAG.MF);
