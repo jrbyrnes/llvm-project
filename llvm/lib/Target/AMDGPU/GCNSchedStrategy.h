@@ -420,7 +420,9 @@ private:
 
   bool isRewriteCandidate(MachineInstr *MI) const;
 
-  SlotIndex findReachingDef(MachineOperand &UseMO, LiveIntervals *LIS, SmallVectorImpl<SlotIndex> &DefIdxs);
+  SlotIndex findReachingDefs(MachineOperand &UseMO, LiveIntervals *LIS, SmallVectorImpl<SlotIndex> &DefIdxs);
+
+  void findReachingUses(MachineInstr *DefMI, LiveIntervals *LIS, SmallVectorImpl<MachineOperand *> &ReachingUses);
 
   MachineBranchProbabilityInfo MBPI;
   MachineBlockFrequencyInfo MBFI;
