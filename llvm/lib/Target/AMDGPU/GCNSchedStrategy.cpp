@@ -1773,7 +1773,7 @@ ExcessRP::ExcessRP(const GCNSubtarget &ST, const GCNRegPressure &RP,
   // Check overall VGPR usage against the limit; any excess above addressable
   // register limits has already been accounted for.
   const unsigned Granule = AMDGPU::IsaInfo::getArchVGPRAllocGranule();
-  unsigned NumVGPRs = GCNRegPressure::getUnifiedVGPRNum(NumArchVGPRs, NumAGPRs);
+  unsigned NumVGPRs = GCNRegPressure::getUnifiedVGPRNum(NumArchVGPRs, NumAGPRs, RP.getAVGPRNum());
   if (NumVGPRs > MaxVGPRs) {
     VGPRs = NumVGPRs - MaxVGPRs;
     ArchVGPRsToAlignment = NumArchVGPRs - alignDown(NumArchVGPRs, Granule);

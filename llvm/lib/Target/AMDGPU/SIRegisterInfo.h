@@ -257,6 +257,8 @@ public:
     return hasVGPRs(RC) && hasSGPRs(RC) && !hasAGPRs(RC);
   }
 
+  bool isBadReg(Register Reg, MachineRegisterInfo &MRI, const MachineFunction &MF) const override;
+
   /// \returns true if this class contains VGPR registers.
   static bool hasVGPRs(const TargetRegisterClass *RC) {
     return RC->TSFlags & SIRCFlags::HasVGPR;

@@ -292,7 +292,7 @@ private:
                                        EvictionCost &,
                                        const SmallVirtRegSet &) const;
   bool shouldEvict(const LiveInterval &A, bool, const LiveInterval &B,
-                   bool) const;
+                   bool Thing, bool AIsBad = false, bool BIsBad = false) const;
 };
 } // namespace llvm
 

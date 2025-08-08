@@ -204,7 +204,8 @@ RegAllocEvictionAdvisor::RegAllocEvictionAdvisor(const MachineFunction &MF,
 /// @param BreaksHint True when B is already assigned to its preferred register.
 bool DefaultEvictionAdvisor::shouldEvict(const LiveInterval &A, bool IsHint,
                                          const LiveInterval &B,
-                                         bool BreaksHint) const {
+                                         bool BreaksHint,
+                                         bool AIsBad, bool BIsBad) const {
   bool CanSplit = RA.getExtraInfo().getStage(B) < RS_Spill;
 
   // Be fairly aggressive about following hints as long as the evictee can be
@@ -258,6 +259,7 @@ bool DefaultEvictionAdvisor::canEvictInterferenceBasedOnCost(
   unsigned Cascade = RA.getExtraInfo().getCascadeOrCurrentNext(VirtReg.reg());
 
   EvictionCost Cost;
+  bool IsBad = TRI->isBadReg(VirtReg.reg(), *MRI, MF);
   for (MCRegUnit Unit : TRI->regunits(PhysReg)) {
     LiveIntervalUnion::Query &Q = Matrix->query(VirtReg, Unit);
     // If there is 10 or more interferences, chances are one is heavier.
@@ -325,6 +327,7 @@ bool DefaultEvictionAdvisor::canEvictInterferenceBasedOnCost(
       }
     }
   }
+
   MaxCost = Cost;
   return true;
 }
@@ -332,6 +335,7 @@ bool DefaultEvictionAdvisor::canEvictInterferenceBasedOnCost(
 MCRegister DefaultEvictionAdvisor::tryFindEvictionCandidate(
     const LiveInterval &VirtReg, const AllocationOrder &Order,
     uint8_t CostPerUseLimit, const SmallVirtRegSet &FixedRegisters) const {
+
   // Keep track of the cheapest interference seen so far.
   EvictionCost BestCost;
   BestCost.setMax();

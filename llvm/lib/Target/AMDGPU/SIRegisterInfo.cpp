@@ -794,6 +794,33 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   return Reserved;
 }
 
+bool SIRegisterInfo::isBadReg(Register Reg, MachineRegisterInfo &MRI, const MachineFunction &MF) const {
+
+  const TargetInstrInfo *TII = ST.getInstrInfo();
+  const TargetRegisterClass *OldRC = MRI.getRegClass(Reg);
+
+  if (isVectorSuperClass(OldRC))
+    return true;
+  
+  const TargetRegisterClass *NewRC = getLargestLegalSuperClass(OldRC, MF);
+
+  // Stop early if there is no room to grow.
+  if (NewRC == OldRC)
+    return false;
+
+  // Accumulate constraints from all uses.
+  for (MachineOperand &MO : MRI.reg_nodbg_operands(Reg)) {
+    // Apply the effect of the given operand to NewRC.
+    MachineInstr *MI = MO.getParent();
+    unsigned OpNo = &MO - &MI->getOperand(0);
+    NewRC = MI->getRegClassConstraintEffect(OpNo, NewRC, TII, this);
+    if (!NewRC || NewRC == OldRC)
+      return false;
+  }
+
+  return isVectorSuperClass(NewRC);
+}
+
 bool SIRegisterInfo::isAsmClobberable(const MachineFunction &MF,
                                       MCRegister PhysReg) const {
   return !MF.getRegInfo().isReserved(PhysReg);

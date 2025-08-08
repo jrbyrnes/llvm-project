@@ -281,6 +281,10 @@ public:
     return getNumRegs();
   }
 
+  virtual bool isBadReg(Register Reg, MachineRegisterInfo &MRI, const MachineFunction &MF) const {
+    return false;
+  }
+
   // Register numbers can represent physical registers, virtual registers, and
   // sometimes stack slots. The unsigned values are divided into these ranges:
   //
