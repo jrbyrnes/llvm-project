@@ -1074,7 +1074,6 @@ RewriteScheduleStage::findReachingDefs(MachineOperand &UseMO,
     Visited.insert(PredMBB);
   }
 
-  unsigned Count = 0;
   while (!Worklist.empty()) {
     MachineBasicBlock *CurrMBB = Worklist.pop_back_val();
 
@@ -1088,7 +1087,6 @@ RewriteScheduleStage::findReachingDefs(MachineOperand &UseMO,
     // reaching def of this path.
     if (DefMBBStart != VNInfo->def) {
       DefIdxs.push_back(VNInfo->def);
-      ++Count;
 
       continue;
     }
@@ -1768,7 +1766,7 @@ void GCNSchedStage::revertScheduling() {
 
 bool RewriteScheduleStage::isRewriteCandidate(MachineInstr *MI) const {
 
-  if (!static_cast<const SIInstrInfo *>(DAG.TII)->isMAI(*MI))
+  if (!isRewriteMai(MI))
     return false;
   return AMDGPU::getMFMASrcCVDstAGPROp(MI->getOpcode()) != -1;
 }
@@ -1797,7 +1795,7 @@ bool RewriteScheduleStage::initHeuristics(
           // insert a copy.
           for (SlotIndex RDIdx : Src2ReachingDefs) {
             MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIdx);
-            if (!TII->isMAI(*RD))
+            if (!isRewriteMai(RD))
               CopyForDef.insert(RD);
           }
         }
@@ -1808,7 +1806,7 @@ bool RewriteScheduleStage::initHeuristics(
         findReachingUses(&MI, DAG.LIS, DstReachingUses);
 
         for (MachineOperand *RUOp : DstReachingUses) {
-          if (TII->isMAI(*RUOp->getParent()))
+          if (isRewriteMai(RUOp->getParent()))
             continue;
 
           // For any user of the result of the MFMA which is not an MFMA, we
@@ -1821,7 +1819,7 @@ bool RewriteScheduleStage::initHeuristics(
 
           for (auto RDIndex : DstUsesReachingDefs) {
             MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIndex);
-            if (TII->isMAI(*RD))
+            if (isRewriteMai(RD))
               continue;
 
             // For any definition of the user of the MFMA which is not an MFMA,
@@ -1856,8 +1854,6 @@ int64_t RewriteScheduleStage::getRewriteCost(
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
     if (!RegionsWithExcessArchVGPR[Region])
       continue;
-
-    unsigned MaxCombinedVGPRs = ST.getMaxNumVGPRs(MF);
 
     auto PressureBefore = DAG.Pressure[Region];
     unsigned SpillCostBefore = PressureBefore.getVGPRSpills(ST, MF);
@@ -1944,7 +1940,7 @@ int64_t RewriteScheduleStage::getRewriteCost(
   for (auto RI : RewriteCands) {
     MachineInstr *MI = RI.first;
 
-    assert(TII->isMAI(*MI));
+    assert(isRewriteMai(MI));
     const TargetRegisterClass *AGPRRC =
         DAG.MRI.getRegClass(MI->getOperand(0).getReg());
     const TargetRegisterClass *VGPRRC = SRI->getEquivalentVGPRClass(AGPRRC);
@@ -1960,6 +1956,37 @@ int64_t RewriteScheduleStage::getRewriteCost(
   }
 
   return Cost;
+}
+
+bool RewriteScheduleStage::isRewriteMai(MachineInstr *MI, MachineInstr *OrigMI) const {
+  if (!TII->isMAI(*MI))
+    return false;
+  
+  if (OrigMI && MI == OrigMI)
+    return true;
+
+  if (!OrigMI) {
+    OrigMI = MI;
+  }
+  
+  auto DstReg = MI->getOperand(0).getReg();
+
+  for (auto &UseMI : DAG.MRI.use_nodbg_instructions(DstReg)) {
+    if (UseMI.getParent() != MI->getParent())
+      continue;
+    
+    if (!TII->isMAI(UseMI))
+      return false;
+    
+
+    auto X = isRewriteMai(&UseMI, OrigMI);
+
+
+    if (!X)
+      return false;
+  }
+
+  return true;
 }
 
 bool RewriteScheduleStage::rewrite(
@@ -2054,7 +2081,7 @@ bool RewriteScheduleStage::rewrite(
 
       for (auto RDIndex : Src2ReachingDefs) {
         MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIndex);
-        if (TII->isMAI(*RD))
+        if (isRewriteMai(RD))
           continue;
 
         // If there is a non mai reaching def, then we need a copy.
@@ -2123,7 +2150,7 @@ bool RewriteScheduleStage::rewrite(
     findReachingUses(&MI, DAG.LIS, DstReachingUses);
 
     for (MachineOperand *RUOp : DstReachingUses) {
-      if (TII->isMAI(*RUOp->getParent()))
+      if (isRewriteMai(RUOp->getParent()))
         continue;
 
       // If there is a non mai reaching use, then we need a copy.
@@ -2133,7 +2160,7 @@ bool RewriteScheduleStage::rewrite(
 
       for (auto RDIndex : DstUsesReachingDefs) {
         MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIndex);
-        if (TII->isMAI(*RD))
+        if (isRewriteMai(RD))
           continue;
 
         // If there is a non mai reaching def of this reaching use, then we will
