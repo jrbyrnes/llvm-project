@@ -23,6 +23,12 @@
 #define DEBUG_TYPE "si-fold-operands"
 using namespace llvm;
 
+static cl::opt<bool>
+    InflateToAVGPR("amdgpu-avgpr-inflation", cl::Hidden, cl::init(false),
+                   cl::desc("Enable register inflation to avgpr register class "
+                            "(which can be assigned to either AGPR or VGPR)."));
+
+
 namespace {
 
 /// Track a value we may want to fold into downstream users, applying
@@ -2753,6 +2759,18 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   TII = ST->getInstrInfo();
   TRI = &TII->getRegisterInfo();
   MFI = MF.getInfo<SIMachineFunctionInfo>();
+
+  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+
+    if (InflateToAVGPR && ST->hasGFX90AInsts() &&
+        (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
+      MRI->recomputeRegClass(Reg);
+      continue;
+    }
+  }
+
 
   // omod is ignored by hardware if IEEE bit is enabled. omod also does not
   // correctly handle signed zeros.
