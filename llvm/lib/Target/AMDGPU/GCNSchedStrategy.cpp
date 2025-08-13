@@ -1765,8 +1765,8 @@ void GCNSchedStage::revertScheduling() {
 }
 
 bool RewriteScheduleStage::isRewriteCandidate(MachineInstr *MI) const {
-
-  if (!isRewriteMai(MI))
+  SmallPtrSet<MachineInstr *, 8> Encountered;
+  if (!isRewriteMai(MI, Encountered))
     return false;
   return AMDGPU::getMFMASrcCVDstAGPROp(MI->getOpcode()) != -1;
 }
@@ -1795,7 +1795,8 @@ bool RewriteScheduleStage::initHeuristics(
           // insert a copy.
           for (SlotIndex RDIdx : Src2ReachingDefs) {
             MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIdx);
-            if (!isRewriteMai(RD))
+            SmallPtrSet<MachineInstr *, 8> Encountered;
+            if (!isRewriteMai(RD, Encountered))
               CopyForDef.insert(RD);
           }
         }
@@ -1806,7 +1807,8 @@ bool RewriteScheduleStage::initHeuristics(
         findReachingUses(&MI, DAG.LIS, DstReachingUses);
 
         for (MachineOperand *RUOp : DstReachingUses) {
-          if (isRewriteMai(RUOp->getParent()))
+          SmallPtrSet<MachineInstr *, 8> Encountered;
+          if (isRewriteMai(RUOp->getParent(), Encountered))
             continue;
 
           // For any user of the result of the MFMA which is not an MFMA, we
@@ -1819,7 +1821,8 @@ bool RewriteScheduleStage::initHeuristics(
 
           for (auto RDIndex : DstUsesReachingDefs) {
             MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIndex);
-            if (isRewriteMai(RD))
+            SmallPtrSet<MachineInstr *, 8> Encountered;
+            if (isRewriteMai(RD, Encountered))
               continue;
 
             // For any definition of the user of the MFMA which is not an MFMA,
@@ -1939,8 +1942,8 @@ int64_t RewriteScheduleStage::getRewriteCost(
   // defs of the register may require VGPR.
   for (auto RI : RewriteCands) {
     MachineInstr *MI = RI.first;
-
-    assert(isRewriteMai(MI));
+    SmallPtrSet<MachineInstr *, 8> Encountered;
+    assert(isRewriteMai(MI, Encountered));
     const TargetRegisterClass *AGPRRC =
         DAG.MRI.getRegClass(MI->getOperand(0).getReg());
     const TargetRegisterClass *VGPRRC = SRI->getEquivalentVGPRClass(AGPRRC);
@@ -1958,7 +1961,7 @@ int64_t RewriteScheduleStage::getRewriteCost(
   return Cost;
 }
 
-bool RewriteScheduleStage::isRewriteMai(MachineInstr *MI, MachineInstr *OrigMI) const {
+bool RewriteScheduleStage::isRewriteMai(MachineInstr *MI, SmallPtrSetImpl<MachineInstr *> &Encountered, MachineInstr *OrigMI) const {
   if (!TII->isMAI(*MI))
     return false;
   
@@ -1969,6 +1972,9 @@ bool RewriteScheduleStage::isRewriteMai(MachineInstr *MI, MachineInstr *OrigMI) 
     OrigMI = MI;
   }
   
+  if (!Encountered.insert(MI).second)
+    return true;
+
   auto DstReg = MI->getOperand(0).getReg();
 
   for (auto &UseMI : DAG.MRI.use_nodbg_instructions(DstReg)) {
@@ -1979,7 +1985,7 @@ bool RewriteScheduleStage::isRewriteMai(MachineInstr *MI, MachineInstr *OrigMI) 
       return false;
     
 
-    auto X = isRewriteMai(&UseMI, OrigMI);
+    auto X = isRewriteMai(&UseMI, Encountered, OrigMI);
 
 
     if (!X)
@@ -2081,7 +2087,8 @@ bool RewriteScheduleStage::rewrite(
 
       for (auto RDIndex : Src2ReachingDefs) {
         MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIndex);
-        if (isRewriteMai(RD))
+        SmallPtrSet<MachineInstr *, 8> Encountered;
+        if (isRewriteMai(RD, Encountered))
           continue;
 
         // If there is a non mai reaching def, then we need a copy.
@@ -2150,7 +2157,8 @@ bool RewriteScheduleStage::rewrite(
     findReachingUses(&MI, DAG.LIS, DstReachingUses);
 
     for (MachineOperand *RUOp : DstReachingUses) {
-      if (isRewriteMai(RUOp->getParent()))
+      SmallPtrSet<MachineInstr *, 8> Encountered;
+      if (isRewriteMai(RUOp->getParent(), Encountered))
         continue;
 
       // If there is a non mai reaching use, then we need a copy.
@@ -2160,7 +2168,8 @@ bool RewriteScheduleStage::rewrite(
 
       for (auto RDIndex : DstUsesReachingDefs) {
         MachineInstr *RD = DAG.LIS->getInstructionFromIndex(RDIndex);
-        if (isRewriteMai(RD))
+        SmallPtrSet<MachineInstr *, 8> Encountered;
+        if (isRewriteMai(RD, Encountered))
           continue;
 
         // If there is a non mai reaching def of this reaching use, then we will
