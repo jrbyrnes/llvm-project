@@ -2010,12 +2010,7 @@ void PreRARematStage::rematerialize() {
       }
     }
     DAG.Pressure[I] = RP;
-<<<<<<< HEAD
-    AchievedOcc =
-        std::min(AchievedOcc, RP.getOccupancy(ST, DynamicVGPRBlockSize));
-=======
     AchievedOcc = std::min(AchievedOcc, RP.getOccupancy(DAG.MF));
->>>>>>> 929584982b8f ([AMDGPU] More accurately account for AVGPR pressure)
   }
   REMAT_DEBUG(dbgs() << "Achieved occupancy " << AchievedOcc << "\n");
 }

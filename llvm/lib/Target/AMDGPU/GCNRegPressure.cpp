@@ -403,7 +403,7 @@ GCNRPTarget::GCNRPTarget(unsigned NumSGPRs, unsigned NumVGPRs,
 
 GCNRPTarget::GCNRPTarget(unsigned Occupancy, const MachineFunction &MF,
                          const GCNRegPressure &RP)
-    : GCNRPTarget(RP, MF) {
+    : GCNRPTarget(MF, RP) {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   unsigned DynamicVGPRBlockSize =
       MF.getInfo<SIMachineFunctionInfo>()->getDynamicVGPRBlockSize();
@@ -444,7 +444,7 @@ bool GCNRPTarget::isSaveBeneficial(Register Reg) const {
 }
 
 bool GCNRPTarget::satisfied() const {
-  if (RP.getSGPRNum() > MaxSGPRs || RP.getVGPRNum(false) > MaxVGPRs)
+  if (RP.getSGPRNum() > MaxSGPRs || RP.getVGPRNum(false, 256) > MaxVGPRs)
     return false;
   if (RP.getVGPRNum(false, AddressableNumArchVGPRs) > MaxVGPRs &&
       (!CombineVGPRSavings || !satisifiesVGPRBanksTarget()))

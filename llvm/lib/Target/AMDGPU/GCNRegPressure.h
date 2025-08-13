@@ -328,6 +328,10 @@ private:
 
   void setRegLimits(unsigned MaxSGPRs, unsigned MaxVGPRs,
                     const MachineFunction &MF);
+
+    GCNRPTarget(const GCNRegPressure &RP, const MachineFunction &MF)
+      : MF(MF), UnifiedRF(MF.getSubtarget<GCNSubtarget>().hasGFX90AInsts()),
+        RP(RP) {}
 };
 
 ///////////////////////////////////////////////////////////////////////////////
