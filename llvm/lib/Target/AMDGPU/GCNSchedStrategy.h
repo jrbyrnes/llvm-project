@@ -416,7 +416,7 @@ private:
   const SIInstrInfo *TII;
   const SIRegisterInfo *SRI;
 
-  bool isRewriteMai(MachineInstr *MI, MachineInstr *OrigMI = nullptr) const;
+  bool isRewriteMai(MachineInstr *MI, SmallPtrSetImpl<MachineInstr *> &Encountered, MachineInstr *OrigMI = nullptr) const;
 
   /// Do a speculative rewrite and collect copy locations. The speculative
   /// rewrite allows us to calulcate the RP of the code after the rewrite, and
