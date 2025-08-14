@@ -911,6 +911,7 @@ bool llvm::hoistRegion(DomTreeNode *N, AAResults *AA, LoopInfo *LI,
       // TODO: It may be safe to hoist if we are hoisting to a conditional block
       // and we have accurately duplicated the control flow from the loop header
       // to that block.
+      //errs() << "Try hoist: "; I.dump();
       if (CurLoop->hasLoopInvariantOperands(&I) &&
           canSinkOrHoistInst(I, AA, DT, CurLoop, MSSAU, true, Flags, ORE) &&
           isSafeToExecuteUnconditionally(
@@ -918,6 +919,7 @@ bool llvm::hoistRegion(DomTreeNode *N, AAResults *AA, LoopInfo *LI,
               Preheader->getTerminator(), AC, AllowSpeculation)) {
         hoist(I, DT, CurLoop, CFH.getOrCreateHoistedBlock(BB), SafetyInfo,
               MSSAU, SE, ORE);
+        //errs() << "hoisted\n";
         HoistedInstructions.push_back(&I);
         Changed = true;
         continue;
@@ -1162,9 +1164,15 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
                               bool TargetExecutesOncePerLoop,
                               SinkAndHoistLICMFlags &Flags,
                               OptimizationRemarkEmitter *ORE) {
+
+  //errs() << "isHoistableAndSinkableInst\n";
   // If we don't understand the instruction, bail early.
-  if (!isHoistableAndSinkableInst(I))
+  if (!isHoistableAndSinkableInst(I)) {
+    //errs() << "No\n";
     return false;
+  }
+
+  //errs() << "Yes\n";
 
   MemorySSA *MSSA = MSSAU.getMemorySSA();
   // Loads have extra constraints we have to verify before we can hoist them.
@@ -1204,6 +1212,13 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
 
     return !Invalidated;
   } else if (CallInst *CI = dyn_cast<CallInst>(&I)) {
+    //errs() << "is call\n";
+    if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
+      auto IId = II->getIntrinsicID();
+      if (IId == 3035)
+        return true;
+      //errs() << "Intrinsic with ID: " << IId << "\n";
+    }
     // Don't sink or hoist dbg info; it's legal, but not useful.
     if (isa<DbgInfoIntrinsic>(I))
       return false;
@@ -1790,7 +1805,11 @@ static bool isSafeToExecuteUnconditionally(
 
   bool GuaranteedToExecute =
       SafetyInfo->isGuaranteedToExecute(Inst, DT, CurLoop);
-
+  if (auto II = dyn_cast<IntrinsicInst>(&Inst)) {
+    auto IId = II->getIntrinsicID();
+    if (IId == 3035 || IId == 2913 || IId == 2912)
+      return true;
+  }
   if (!GuaranteedToExecute) {
     auto *LI = dyn_cast<LoadInst>(&Inst);
     if (LI && CurLoop->isLoopInvariant(LI->getPointerOperand()))
