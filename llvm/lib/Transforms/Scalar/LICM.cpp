@@ -119,6 +119,11 @@ static cl::opt<bool>
     DisablePromotion("disable-licm-promotion", cl::Hidden, cl::init(false),
                      cl::desc("Disable memory promotion in LICM pass"));
 
+static cl::opt<bool>
+    HoistReadfirstLane("hoist-readfirstlane", cl::Hidden, cl::init(false),
+                     cl::desc("Whether to allow readfirstlane hoisting"));
+
+
 static cl::opt<bool> ControlFlowHoisting(
     "licm-control-flow-hoisting", cl::Hidden, cl::init(false),
     cl::desc("Enable control flow (and PHI) hoisting in LICM"));
@@ -1215,7 +1220,7 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
     //errs() << "is call\n";
     if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
       auto IId = II->getIntrinsicID();
-      if (IId == 3035)
+      if (HoistReadfirstLane && IId == 3035)
         return true;
       //errs() << "Intrinsic with ID: " << IId << "\n";
     }
@@ -1807,7 +1812,7 @@ static bool isSafeToExecuteUnconditionally(
       SafetyInfo->isGuaranteedToExecute(Inst, DT, CurLoop);
   if (auto II = dyn_cast<IntrinsicInst>(&Inst)) {
     auto IId = II->getIntrinsicID();
-    if (IId == 3035 || IId == 2913 || IId == 2912)
+    if (HoistReadfirstLane && (IId == 3035 || IId == 2913 || IId == 2912))
       return true;
   }
   if (!GuaranteedToExecute) {
