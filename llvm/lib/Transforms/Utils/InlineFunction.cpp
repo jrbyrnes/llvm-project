@@ -1115,7 +1115,7 @@ static void AddAliasScopeMetadata(CallBase &CB, ValueToValueMapTy &VMap,
                                   ClonedCodeInfo &InlinedFunctionInfo) {
   if (!EnableNoAliasConversion)
     return;
-
+	LLVM_DEBUG(dbgs() << __func__ << "\n");
   const Function *CalledFunc = CB.getCalledFunction();
   SmallVector<const Argument *, 4> NoAliasArgs;
 
@@ -1243,10 +1243,13 @@ static void AddAliasScopeMetadata(CallBase &CB, ValueToValueMapTy &VMap,
 
       for (const Value *V : PtrArgs) {
         SmallVector<const Value *, 4> Objects;
+        LLVM_DEBUG(dbgs() << "Getting objects for V: " << *V << "\n");
         getUnderlyingObjects(V, Objects, /* LI = */ nullptr);
-
-        for (const Value *O : Objects)
-          ObjSet.insert(O);
+        LLVM_DEBUG(
+        for (const auto *O : Objects) {
+          dbgs() << "  Obj: " << *O << "\n";
+        });
+        ObjSet.insert_range(Objects);
       }
 
       // Figure out if we're derived from anything that is not a noalias
@@ -2597,6 +2600,33 @@ llvm::InlineResult llvm::InlineFunction(CallBase &CB, InlineFunctionInfo &IFI,
       }
     }
   }
+
+  return InlineResult::success();
+}
+
+/// This function inlines the called function into the basic block of the
+/// caller. This returns false if it is not possible to inline this call.
+/// The program is still in a well defined state if this occurs though.
+///
+/// Note that this only does one level of inlining.  For example, if the
+/// instruction 'call B' is inlined, and 'B' calls 'C', then the call to 'C' now
+/// exists in the instruction stream.  Similarly this will inline a recursive
+/// function by one level.
+void llvm::InlineFunctionImpl(CallBase &CB, InlineFunctionInfo &IFI,
+                              bool MergeAttributes, AAResults *CalleeAAR,
+                              bool InsertLifetime, Function *ForwardVarArgsTo,
+                              OptimizationRemarkEmitter *ORE) {
+  BasicBlock *OrigBB = CB.getParent();
+  Function *Caller = OrigBB->getParent();
+  Function *CalledFunc = CB.getCalledFunction();
+  assert(CalledFunc && !CalledFunc->isDeclaration() &&
+         "CanInlineCallSite should have verified direct call to definition");
+
+  LLVM_DEBUG(
+	dbgs() << "Caller: " << Caller->getName() << "\n";
+  dbgs() << "<-- Callee: " << CalledFunc->getName() << "\n";
+  dbgs() << "Callee body:\n" << *CalledFunc << "\n";
+  );
 
   // Determine if we are dealing with a call in an EHPad which does not unwind
   // to caller.
