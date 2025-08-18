@@ -444,6 +444,7 @@ INITIALIZE_PASS_END(RegisterCoalescerLegacy, "register-coalescer",
   return true;
 }
 
+
 /// Return true if this block should be vacated by the coalescer to eliminate
 /// branches. The important cases to handle in the coalescer are critical edges
 /// split during phi elimination which contain only copies. Simple blocks that
@@ -458,6 +459,32 @@ static bool isSplitEdge(const MachineBasicBlock *MBB) {
       return false;
   }
   return true;
+}
+
+static const TargetRegisterClass *
+getLargestLegalRegClass(Register Reg, const MachineFunction *MF,
+                        const MachineRegisterInfo &MRI) {
+
+  const TargetInstrInfo *TII = MF->getSubtarget().getInstrInfo();
+  const TargetRegisterClass *OldRC = MRI.getRegClass(Reg);
+                            return OldRC;
+  const TargetRegisterInfo *TRI = MRI.getTargetRegisterInfo();
+  const TargetRegisterClass *NewRC = TRI->getLargestLegalSuperClass(OldRC, *MF);
+  // Stop early if there is no room to grow.
+  if (NewRC == OldRC)
+    return OldRC;
+
+  // Accumulate constraints from all uses.
+  for (MachineOperand &MO : MRI.reg_nodbg_operands(Reg)) {
+    // Apply the effect of the given operand to NewRC.
+    MachineInstr *MI = MO.getParent();
+    unsigned OpNo = &MO - &MI->getOperand(0);
+    NewRC = MI->getRegClassConstraintEffect(OpNo, NewRC, TII, TRI);
+    if (!NewRC || NewRC == OldRC) {
+      return OldRC;
+    }
+  }
+  return NewRC;
 }
 
 bool CoalescerPair::setRegisters(const MachineInstr *MI) {
@@ -481,7 +508,9 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
     Flipped = true;
   }
 
-  const MachineRegisterInfo &MRI = MI->getMF()->getRegInfo();
+  const MachineFunction *MF = MI->getMF();
+
+  const MachineRegisterInfo &MRI = MF->getRegInfo();
   const TargetRegisterClass *SrcRC = MRI.getRegClass(Src);
 
   if (Dst.isPhysical()) {
@@ -513,19 +542,23 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
 
       NewRC = TRI.getCommonSuperRegClass(SrcRC, SrcSub, DstRC, DstSub, SrcIdx,
                                          DstIdx);
-      if (!NewRC)
-        return false;
+      if (!NewRC) {
+          return false;
+      }
     } else if (DstSub) {
       // SrcReg will be merged with a sub-register of DstReg.
       SrcIdx = DstSub;
       NewRC = TRI.getMatchingSuperRegClass(DstRC, SrcRC, DstSub);
+
     } else if (SrcSub) {
       // DstReg will be merged with a sub-register of SrcReg.
       DstIdx = SrcSub;
       NewRC = TRI.getMatchingSuperRegClass(SrcRC, DstRC, SrcSub);
+
     } else {
       // This is a straight copy without sub-registers.
       NewRC = TRI.getCommonSubClass(DstRC, SrcRC);
+
     }
 
     // The combined constraint may be impossible to satisfy.
@@ -4406,6 +4439,8 @@ RegisterCoalescerPass::run(MachineFunction &MF,
   PA.preserve<MachineDominatorTreeAnalysis>();
   return PA;
 }
+
+
 
 bool RegisterCoalescerLegacy::runOnMachineFunction(MachineFunction &MF) {
   auto *LIS = &getAnalysis<LiveIntervalsWrapperPass>().getLIS();

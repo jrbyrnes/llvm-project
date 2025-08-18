@@ -970,13 +970,18 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
+    //errs() << "\n\nAdvance to stage: " << S.getCurrentStage() << "\n";
     auto Stage = createSchedStage(S.getCurrentStage());
     if (!Stage->initGCNSchedStage())
       continue;
 
+    unsigned R = 0;
     for (auto Region : Regions) {
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+
+      //errs() << "\nRegion: " << R++ << "\n";
+      //errs() << printMBBReference(*RegionBegin->getParent()) << "\n";
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
@@ -995,6 +1000,24 @@ void GCNScheduleDAGMILive::runSchedStages() {
         reinterpret_cast<GCNRPTracker *>(UpwardTracker)
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
+
+        //errs() << "LveIn: " << print(DownwardTracker->getPressure(), &ST, 0, &MF);
+
+        GCNRegPressure LiveThru;
+        for (auto LR : *RegionLiveIns) {
+        bool IsLiveThru = true;
+        for (auto &Use : MRI.use_nodbg_instructions(LR.first)) {
+          if (Use.getParent() == RegionBegin->getParent()) {
+            IsLiveThru = false;
+            break;
+          }
+        }
+        if (IsLiveThru) {
+          LiveThru.inc(LR.first, LaneBitmask(0), LR.second, MRI);
+        }
+        }
+
+        //errs() << "LiveThru: " << print(LiveThru, &ST, 0, &MF);
       }
       ScheduleDAGMILive::schedule();
       Stage->finalizeGCNRegion();
@@ -1355,6 +1378,7 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
+  //errs() << "PressureAfter: " << print(PressureAfter, &ST, 0, &MF);
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: "
                     << print(PressureAfter, &ST, 0, &MF));
@@ -1795,7 +1819,7 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   }
 
-  return true;
+  return false;
 }
 
 
@@ -1830,16 +1854,27 @@ bool PreRARematStage::canRemat(Register Reg) {
 
 
 void PreRARematStage::collectRematSeeds(bool Aggressive) {
+  unsigned MaxDepth = 0;
+  unsigned MaxDepthRegion = 0;
   if (!Aggressive) {
     for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
       auto TheBlock = DAG.Regions[I].first->getParent();
       auto Cycle = CI.getCycle(TheBlock);
-      if (Cycle) {
-        TheBlock = const_cast<MachineBasicBlock *>(*Cycle->block_begin());
-        if (!TargetBlock)
-          TargetBlock = TheBlock;
+      if (!Cycle)
+        continue;
+      auto CurrDepth = Cycle->getDepth();
+
+      if (CurrDepth > MaxDepth) {
+        MaxDepth = CurrDepth;
+        MaxDepthRegion = I;
       }
+
     }
+  }
+
+  if (!TargetBlock && MaxDepth) {
+    auto TheRegion = DAG.Regions[MaxDepthRegion];
+    TargetBlock = TheRegion.first->getParent();
   }
 
   RelevantRegions.resize(DAG.Regions.size());
