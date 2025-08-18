@@ -1702,9 +1702,6 @@ bool PreRARematStage::eliminateDeadMI() {
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
 
-  if (!RewriteMFMAToAGPR)
-    return false;
-
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
     auto Entry = DAG.Regions[Region];
     if (Entry.first == Entry.second)
@@ -2196,9 +2193,6 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
 
-  if (!RewriteMFMAToAGPR)
-    return false;
-
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
     auto Entry = DAG.Regions[Region];
     if (Entry.first == Entry.second)
@@ -2681,6 +2675,9 @@ bool RewriteScheduleStage::rewrite(
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
 
   if (!RewriteMFMAToAGPR)
+    return false;
+
+  if (MFI.getMaxWavesPerEU() > 1)
     return false;
 
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
