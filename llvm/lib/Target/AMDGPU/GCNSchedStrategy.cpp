@@ -1125,6 +1125,12 @@ bool RewriteScheduleStage::initGCNSchedStage() {
 
   RegionsWithExcessArchVGPR.resize(DAG.Regions.size());
   RegionsWithExcessArchVGPR.reset();
+
+  auto MinWaves = MFI.getMinWavesPerEU();
+
+  if (MinWaves >= 2)
+    return false;
+
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
     auto PressureBefore = DAG.Pressure[Region];
     if (PressureBefore.getArchVGPRNum(ArchVGPRThreshold) >
