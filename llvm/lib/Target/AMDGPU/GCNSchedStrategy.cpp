@@ -1146,6 +1146,13 @@ bool RewriteScheduleStage::initGCNSchedStage() {
   unsigned ArchVGPRThreshold =
       ST.getMaxNumVectorRegs(DAG.MF.getFunction()).first;
 
+
+  if (!RewriteMFMAToAGPR)
+    return false;
+
+  if (MFI.getMaxWavesPerEU() > 1)
+    return false;
+
   RegionsWithExcessArchVGPR.resize(DAG.Regions.size());
   RegionsWithExcessArchVGPR.reset();
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
@@ -2673,12 +2680,6 @@ bool RewriteScheduleStage::rewrite(
     std::vector<std::pair<MachineInstr *, unsigned>> &RewriteCands) {
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
-
-  if (!RewriteMFMAToAGPR)
-    return false;
-
-  if (MFI.getMaxWavesPerEU() > 1)
-    return false;
 
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
     auto Entry = DAG.Regions[Region];
