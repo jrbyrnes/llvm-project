@@ -906,6 +906,38 @@ bool SIFixSGPRCopies::lowerSpecialCase(MachineInstr &MI,
     return true;
   }
 
+
+
+  if (DstReg.isVirtual()) {
+      auto DstRC = MRI->getRegClass(DstReg);
+    if (TRI->isSGPRClass(DstRC) && SrcReg.isVirtual()) {
+    SmallPtrSet<MachineInstr *, 8> DefInstrs;
+
+    for (auto &DefInst : MRI->def_instructions(SrcReg)) {
+      DefInstrs.insert(&DefInst);
+    }
+
+    if (DefInstrs.size() == 1) {
+      auto TheDef = *DefInstrs.begin();
+      if (TheDef->isCopy()) {
+        auto UltSrc = TheDef->getOperand(1);
+        if (UltSrc.isReg() && UltSrc.getReg().isVirtual()) {
+          auto Payload = UltSrc.getReg();
+          auto TheRC = MRI->getRegClass(Payload);
+          if (TRI->isSGPRClass(TheRC)) {
+            for (auto &UseOp : MRI->use_operands(SrcReg)) {
+              //if (UseOp.isDef())
+              //  continue;
+              UseOp.setReg(Payload);
+            }
+            return true;
+          }
+        }
+      }
+    }
+  }
+  }
+
   unsigned SMovOp;
   int64_t Imm;
   // If we are just copying an immediate, we can replace the copy with
