@@ -24,7 +24,7 @@
 using namespace llvm;
 
 static cl::opt<bool>
-    InflateToAVGPR("amdgpu-avgpr-inflation", cl::Hidden, cl::init(true),
+    InflateToAVGPR("amdgpu-avgpr-inflation", cl::Hidden, cl::init(false),
                    cl::desc("Enable register inflation to avgpr register class "
                             "(which can be assigned to either AGPR or VGPR)."));
 
