@@ -53,9 +53,10 @@ static cl::opt<unsigned>
                  cl::init(2), cl::Hidden);
 
 static cl::opt<bool>
-    CoerceIllegal("amdgpu-coerce-illegal-types",
-                  cl::desc("Whether or not to coerce illegal types"),
-                  cl::ReallyHidden, cl::init(false));
+    DisablePackedFP32("amdgpu-disable-packed-fp32",
+                      cl::desc("Whether or not to used packed FP 32 ops on "
+                               "architectures which support it"),
+                      cl::ReallyHidden, cl::init(false));
 
 GCNSubtarget::~GCNSubtarget() = default;
 
@@ -680,4 +681,8 @@ void GCNUserSGPRUsageInfo::allocKernargPreloadSGPRs(unsigned NumSGPRs) {
 
 unsigned GCNUserSGPRUsageInfo::getNumFreeUserSGPRs() {
   return AMDGPU::getMaxNumUserSGPRs(ST) - NumUsedUserSGPRs;
+}
+
+bool GCNSubtarget::enablesPackedFP32Ops() const {
+  return HasPackedFP32Ops && !DisablePackedFP32;
 }
