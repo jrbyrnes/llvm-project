@@ -2363,6 +2363,66 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     Changed |= tryOptimizeAGPRPhis(*MBB);
   }
 
+  for (MachineBasicBlock &MBB : MF) {
+    SmallVector<MachineInstr *, 4> Hoistable;
+    bool FoundBuf = false;
+    MachineInstr *InsertPos = nullptr;
+    bool FoundSGB = false;
+    bool FoundHoist = false;
+    for (auto &MI : reverse(MBB)) {
+      if (FoundHoist) {
+      if (FoundSGB) {
+        if (MI.getOpcode() == AMDGPU::SCHED_GROUP_BARRIER) {
+          continue;
+        }
+
+        FoundSGB = false;
+        if (!InsertPos) {
+          InsertPos = &MI;
+          break;
+        }
+      }
+
+      if (!InsertPos) {
+        if (MI.getOpcode() == AMDGPU::SCHED_GROUP_BARRIER) {
+          FoundSGB = true;
+          continue;
+        }
+      }
+      }
+
+      if (!FoundBuf) {
+        FoundBuf = TII->isFLAT(MI) || TII->isMUBUF(MI);
+        continue;
+      }
+
+      if (TII->isFLAT(MI) || TII->isMUBUF(MI))
+        continue;
+
+
+      if (MI.getOpcode() == AMDGPU::SCHED_BARRIER && MI.getOperand(0).getImm() == 0) {
+        FoundBuf = false;
+        continue;
+      }
+
+      if (TII->isVALU(MI)) {
+        Hoistable.push_back(&MI);
+        FoundHoist = true;
+      }
+
+    }
+
+    if (!InsertPos)
+      continue;
+
+
+    for (auto &MI : reverse(Hoistable)) {
+      TII->reMaterialize(*InsertPos->getParent(), InsertPos, MI->getOperand(0).getReg(),
+                       MI->getOperand(0).getSubReg(), *MI, *TRI);
+      MI->eraseFromParent();
+    }
+  }
+
   return Changed;
 }
 
