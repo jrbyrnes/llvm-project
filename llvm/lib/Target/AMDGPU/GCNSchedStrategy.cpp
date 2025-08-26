@@ -984,6 +984,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
     if (!Stage->initGCNSchedStage())
       continue;
 
+    unsigned R = 0;
     for (auto Region : Regions) {
       RegionBegin = Region.first;
       RegionEnd = Region.second;
