@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -734,6 +735,8 @@ public:
   /// virtual register, for example after removing instructions or splitting
   /// the live range.
   LLVM_ABI bool recomputeRegClass(Register Reg);
+
+  bool recomputeRegClassRecur(Register Reg, std::set<Register> &Visited, const TargetRegisterClass *OrigRC);
 
   /// createVirtualRegister - Create and return a new virtual register in the
   /// function with the specified register class.

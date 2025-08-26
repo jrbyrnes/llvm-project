@@ -2748,18 +2748,6 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   TRI = &TII->getRegisterInfo();
   MFI = MF.getInfo<SIMachineFunctionInfo>();
 
-  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
-    Register Reg = Register::index2VirtReg(I);
-    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
-
-    if (InflateToAVGPR && ST->hasGFX90AInsts() &&
-        (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
-      MRI->recomputeRegClass(Reg);
-      continue;
-    }
-  }
-
-
   // omod is ignored by hardware if IEEE bit is enabled. omod also does not
   // correctly handle signed zeros.
   //
@@ -2810,6 +2798,36 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     }
 
     Changed |= tryOptimizeAGPRPhis(*MBB);
+  }
+
+  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+
+    if (InflateToAVGPR && ST->hasGFX90AInsts() &&
+        (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
+      bool Inflated = MRI->recomputeRegClass(Reg);
+      if (!Inflated)
+        continue;
+
+      for (auto &UseOp : MRI->use_nodbg_operands(Reg)) {
+        if (TII->isMAI(*UseOp.getParent())) {
+          auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
+          //MRI->setRegClass(Reg, AGPRRC);
+          break;
+        }
+      }
+      continue;
+    }
+  }
+
+  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+    if (TRI->isVectorSuperClass(RC)) {
+      auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
+      MRI->setRegClass(Reg, AGPRRC);
+    }
   }
 
   return Changed;
