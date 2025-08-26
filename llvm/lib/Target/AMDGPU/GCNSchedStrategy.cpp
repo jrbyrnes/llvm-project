@@ -3469,6 +3469,13 @@ static bool hasIGLPInstrs(ScheduleDAGInstrs *DAG) {
   });
 }
 
+static bool hasMFMAInstrs(ScheduleDAGInstrs *DAG) {
+  const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
+  return any_of(*DAG, [SII](MachineBasicBlock::iterator MI) {
+    return SII->isMAI(MI->getOpcode());
+  });
+}
+
 GCNPostSchedStrategy::GCNPostSchedStrategy(const MachineSchedContext *C)
     : PostGenericScheduler(C) {}
 
@@ -3901,8 +3908,9 @@ GCNPostScheduleDAGMILive::GCNPostScheduleDAGMILive(
 
 void GCNPostScheduleDAGMILive::schedule() {
   HasIGLPInstrs = hasIGLPInstrs(this);
+  HasMFMAInstrs = hasMFMAInstrs(this);
   S = static_cast<GCNPostSchedStrategy *>(SchedImpl.get());
-  S->CustomResTracking = HasIGLPInstrs;
+  S->CustomResTracking = HasMFMAInstrs;
 
   if (HasIGLPInstrs) {
     SavedMutations.clear();

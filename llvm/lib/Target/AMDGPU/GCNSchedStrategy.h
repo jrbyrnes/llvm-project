@@ -1009,6 +1009,7 @@ private:
   std::vector<std::unique_ptr<ScheduleDAGMutation>> SavedMutations;
 
   bool HasIGLPInstrs = false;
+  bool HasMFMAInstrs = false;
 
 public:
   GCNPostSchedStrategy *S = nullptr;
