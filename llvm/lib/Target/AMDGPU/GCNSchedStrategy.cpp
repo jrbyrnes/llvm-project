@@ -1397,13 +1397,18 @@ void GCNScheduleDAGMILive::runSchedStages() {
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
+    //errs() << "\n\nSchedStage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
 
     unsigned R = 0;
     for (auto Region : Regions) {
+      //errs() << "\nRegion: " << R++ << "\n";
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+      if (RegionBegin == RegionEnd) 
+        continue;
+     // errs() << printMBBReference(*RegionBegin->getParent()) << "\n";
 
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
@@ -1810,6 +1815,7 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
+  //errs() << "PA: " << print(PressureAfter, &ST, 0, &MF) << "\n";
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: "
                     << print(PressureAfter, &ST, 0, &MF));
@@ -2162,8 +2168,18 @@ bool PreRARematStage::eliminateDeadMI() {
 
             if (LastMIToRegion.contains(&MI)) {
               unsigned UpdateRegion = LastMIToRegion[&MI];
-              DAG.Regions[UpdateRegion].second = &*std::prev(MI.getIterator());
+              auto UpdateMI = &*std::prev(MI.getIterator());
+              DAG.Regions[UpdateRegion].second = UpdateMI;
               LastMIToRegion.erase(&MI);
+              LastMIToRegion[UpdateMI] = UpdateRegion;
+            }
+
+            if (FirstMIToRegion.contains(&MI)) {
+              unsigned UpdateRegion = FirstMIToRegion[&MI];
+              auto UpdateMI = &*std::next(MI.getIterator());
+              DAG.Regions[UpdateRegion].first = UpdateMI;
+              FirstMIToRegion.erase(&MI);
+              FirstMIToRegion[UpdateMI] = UpdateRegion;
             }
 
         //DAG.updateRegionBoundaries(DAG.Regions[RegionIdx], MI, nullptr);
@@ -2187,6 +2203,7 @@ bool PreRARematStage::eliminateDeadMI() {
 }
 
 bool PreRARematStage::initGCNSchedStage() {
+    //errs() << "iniit PreRaRemat\n";
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
 
@@ -2222,16 +2239,22 @@ bool PreRARematStage::initGCNSchedStage() {
     return false;
   }
 
+
   bool NeedAggressive = false;
-  for (unsigned I = 0; I < OptRegionRPReduction.size(); I++) {
+ // errs() << "Shall do aggressive?\n";
+  for (unsigned I = 0; I < RegionRPReduction.size(); I++) {
     assert(LiveThruBias >= LiveInBias);
-    if (OptRegionRPReduction[I] > (int)(LiveThruBias - LiveInBias)) {
+    if (RegionRPReduction[I] > (int)(LiveThruBias - LiveInBias)) {
+     // errs() << "Region: " << I << "\n";
       NeedAggressive = true;
       break;
     }
   }
 
-  if (NeedAggressive && false) {
+  if (NeedAggressive) {
+
+
+   // errs() << "Neds aggressive\n";
     DAG.BBLiveInMap = DAG.getRegionLiveInMap();
     DAG.RegionLiveOuts.buildLiveRegMap();
 
@@ -2242,11 +2265,11 @@ bool PreRARematStage::initGCNSchedStage() {
     }
 
     if (GoToNext && !createRematPlan(true)) {
-      GoToNext = false;
+      GoToNext = true;
     }
 
     if (GoToNext && !implementRematPlan(TII, true)) {
-      GoToNext = false;
+      GoToNext = true;
     }
   }
 
@@ -2323,20 +2346,24 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
       }
 
     }
-  }
 
   if (!TargetBlock && MaxDepth) {
     auto TheRegion = DAG.Regions[MaxDepthRegion];
     TargetBlock = TheRegion.first->getParent();
+  }
   }
 
   RelevantRegions.resize(DAG.Regions.size());
   RelevantRegions.reset();
   SmallPtrSet<MachineBasicBlock *, 4> Visited;
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
-    if (DAG.Regions[I].first->getParent() != TargetBlock)
+    if (!Aggressive && DAG.Regions[I].first->getParent() != TargetBlock)
       continue;
 
+    if (Aggressive && I != 13)
+      continue;
+
+    //errs() << "Relevant region: " << I << "\n";
     RelevantRegions[I] = true;
 
     auto TheBlock = DAG.Regions[I].first->getParent();
@@ -2360,6 +2387,9 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
         LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, DAG.MRI);
         MachineInstr *Def = DAG.MRI.getOneDef(TheReg)->getParent();
         for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
+          if (TheUseInst.getParent() == TargetBlock)
+            continue;
+          //errs() << "Potential remat seed: "; TheUseInst.dump();
           if (!Aggressive &&
               !isReachableFrom(TargetBlock, TheUseInst.getParent()))
             continue;
@@ -2380,10 +2410,9 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
   DenseMap<unsigned, unsigned> OptRegions;
   OptRegionRPReduction.clear();
   DenseMap<unsigned, GCNRPTracker::LiveRegSet> OptRegionLiveIns;
+  DenseMap<unsigned, GCNRPTracker::LiveRegSet> RegionLiveIns;
+  DenseMap<unsigned int, int> ReductionRegions;
   for (unsigned I = 0, E = DAG.Regions.size(); I != E; ++I) {
-    if (!RelevantRegions[I])
-      continue;
-
     GCNRegPressure &RP = DAG.Pressure[I];
     if (ST.getOccupancyWithNumSGPRs(RP.getSGPRNum()) == DAG.MinOccupancy) {
       return false;
@@ -2394,6 +2423,13 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
     int NumToIncreaseOcc = NumVGPRs + Bias - ST.getAddressableNumArchVGPRs();
     ST.getNumVGPRsToIncreaseOccupancy(NumVGPRs);
 
+    RegionRPReduction[I] = NumToIncreaseOcc;
+    RegionLiveIns[I] = DAG.LiveIns[I];
+
+    if (!RelevantRegions[I])
+      continue;
+
+    //errs() << "Opt reduction needed: " << NumToIncreaseOcc << "\n";
     OptRegionRPReduction[I] = NumToIncreaseOcc;
     OptRegionLiveIns[I] = DAG.LiveIns[I];
   }
@@ -2416,9 +2452,16 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
 
     for (const RematCandidate &R : reverse(RCCache.Sorted)) {
       bool ShouldRemat = false;
+     //errs() << "Checking remat cand: "; R.Def->dump();
       for (unsigned HighRPRegion : R.HighRPRegions) {
-        if (OptRegionRPReduction[HighRPRegion] > 0) {
+        if (Aggressive && HighRPRegion != 13)
+          continue;
+       // errs() << "HighRPRegion: " << HighRPRegion << "\n";
+        ReductionRegions = Aggressive ? RegionRPReduction : OptRegionRPReduction;
+        DenseMap<unsigned, GCNRPTracker::LiveRegSet> LiveInRegions = Aggressive ? RegionLiveIns : OptRegionLiveIns;
+        if (ReductionRegions[HighRPRegion] > 0) {
           ShouldRemat = true;
+        //  errs() << "Shoiuld remat\n";
           break;
         }
       }
@@ -2449,11 +2492,13 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
       if (Stage < 1) {
         bool ShouldDefer = false;
         for (unsigned HighRPRegion : R.HighRPRegions) {
-          if (OptRegionRPReduction[HighRPRegion] <= 0)
+          if (Aggressive && HighRPRegion != 13)
+            continue;
+          if (ReductionRegions[HighRPRegion] <= 0)
             continue;
 
           GCNRPTracker::LiveRegSet &TheLiveRegs =
-              OptRegionLiveIns[HighRPRegion];
+              RegionLiveIns[HighRPRegion];
           int RPImpact = 0;
           if (TheLiveRegs.contains(DefReg)) {
             auto OldLiveIns = TheLiveRegs[DefReg];
@@ -2497,11 +2542,13 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
         }
 
         if (ShouldDefer) {
+          //errs() << "Deferring\n";
           NewCandidates.insert(R);
           continue;
         }
       }
 
+      //errs() << "Added to remat plan\n";
       FoundAny = true;
       RematPlan.updateOrInsert(*const_cast<RematCandidate *>(&R), DAG.LIS);
       GCNRPTracker::LiveRegSet NewLiveIns;
@@ -2555,7 +2602,7 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
 
       for (unsigned HighRPRegion : R.HighRPRegions) {
         int RPImpact = 0;
-        GCNRPTracker::LiveRegSet &TheLiveRegs = OptRegionLiveIns[HighRPRegion];
+        GCNRPTracker::LiveRegSet &TheLiveRegs = RegionLiveIns[HighRPRegion];
 
         unsigned DefReg = R.Def->getOperand(0).getReg();
         if (TheLiveRegs.contains(DefReg)) {
@@ -2589,11 +2636,11 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
           TheLiveRegs[UseReg] |= UseMask;
         }
 
-        OptRegionRPReduction[HighRPRegion] -= RPImpact;
+        ReductionRegions[HighRPRegion] -= RPImpact;
       }
 
       BadRP = false;
-      for (auto HighRPRegion : OptRegionRPReduction) {
+      for (auto HighRPRegion : ReductionRegions) {
         if (HighRPRegion.second > 0) {
           BadRP = true;
           break;
@@ -2608,7 +2655,7 @@ bool PreRARematStage::createRematPlan(bool Aggressive) {
   }
 
   BadRP = false;
-  for (auto ReductionNeeded : OptRegionRPReduction) {
+  for (auto ReductionNeeded : ReductionRegions) {
     if (ReductionNeeded.second > 0) {
       BadRP = true;
       break;
@@ -2627,6 +2674,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
 
+  //errs() << "Implement remat plan\n";
   for (unsigned Region = 0; Region < DAG.Regions.size(); Region++) {
     auto Entry = DAG.Regions[Region];
     if (Entry.first == Entry.second)
@@ -2704,6 +2752,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
       }
     }
 
+    //errs() << "remat into: " << printMBBReference(*InsertPos->getParent()) << "\n";
     TII->reMaterialize(*InsertPos->getParent(), InsertPos, Reg,
                        Def->getOperand(0).getSubReg(), *Def, *DAG.TRI);
     MachineInstr *NewMI = &*std::prev(InsertPos);
@@ -2716,6 +2765,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
         unsigned UpdateRegion = FirstMIToRegion[&*InsertPos];
         DAG.Regions[UpdateRegion].first = NewMI;
         FirstMIToRegion.erase(&*InsertPos);
+        FirstMIToRegion[NewMI] = UpdateRegion;
       }
 
     const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);

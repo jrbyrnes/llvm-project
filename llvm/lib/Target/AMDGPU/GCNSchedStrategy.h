@@ -914,6 +914,7 @@ private:
   DenseMap<MachineInstr *, SmallVector<unsigned, 4>> RematDefToLiveInRegions;
 
   DenseMap<unsigned, int> OptRegionRPReduction;
+  DenseMap<unsigned, int> RegionRPReduction;
 
   MachineCycleInfo CI;
   MachineDominatorTree PDT;
