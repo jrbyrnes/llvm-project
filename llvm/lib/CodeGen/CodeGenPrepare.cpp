@@ -5443,6 +5443,7 @@ bool AddressingModeMatcher::matchAddr(Value *Addr, unsigned Depth) {
         AddrMode.BaseOffs = Result;
         if (TLI.isLegalAddressingMode(DL, AddrMode, AccessTy, AddrSpace))
           return true;
+        
         AddrMode.BaseOffs -= CI->getSExtValue();
       }
     }
@@ -5675,7 +5676,7 @@ bool AddressingModeMatcher::valueAlreadyLiveAtInst(Value *Val,
 /// fold the addressing mode in the Z case.  This would make Y die earlier.
 bool AddressingModeMatcher::isProfitableToFoldIntoAddressingMode(
     Instruction *I, ExtAddrMode &AMBefore, ExtAddrMode &AMAfter) {
-  if (IgnoreProfitability)
+  if (IgnoreProfitability || true)
     return true;
 
   // AMBefore is the addressing mode before this instruction was folded into it,
@@ -5760,8 +5761,9 @@ bool AddressingModeMatcher::isProfitableToFoldIntoAddressingMode(
 /// Return true if the specified values are defined in a
 /// different basic block than BB.
 static bool IsNonLocalValue(Value *V, BasicBlock *BB) {
-  if (Instruction *I = dyn_cast<Instruction>(V))
+  if (Instruction *I = dyn_cast<Instruction>(V)) {
     return I->getParent() != BB;
+  }
   return false;
 }
 
@@ -5816,7 +5818,6 @@ static BasicBlock::iterator findInsertPos(Value *Addr, Instruction *MemoryInst,
 bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
                                         Type *AccessTy, unsigned AddrSpace) {
   
-  errs() << "Have MemoryInst: "; MemoryInst->dump();
   Value *Repl = Addr;
 
   // Try to collapse single-value PHI nodes.  This is necessary to undo
@@ -5892,8 +5893,9 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
     }
 
     NewAddrMode.OriginalValue = V;
-    if (!AddrModes.addNewAddrMode(NewAddrMode))
+    if (!AddrModes.addNewAddrMode(NewAddrMode)) {
       break;
+    }
   }
 
   // Try to combine the AddrModes we've collected. If we couldn't collect any,
@@ -5903,6 +5905,7 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
     TPT.rollback(LastKnownGood);
     return false;
   }
+
   bool Modified = TPT.commit();
 
   // Get the combined AddrMode (or the only AddrMode, if we only had one).
