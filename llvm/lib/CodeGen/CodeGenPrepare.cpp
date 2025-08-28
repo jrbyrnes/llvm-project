@@ -5837,6 +5837,8 @@ static BasicBlock::iterator findInsertPos(Value *Addr, Instruction *MemoryInst,
 /// addressing mode computation from the fast path entirely.).
 bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
                                         Type *AccessTy, unsigned AddrSpace) {
+  
+  errs() << "Have MemoryInst: "; MemoryInst->dump();
   Value *Repl = Addr;
 
   // Try to collapse single-value PHI nodes.  This is necessary to undo
