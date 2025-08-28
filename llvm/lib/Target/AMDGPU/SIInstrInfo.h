@@ -849,6 +849,9 @@ public:
     return get(Opcode).TSFlags & SIInstrFlags::IsMAI;
   }
 
+  bool isNeverCoissue(MachineInstr &MI) const;
+
+
   static bool isMFMA(const MachineInstr &MI) {
     return isMAI(MI) && MI.getOpcode() != AMDGPU::V_ACCVGPR_WRITE_B32_e64 &&
            MI.getOpcode() != AMDGPU::V_ACCVGPR_READ_B32_e64;
