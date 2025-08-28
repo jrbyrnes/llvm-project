@@ -2310,15 +2310,13 @@ bool PreRARematStage::initGCNSchedStage() {
     }
   }
 
-
   return true;
 }
 
 
 bool PreRARematStage::initGCNRegion() {
-  return false;
-  if (!DAG.RescheduleRegions[RegionIdx])
-    return false;
+  //if (!DAG.RescheduleRegions[RegionIdx])
+  //  return false;
 
   return GCNSchedStage::initGCNRegion();
 }
