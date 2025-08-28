@@ -981,13 +981,20 @@ void GCNScheduleDAGMILive::runSchedStages() {
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
+    //errs() << "\n\nAdvance to stage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
+    
+
+    //if (S.getCurrentStage() == GCNSchedStageID::PreRARematerialize)
+    //  MF.dump();
 
     unsigned R = 0;
     for (auto Region : Regions) {
+      //errs() << "\nRegion: " << R++ << "\n";
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+      //errs() << printMBBReference(*Region.first->getParent()) << "\n";
 
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
@@ -1019,6 +1026,27 @@ void GCNScheduleDAGMILive::runSchedStages() {
         }
         if (IsLiveThru) {
           LiveThru.inc(LR.first, LaneBitmask(0), LR.second, MRI);
+        }
+        }
+
+        //errs() << "LiveIn: " << print(DownwardTracker->getPressure(), &ST, 0, &MF);
+        //errs() << "LiveThru:" << print(LiveThru, &ST, 0, &MF);
+
+        //errs() << "LiveThru VGPRs\n";
+        for (auto LR : *RegionLiveIns) {
+        bool IsLiveThru = true;
+        for (auto &Use : MRI.use_nodbg_instructions(LR.first)) {
+          if (Use.getParent() == RegionBegin->getParent()) {
+            IsLiveThru = false;
+            break;
+          }
+        }
+        if (IsLiveThru) {
+          auto RC = MRI.getRegClass(LR.first);
+          auto SRI = static_cast<const SIRegisterInfo *>(TRI);
+          //if (SRI->isVGPRClass(RC) || SRI->isVectorSuperClass(RC))
+          //  errs() << printReg(LR.first) << "\n";
+          //LiveThru.inc(LR.first, LaneBitmask(0), LR.second, MRI);
         }
         }
 
@@ -1389,6 +1417,7 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
+  //errs() << "PA: " << print(PressureAfter, &ST, 0, &MF);
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: "
                     << print(PressureAfter, &ST, 0, &MF));
@@ -1736,9 +1765,20 @@ bool PreRARematStage::eliminateDeadMI() {
 
             if (LastMIToRegion.contains(&MI)) {
               unsigned UpdateRegion = LastMIToRegion[&MI];
-              DAG.Regions[UpdateRegion].second = &*std::prev(MI.getIterator());
+              MachineInstr *UpdateInst = &*std::prev(MI.getIterator());
+              DAG.Regions[UpdateRegion].second = UpdateInst;
               LastMIToRegion.erase(&MI);
+              LastMIToRegion[UpdateInst] = UpdateRegion;
             }
+
+            if (FirstMIToRegion.contains(&MI)) {
+              unsigned UpdateRegion = FirstMIToRegion[&MI];
+              MachineInstr *UpdateInst = &*std::next(MI.getIterator());
+              DAG.Regions[UpdateRegion].first = UpdateInst;
+              FirstMIToRegion.erase(&MI);
+              FirstMIToRegion[UpdateInst] = UpdateRegion;
+            }
+
 
         //DAG.updateRegionBoundaries(DAG.Regions[RegionIdx], MI, nullptr);
         Register Reg = MI.getOperand(0).getReg();
@@ -1850,7 +1890,6 @@ bool PreRARematStage::initGCNSchedStage() {
 
 
 bool PreRARematStage::initGCNRegion() {
-  return false;
   if (!DAG.RescheduleRegions[RegionIdx])
     return false;
 
@@ -2289,6 +2328,7 @@ bool PreRARematStage::implementRematPlan(const TargetInstrInfo *TII,
         unsigned UpdateRegion = FirstMIToRegion[&*InsertPos];
         DAG.Regions[UpdateRegion].first = NewMI;
         FirstMIToRegion.erase(&*InsertPos);
+        FirstMIToRegion[NewMI] = UpdateRegion;
       }
 
     const TargetRegisterClass *RC = DAG.MRI.getRegClass(Reg);
@@ -2960,6 +3000,7 @@ bool RewriteScheduleStage::rewrite(
         unsigned UpdateRegion = FirstMIToRegion[UseInst];
         DAG.Regions[UpdateRegion].first = VGPRCopy;
         FirstMIToRegion.erase(UseInst);
+
       }
 
       // Replace the operand for all users.
