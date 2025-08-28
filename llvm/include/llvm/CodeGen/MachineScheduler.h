@@ -1200,6 +1200,9 @@ public:
                                     const TargetSchedModel *SchedModel);
   };
 
+  MachineSchedPolicy RegionPolicy;
+
+
 protected:
   const MachineSchedContext *Context;
   const TargetSchedModel *SchedModel = nullptr;
@@ -1208,8 +1211,7 @@ protected:
   unsigned BotIdx = 0;
   unsigned NumRegionInstrs = 0;
 
-  MachineSchedPolicy RegionPolicy;
-
+  
   SchedRemainder Rem;
 
   GenericSchedulerBase(const MachineSchedContext *C) : Context(C) {}
