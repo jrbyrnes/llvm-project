@@ -1750,9 +1750,15 @@ bool GCNSchedStage::initGCNRegion() {
   }
 
   PressureBefore = DAG.Pressure[RegionIdx];
-  S.CustomResTracking = DAG.RegionsWithMFMAInstrs[RegionIdx];
-  if (S.CustomResTracking)
+  auto FirstMFMA = DAG.RegionsWithMFMAInstrs.find_first();
+
+  S.CustomResTracking = RegionIdx == FirstMFMA;
+  if (S.CustomResTracking) {
     S.XDLProcRes.reset();
+    S.RegionPolicy.OnlyTopDown = true;
+    S.RegionPolicy.OnlyBottomUp = false;
+
+  }
 
   LLVM_DEBUG(
       dbgs() << "Pressure before scheduling:\nRegion live-ins:"
@@ -2316,7 +2322,6 @@ bool PreRARematStage::initGCNSchedStage() {
 
 
 bool PreRARematStage::initGCNRegion() {
-  return false;
   if (!DAG.RescheduleRegions[RegionIdx])
     return false;
 
@@ -3508,7 +3513,7 @@ static bool hasIGLPInstrs(ScheduleDAGInstrs *DAG) {
   });
 }
 
-static bool hasMFMAInstrs(ScheduleDAGInstrs *DAG) {
+static bool hasMFMAInstrs(ScheduleDAGInstrs *DAG) { 
   const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
   return any_of(*DAG, [SII](MachineBasicBlock::iterator MI) {
     return SII->isMAI(MI->getOpcode());
