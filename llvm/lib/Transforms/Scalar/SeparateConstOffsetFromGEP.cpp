@@ -1084,8 +1084,8 @@ bool SeparateConstOffsetFromGEP::reorderGEP(GetElementPtrInst *GEP,
     return false;
   
 
-  errs() << "ReorderGEP: "; GEP->dump();
-  errs() << "With PtrGEP: "; PtrGEP->dump();
+  //errs() << "ReorderGEP: "; GEP->dump();
+  //errs() << "With PtrGEP: "; PtrGEP->dump();
 
   bool NestedNeedsExtraction;
   int64_t NestedByteOffset =

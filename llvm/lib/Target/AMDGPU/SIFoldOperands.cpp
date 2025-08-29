@@ -2800,6 +2800,27 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     Changed |= tryOptimizeAGPRPhis(*MBB);
   }
 
+
+  for (MachineBasicBlock *MBB : depth_first(&MF)) {
+    for (auto &MI : make_early_inc_range(*MBB)) {
+      if (MI.getOpcode() == AMDGPU::V_ADD_U32_e64) {
+        auto &Op1 = MI.getOperand(1);
+        if (Op1.isImm() && Op1.getImm() == 0) {
+          auto Op2 = MI.getOperand(2);
+          if (!Op2.isReg())
+            continue;
+          auto Op0 = MI.getOperand(0);
+          if (Op0.getReg().isPhysical())
+            continue;
+          
+          MRI->replaceRegWith(Op0.getReg(), Op2.getReg());
+          MI.removeFromParent();      
+        }
+      }
+    }
+  }
+
+
   for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
     Register Reg = Register::index2VirtReg(I);
     const TargetRegisterClass *RC = MRI->getRegClass(Reg);

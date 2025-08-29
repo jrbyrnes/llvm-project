@@ -977,7 +977,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
   GCNSchedStrategy &S = static_cast<GCNSchedStrategy &>(*SchedImpl);
   while (S.advanceStage()) {
     auto Stage = createSchedStage(S.getCurrentStage());
-    errs() << "\n\nAdvance to stage: " << S.getCurrentStage() << "\n";
+    //errs() << "\n\nAdvance to stage: " << S.getCurrentStage() << "\n";
     if (!Stage->initGCNSchedStage())
       continue;
     
@@ -987,10 +987,10 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
     unsigned R = 0;
     for (auto Region : Regions) {
-      errs() << "\nRegion: " << R++ << "\n";
+      //errs() << "\nRegion: " << R++ << "\n";
       RegionBegin = Region.first;
       RegionEnd = Region.second;
-      errs() << printMBBReference(*Region.first->getParent()) << "\n";
+      //errs() << printMBBReference(*Region.first->getParent()) << "\n";
 
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
@@ -1025,8 +1025,8 @@ void GCNScheduleDAGMILive::runSchedStages() {
         }
         }
 
-        errs() << "LiveIn: " << print(DownwardTracker->getPressure(), &ST, 0, &MF);
-        errs() << "LiveThru:" << print(LiveThru, &ST, 0, &MF);
+        //errs() << "LiveIn: " << print(DownwardTracker->getPressure(), &ST, 0, &MF);
+        //errs() << "LiveThru:" << print(LiveThru, &ST, 0, &MF);
 
         //errs() << "LiveThru VGPRs\n";
         for (auto LR : *RegionLiveIns) {
@@ -1413,7 +1413,7 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  errs() << "PA: " << print(PressureAfter, &ST, 0, &MF);
+  //errs() << "PA: " << print(PressureAfter, &ST, 0, &MF);
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: "
                     << print(PressureAfter, &ST, 0, &MF));
