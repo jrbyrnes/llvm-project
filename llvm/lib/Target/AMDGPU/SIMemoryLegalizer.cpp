@@ -2775,6 +2775,7 @@ bool SIMemoryLegalizer::expandAtomicFence(const SIMemOpInfo &MOI,
 
 bool SIMemoryLegalizer::expandAtomicCmpxchgOrRmw(const SIMemOpInfo &MOI,
   MachineBasicBlock::iterator &MI) {
+    return false;
   assert(MI->mayLoad() && MI->mayStore());
 
   bool Changed = false;
