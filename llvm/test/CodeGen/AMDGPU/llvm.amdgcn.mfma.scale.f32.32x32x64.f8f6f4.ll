@@ -5317,7 +5317,12 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_25_42__vgprcd_non
 ; SDAG-NEXT:    v_mov_b64_e32 v[12:13], s[20:21]
 ; SDAG-NEXT:    v_mov_b64_e32 v[14:15], s[22:23]
 ; SDAG-NEXT:    s_nop 1
+<<<<<<< HEAD
 ; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], v33, v32 op_sel_hi:[0,0,0] blgp:2
+=======
+<<<<<<< HEAD
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 v[0:15], v[16:23], v[24:31], v[0:15], 25, 42 op_sel_hi:[0,0,0] blgp:2
+>>>>>>> a0c8e2fb46ef ([AMDGPU] Optimizations for ragged attn bwd)
 ; SDAG-NEXT:    v_mov_b32_e32 v16, s20
 ; SDAG-NEXT:    v_mov_b32_e32 v17, s21
 ; SDAG-NEXT:    v_mov_b32_e32 v18, s22
@@ -5354,6 +5359,44 @@ define amdgpu_kernel void @test_mfma_scale_f32_32x32x64_f8f6f4_25_42__vgprcd_non
 ; SDAG-NEXT:    global_store_dwordx4 v[26:27], v[0:3], off sc0 sc1
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    global_store_dwordx4 v[24:25], v[4:7], off sc0 sc1
+=======
+; SDAG-NEXT:    v_mfma_scale_f32_32x32x64_f8f6f4 a[0:15], v[0:7], v[8:15], a[0:15], 25, 42 op_sel_hi:[0,0,0] blgp:2
+; SDAG-NEXT:    v_mov_b32_e32 v2, s20
+; SDAG-NEXT:    v_mov_b32_e32 v3, s21
+; SDAG-NEXT:    v_mov_b32_e32 v4, s22
+; SDAG-NEXT:    v_mov_b32_e32 v5, s23
+; SDAG-NEXT:    v_mov_b64_e32 v[0:1], 48
+; SDAG-NEXT:    global_store_dwordx4 v[0:1], v[2:5], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    v_mov_b32_e32 v6, s18
+; SDAG-NEXT:    v_mov_b32_e32 v7, s19
+; SDAG-NEXT:    v_mov_b32_e32 v4, s16
+; SDAG-NEXT:    v_mov_b32_e32 v5, s17
+; SDAG-NEXT:    v_mov_b64_e32 v[2:3], 32
+; SDAG-NEXT:    global_store_dwordx4 v[2:3], v[4:7], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    v_mov_b32_e32 v8, s14
+; SDAG-NEXT:    v_mov_b32_e32 v9, s15
+; SDAG-NEXT:    v_mov_b32_e32 v6, s12
+; SDAG-NEXT:    v_mov_b32_e32 v7, s13
+; SDAG-NEXT:    v_mov_b64_e32 v[4:5], 16
+; SDAG-NEXT:    global_store_dwordx4 v[4:5], v[6:9], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    v_mov_b32_e32 v10, s10
+; SDAG-NEXT:    v_mov_b32_e32 v11, s11
+; SDAG-NEXT:    v_mov_b32_e32 v8, s8
+; SDAG-NEXT:    v_mov_b32_e32 v9, s9
+; SDAG-NEXT:    v_mov_b64_e32 v[6:7], 0
+; SDAG-NEXT:    global_store_dwordx4 v[6:7], v[8:11], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    global_store_dwordx4 v[2:3], a[8:11], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    global_store_dwordx4 v[0:1], a[12:15], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    global_store_dwordx4 v[6:7], a[0:3], off sc0 sc1
+; SDAG-NEXT:    s_waitcnt vmcnt(0)
+; SDAG-NEXT:    global_store_dwordx4 v[4:5], a[4:7], off sc0 sc1
+>>>>>>> 9819653bbb9b ([AMDGPU] Allocate AVRegClass last (#146606))
 ; SDAG-NEXT:    s_waitcnt vmcnt(0)
 ; SDAG-NEXT:    s_endpgm
 ;

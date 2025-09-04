@@ -289,6 +289,9 @@ unsigned getMaxNumSGPRs(const MCSubtargetInfo *STI, unsigned WavesPerEU,
 unsigned getNumExtraSGPRs(const MCSubtargetInfo *STI, bool VCCUsed,
                           bool FlatScrUsed, bool XNACKUsed);
 
+
+unsigned getVGPRReductionToIncreaseWavesPerEU(const MCSubtargetInfo *STI,
+                                              unsigned NumVGPRs);
 /// \returns Number of extra SGPRs implicitly required by given subtarget \p
 /// STI when the given special registers are used. XNACK is inferred from
 /// \p STI.

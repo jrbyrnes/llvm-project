@@ -31,6 +31,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
+#include <set>
 
 using namespace llvm;
 
@@ -118,28 +119,60 @@ MachineRegisterInfo::constrainRegAttrs(Register Reg,
   return true;
 }
 
-bool
-MachineRegisterInfo::recomputeRegClass(Register Reg) {
+bool MachineRegisterInfo::recomputeRegClassRecur(Register Reg, std::set<Register> &Visited, const TargetRegisterClass *OrigRC) {
   const TargetInstrInfo *TII = MF->getSubtarget().getInstrInfo();
   const TargetRegisterClass *OldRC = getRegClass(Reg);
   const TargetRegisterInfo *TRI = getTargetRegisterInfo();
   const TargetRegisterClass *NewRC = TRI->getLargestLegalSuperClass(OldRC, *MF);
 
+  if (!Visited.insert(Reg).second)
+    return true;
+
   // Stop early if there is no room to grow.
-  if (NewRC == OldRC)
-    return false;
+  if (NewRC == OldRC) {
+    return NewRC != OrigRC;
+  }
 
   // Accumulate constraints from all uses.
   for (MachineOperand &MO : reg_nodbg_operands(Reg)) {
     // Apply the effect of the given operand to NewRC.
     MachineInstr *MI = MO.getParent();
     unsigned OpNo = &MO - &MI->getOperand(0);
-    NewRC = MI->getRegClassConstraintEffect(OpNo, NewRC, TII, TRI);
+    if (MI->isRegSequence()) {
+      for (unsigned I = 1; I < MI->getNumOperands(); I+=2) {
+        auto TheOp = MI->getOperand(I);
+        if (!TheOp.isReg())
+          continue;
+        if (TheOp.getReg().isPhysical())
+          return false;
+        if (!recomputeRegClassRecur(TheOp.getReg(), Visited, OldRC)) {
+          return false;
+        }
+      }
+    }
+    if (MI->isCopy()) {
+      auto TheOp = MI->getOperand(1);
+      if (!TheOp.isReg())
+        continue;
+      if (TheOp.getReg().isPhysical())
+        return false;
+      if (!recomputeRegClassRecur(MI->getOperand(1).getReg(), Visited, OldRC))
+        return false;
+    }
+     NewRC = MI->getRegClassConstraintEffect(OpNo, NewRC, TII, TRI);
     if (!NewRC || NewRC == OldRC)
       return false;
   }
   setRegClass(Reg, NewRC);
   return true;
+}
+
+bool
+MachineRegisterInfo::recomputeRegClass(Register Reg) {
+  std::set<Register> Visited;
+  const TargetRegisterClass *OrigRC = getRegClass(Reg);
+  return recomputeRegClassRecur(Reg, Visited, OrigRC);
+
 }
 
 Register MachineRegisterInfo::createIncompleteVirtualRegister(StringRef Name) {

@@ -2863,10 +2863,10 @@ bool RAGreedy::run(MachineFunction &mf) {
   initializeCSRCost();
 
   RegCosts = TRI->getRegisterCosts(*MF);
-  RegClassPriorityTrumpsGlobalness =
+  RegClassPriorityTrumpsGlobalness = true;/*
       GreedyRegClassPriorityTrumpsGlobalness.getNumOccurrences()
           ? GreedyRegClassPriorityTrumpsGlobalness
-          : TRI->regClassPriorityTrumpsGlobalness(*MF);
+          : TRI->regClassPriorityTrumpsGlobalness(*MF);*/
 
   ReverseLocalAssignment = GreedyReverseLocalAssignment.getNumOccurrences()
                                ? GreedyReverseLocalAssignment

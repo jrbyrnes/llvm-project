@@ -1158,6 +1158,19 @@ unsigned getLocalMemorySize(const MCSubtargetInfo *STI) {
   return BytesPerCU;
 }
 
+unsigned getVGPRReductionToIncreaseWavesPerEU(const MCSubtargetInfo *STI,
+                                              unsigned NumVGPRs) {
+  unsigned Granule = getVGPRAllocGranule(STI, 0);
+  unsigned MaxWaves = getMaxWavesPerEU(STI);
+  unsigned TotalNumVGPRs = getTotalNumVGPRs(STI);
+
+  unsigned NumWaves =
+      getNumWavesPerEUWithNumVGPRs(NumVGPRs, Granule, MaxWaves, TotalNumVGPRs);
+  if (NumWaves == MaxWaves)
+    return 0;
+  return NumVGPRs - alignDown(TotalNumVGPRs / (NumWaves + 1), Granule);
+}
+
 unsigned getAddressableLocalMemorySize(const MCSubtargetInfo *STI) {
   if (STI->getFeatureBits().test(FeatureAddressableLocalMemorySize32768))
     return 32768;

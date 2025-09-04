@@ -122,5 +122,30 @@ bool AMDGPUPrepareAGPRAllocImpl::run(MachineFunction &MF) {
     }
   }
 
+    for (unsigned I = 0, E = MRI.getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI.getRegClass(Reg);
+
+      const TargetSubtargetInfo &STI = MF.getSubtarget();
+  const SIRegisterInfo *TRI = static_cast<const SIRegisterInfo *>(STI.getRegisterInfo());
+
+    if ((TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
+      bool Inflated = MRI.recomputeRegClass(Reg);
+      if (!Inflated)
+        continue;
+
+      for (auto &UseOp : MRI.use_nodbg_operands(Reg)) {
+        if (TII.isMAI(*UseOp.getParent())) {
+          //auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
+          //MRI.setRegClass(Reg, AGPRRC);
+          break;
+        }
+      }
+      continue;
+    }
+  }
+
+
+
   return Changed;
 }
