@@ -23,6 +23,12 @@
 #define DEBUG_TYPE "si-fold-operands"
 using namespace llvm;
 
+static cl::opt<bool>
+    InflateToAVGPR("amdgpu-avgpr-inflation", cl::Hidden, cl::init(true),
+                   cl::desc("Enable register inflation to avgpr register class "
+                            "(which can be assigned to either AGPR or VGPR)."));
+
+
 namespace {
 
 /// Track a value we may want to fold into downstream users, applying
@@ -2804,6 +2810,64 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     }
 
     Changed |= tryOptimizeAGPRPhis(*MBB);
+  }
+
+
+  for (MachineBasicBlock *MBB : depth_first(&MF)) {
+    for (auto &MI : make_early_inc_range(*MBB)) {
+      if (MI.getOpcode() == AMDGPU::V_ADD_U32_e64) {
+        auto &Op1 = MI.getOperand(1);
+        if (Op1.isImm() && Op1.getImm() == 0) {
+          auto Op2 = MI.getOperand(2);
+          if (!Op2.isReg())
+            continue;
+          auto Op0 = MI.getOperand(0);
+          if (Op0.getReg().isPhysical())
+            continue;
+          
+          MRI->replaceRegWith(Op0.getReg(), Op2.getReg());
+          MI.removeFromParent();      
+        }
+      }
+    }
+  }
+
+  if (MFI->getMinWavesPerEU() > 1)
+    return Changed;
+
+
+  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+
+    if (InflateToAVGPR && ST->hasGFX90AInsts() &&
+        (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
+      bool Inflated = MRI->recomputeRegClass(Reg);
+      Changed |= Inflated;
+      if (!Inflated)
+        continue;
+
+      for (auto &UseOp : MRI->use_nodbg_operands(Reg)) {
+        if (TII->isMAI(*UseOp.getParent())) {
+          auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
+          //MRI->setRegClass(Reg, AGPRRC);
+          break;
+        }
+      }
+      continue;
+    }
+  }
+
+
+
+  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+    if (TRI->isVectorSuperClass(RC)) {
+      auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
+      MRI->setRegClass(Reg, AGPRRC);
+      Changed = true;
+    }
   }
 
   return Changed;

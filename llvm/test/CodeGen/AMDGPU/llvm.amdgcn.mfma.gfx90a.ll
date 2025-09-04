@@ -829,6 +829,7 @@ define amdgpu_kernel void @test_mfma_f64_16x16x4f64(ptr addrspace(1) %arg, doubl
 ; GFX942-NEXT:    global_store_dwordx4 v0, a[4:7], s[8:9] offset:16
 ; GFX942-NEXT:    global_store_dwordx4 v0, a[0:3], s[8:9]
 ; GFX942-NEXT:    s_endpgm
+<<<<<<< HEAD
 ;
 ; GFX90A-VGPR-LABEL: test_mfma_f64_16x16x4f64:
 ; GFX90A-VGPR:       ; %bb.0: ; %bb
@@ -877,6 +878,8 @@ define amdgpu_kernel void @test_mfma_f64_16x16x4f64(ptr addrspace(1) %arg, doubl
 ; GFX942-VGPR-NEXT:    global_store_dwordx4 v8, v[4:7], s[8:9] offset:16
 ; GFX942-VGPR-NEXT:    global_store_dwordx4 v8, v[0:3], s[8:9]
 ; GFX942-VGPR-NEXT:    s_endpgm
+=======
+>>>>>>> 9819653bbb9b ([AMDGPU] Allocate AVRegClass last (#146606))
 bb:
   %in.1 = load <4 x double>, ptr addrspace(1) %arg
   %mai.1 = tail call <4 x double> @llvm.amdgcn.mfma.f64.16x16x4f64(double %a, double %b, <4 x double> %in.1, i32 1, i32 2, i32 3)
@@ -1672,6 +1675,7 @@ define amdgpu_kernel void @test_mfma_f64_16x16x4f64_imm(ptr addrspace(1) %arg, d
 ; GFX942-NEXT:    global_store_dwordx4 v0, a[4:7], s[0:1] offset:16
 ; GFX942-NEXT:    global_store_dwordx4 v0, a[0:3], s[0:1]
 ; GFX942-NEXT:    s_endpgm
+<<<<<<< HEAD
 ;
 ; GFX90A-VGPR-LABEL: test_mfma_f64_16x16x4f64_imm:
 ; GFX90A-VGPR:       ; %bb.0: ; %bb
@@ -1730,6 +1734,8 @@ define amdgpu_kernel void @test_mfma_f64_16x16x4f64_imm(ptr addrspace(1) %arg, d
 ; GFX942-VGPR-NEXT:    global_store_dwordx4 v0, v[6:9], s[0:1] offset:16
 ; GFX942-VGPR-NEXT:    global_store_dwordx4 v0, v[2:5], s[0:1]
 ; GFX942-VGPR-NEXT:    s_endpgm
+=======
+>>>>>>> 9819653bbb9b ([AMDGPU] Allocate AVRegClass last (#146606))
 bb:
   %mai.1 = tail call <4 x double> @llvm.amdgcn.mfma.f64.16x16x4f64(double %a, double %b, <4 x double> <double 0.0, double 0.0, double 0.0, double 1.0>, i32 0, i32 0, i32 0)
   store <4 x double> %mai.1, ptr addrspace(1) %arg
@@ -1790,6 +1796,7 @@ define amdgpu_kernel void @test_mfma_f64_16x16x4f64_splat_lit(ptr addrspace(1) %
 ; GFX942-NEXT:    global_store_dwordx4 v0, a[4:7], s[0:1] offset:16
 ; GFX942-NEXT:    global_store_dwordx4 v0, a[0:3], s[0:1]
 ; GFX942-NEXT:    s_endpgm
+<<<<<<< HEAD
 ;
 ; GFX90A-VGPR-LABEL: test_mfma_f64_16x16x4f64_splat_lit:
 ; GFX90A-VGPR:       ; %bb.0: ; %bb
@@ -1848,6 +1855,8 @@ define amdgpu_kernel void @test_mfma_f64_16x16x4f64_splat_lit(ptr addrspace(1) %
 ; GFX942-VGPR-NEXT:    global_store_dwordx4 v0, v[6:9], s[0:1] offset:16
 ; GFX942-VGPR-NEXT:    global_store_dwordx4 v0, v[2:5], s[0:1]
 ; GFX942-VGPR-NEXT:    s_endpgm
+=======
+>>>>>>> 9819653bbb9b ([AMDGPU] Allocate AVRegClass last (#146606))
 bb:
   %mai.1 = tail call <4 x double> @llvm.amdgcn.mfma.f64.16x16x4f64(double %a, double %b, <4 x double> <double 123.0, double 123.0, double 123.0, double 123.0>, i32 0, i32 0, i32 0)
   store <4 x double> %mai.1, ptr addrspace(1) %arg
