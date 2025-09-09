@@ -2832,6 +2832,9 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     }
   }
 
+  if (MFI->getMinWavesPerEU() > 1)
+    return Changed;
+
 
   for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
     Register Reg = Register::index2VirtReg(I);
@@ -2840,6 +2843,7 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     if (InflateToAVGPR && ST->hasGFX90AInsts() &&
         (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
       bool Inflated = MRI->recomputeRegClass(Reg);
+      Changed |= Inflated;
       if (!Inflated)
         continue;
 
@@ -2854,12 +2858,15 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     }
   }
 
+
+
   for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
     Register Reg = Register::index2VirtReg(I);
     const TargetRegisterClass *RC = MRI->getRegClass(Reg);
     if (TRI->isVectorSuperClass(RC)) {
       auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
       MRI->setRegClass(Reg, AGPRRC);
+      Changed = true;
     }
   }
 
