@@ -1634,8 +1634,8 @@ unsigned MachineLICMImpl::Hoist(MachineInstr *MI, MachineBasicBlock *Preheader,
   }
   // First check whether we should hoist this instruction.
   bool HasExtractHoistableLoad = false;
-  if (!IsLoopInvariantInst(*MI, CurLoop) ||
-      !IsProfitableToHoist(*MI, CurLoop)) {
+  if (!TII->hackyHoist(*MI) && (!IsLoopInvariantInst(*MI, CurLoop) ||
+      !IsProfitableToHoist(*MI, CurLoop))) {
     // If not, try unfolding a hoistable load.
     MI = ExtractHoistableLoad(MI, CurLoop);
     if (!MI)

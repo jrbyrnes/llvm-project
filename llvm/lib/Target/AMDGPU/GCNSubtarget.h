@@ -1311,6 +1311,11 @@ public:
   // hasGFX940Insts and hasGFX90AInsts are also true.
   bool hasGFX950Insts() const { return GFX950Insts; }
 
+  /// Returns the necessary reduction in number of VGPRs from using \p VGPRs
+  /// VGPRs to increase occupancy by 1. Returns 0 when using \p VGPRs VGPRs
+  /// already results in maximum occupancy.
+  unsigned getNumVGPRsToIncreaseOccupancy(unsigned VGPRs) const;
+
   /// Returns true if the target supports
   /// global_load_lds_dwordx3/global_load_lds_dwordx4 or
   /// buffer_load_dwordx3/buffer_load_dwordx4 with the lds bit.

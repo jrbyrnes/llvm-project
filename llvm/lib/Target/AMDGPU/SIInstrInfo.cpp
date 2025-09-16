@@ -588,6 +588,10 @@ bool SIInstrInfo::shouldClusterMemOps(ArrayRef<const MachineOperand *> BaseOps1,
   return NumDWords <= MaxMemoryClusterDWords;
 }
 
+  bool SIInstrInfo::hackyHoist(const MachineInstr &MI) const {
+    return MI.getOpcode() == AMDGPU::V_READFIRSTLANE_B32;
+  }
+
 // FIXME: This behaves strangely. If, for example, you have 32 load + stores,
 // the first 16 loads will be interleaved with the stores, and the next 16 will
 // be clustered as expected. It should really split into 2 16 store batches.

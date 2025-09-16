@@ -418,6 +418,10 @@ GCNSubtarget::computeOccupancy(const Function &F, unsigned LDSSize,
   return {std::min(MinOcc, MaxOcc), MaxOcc};
 }
 
+  unsigned GCNSubtarget::getNumVGPRsToIncreaseOccupancy(unsigned NumVGPRs) const {
+  return AMDGPU::IsaInfo::getVGPRReductionToIncreaseWavesPerEU(this, NumVGPRs);
+}
+
 unsigned GCNSubtarget::getBaseMaxNumSGPRs(
     const Function &F, std::pair<unsigned, unsigned> WavesPerEU,
     unsigned PreloadedSGPRs, unsigned ReservedNumSGPRs) const {
