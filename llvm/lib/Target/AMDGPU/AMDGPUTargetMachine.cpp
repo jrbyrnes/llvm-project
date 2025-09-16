@@ -1211,6 +1211,15 @@ void AMDGPUPassConfig::addStraightLineScalarOptimizationPasses() {
   // SeparateConstOffsetFromGEP and SLSR creates common expressions which GVN or
   // EarlyCSE can reuse.
   addEarlyCSEOrGVNPass();
+
+  addPass(createSeparateConstOffsetFromGEPPass());
+  // ReassociateGEPs exposes more opportunities for SLSR. See
+  // the example in reassociate-geps-and-slsr.ll.
+  addPass(createStraightLineStrengthReducePass());
+  // SeparateConstOffsetFromGEP and SLSR creates common expressions which GVN or
+  // EarlyCSE can reuse.
+  addEarlyCSEOrGVNPass();
+
   // Run NaryReassociate after EarlyCSE/GVN to be more effective.
   addPass(createNaryReassociatePass());
   // NaryReassociate on GEPs creates redundant common expressions, so run
