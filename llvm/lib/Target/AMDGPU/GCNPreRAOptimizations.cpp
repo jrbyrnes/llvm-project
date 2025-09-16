@@ -308,9 +308,6 @@ bool GCNPreRAOptimizationsImpl::createListOfPackedInstr(
     MachineInstr &BeginMI, SetVector<MachineInstr *> &InstrsToUnpack,
     uint16_t NumMFMACycles) {
   auto *BB = BeginMI.getParent();
-  auto *MF = BB->getParent();
-  int NumInst = 0;
-
   auto E = BB->end();
 
   int TotalCyclesBetweenCandidates = 0;
@@ -463,9 +460,6 @@ MachineInstrBuilder GCNPreRAOptimizationsImpl::createUnpackedMI(MachineBasicBloc
   MachineOperand &SrcMO1 = I.getOperand(2);
   MachineOperand &SrcMO2 = I.getOperand(4);
   Register DstReg = DstMO.getReg();
-  Register SrcReg1 = SrcMO1.getReg();
-  Register SrcReg2 = SrcMO2.getReg();
-  const TargetRegisterClass *DstRC = MRI->getRegClass(DstMO.getReg());
   unsigned DestSubIdx = isHiBits ? TRI->composeSubRegIndices(DstMO.getSubReg(), AMDGPU::sub1) : TRI->composeSubRegIndices(DstMO.getSubReg(), AMDGPU::sub0);
   int ClampIdx =
       AMDGPU::getNamedOperandIdx(I.getOpcode(), AMDGPU::OpName::clamp);
@@ -520,7 +514,6 @@ MachineInstrBuilder GCNPreRAOptimizationsImpl::createUnpackedMI(MachineBasicBloc
 
   if (isFMA) {
     MachineOperand &SrcMO3 = I.getOperand(6);
-    Register SrcReg3 = SrcMO3.getReg();
     int Src2_modifiers_Idx = AMDGPU::getNamedOperandIdx(I.getOpcode(), AMDGPU::OpName::src2_modifiers);
     unsigned Src2_Mods = I.getOperand(Src2_modifiers_Idx).getImm();
     unsigned New_Src2_Mods = 0;
@@ -558,13 +551,11 @@ void GCNPreRAOptimizationsImpl::processF32Unpacking(MachineInstr &I) {
     processFMAF32Unpacking(I);
     return;
   }
-  MachineBasicBlock &MBB = *I.getParent();
   
   MachineOperand &DstMO = I.getOperand(0);
   MachineOperand &SrcMO1 = I.getOperand(2);
   MachineOperand &SrcMO2 = I.getOperand(4);
 
-  const DebugLoc &DL = I.getDebugLoc();
   const TargetRegisterClass *DstRC = MRI->getRegClass(I.getOperand(0).getReg());
 
   bool IsVReg64 = (DstRC->getID() == AMDGPU::VReg_64_Align2RegClassID);

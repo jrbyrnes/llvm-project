@@ -2844,17 +2844,6 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
         (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
       bool Inflated = MRI->recomputeRegClass(Reg);
       Changed |= Inflated;
-      if (!Inflated)
-        continue;
-
-      for (auto &UseOp : MRI->use_nodbg_operands(Reg)) {
-        if (TII->isMAI(*UseOp.getParent())) {
-          auto AGPRRC = TRI->getEquivalentAGPRClass(RC);
-          //MRI->setRegClass(Reg, AGPRRC);
-          break;
-        }
-      }
-      continue;
     }
   }
 

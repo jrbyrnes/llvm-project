@@ -950,10 +950,12 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
   LiveIns.resize(Regions.size());
   Pressure.resize(Regions.size());
   RegionsWithHighRP.resize(Regions.size());
+  IgnoreRegion.resize(Regions.size());
   RegionsWithExcessRP.resize(Regions.size());
   RegionsWithIGLPInstrs.resize(Regions.size());
   RescheduleRegions.resize(Regions.size());
   RegionsWithHighRP.reset();
+  IgnoreRegion.reset();
   RegionsWithExcessRP.reset();
   RegionsWithIGLPInstrs.reset();
   RescheduleRegions.reset();
@@ -981,8 +983,9 @@ void GCNScheduleDAGMILive::runSchedStages() {
       RegionBegin = Region.first;
       RegionEnd = Region.second;
 
+     
       // Setup for scheduling the region and check whether it should be skipped.
-      if (!Stage->initGCNRegion()) {
+      if (IgnoreRegion[Stage->getRegionIdx()] || !Stage->initGCNRegion()) {
         Stage->advanceRegion();
         exitRegion();
         continue;
@@ -1189,7 +1192,6 @@ bool UnclusteredHighRPStage::initGCNRegion() {
   // or had minimum occupancy at the beginning of the stage (as long as
   // rescheduling of previous regions did not make occupancy drop back down to
   // the initial minimum).
-  unsigned DynamicVGPRBlockSize = DAG.MFI.getDynamicVGPRBlockSize();
   if (!DAG.RegionsWithExcessRP[RegionIdx] &&
       (DAG.MinOccupancy <= InitialOccupancy ||
        DAG.Pressure[RegionIdx].getOccupancy(MF) !=
@@ -1563,6 +1565,21 @@ bool PreRARematStage::isDead(MachineInstr *MI) {
 bool PreRARematStage::eliminateDeadMI() {
   bool AnyChanges = false;
 
+
+  // Before performing any IR modification record the parent region of each MI
+  // and the parent MBB of each region.
+  DenseMap<MachineInstr *, unsigned> MIRegion;
+  const unsigned NumRegions = DAG.Regions.size();
+  for (unsigned I = 0; I < NumRegions; ++I) {
+    RegionBoundaries Region = DAG.Regions[I];
+    for (auto MI = Region.first; MI != Region.second; ++MI)
+      MIRegion.insert({&*MI, I});
+    MachineBasicBlock *ParentMBB = Region.first->getParent();
+    if (Region.second != ParentMBB->end())
+      MIRegion.insert({&*Region.second, I});
+  }
+
+
   DenseMap<MachineInstr *, unsigned> FirstMIToRegion;
   DenseMap<MachineInstr *, unsigned> LastMIToRegion;
 
@@ -1594,17 +1611,29 @@ bool PreRARematStage::eliminateDeadMI() {
             if (LastMIToRegion.contains(&MI)) {
               unsigned UpdateRegion = LastMIToRegion[&MI];
               MachineInstr *UpdateInst = &*std::prev(MI.getIterator());
-              DAG.Regions[UpdateRegion].second = UpdateInst;
+              auto CandRegion = MIRegion.at(UpdateInst);
               LastMIToRegion.erase(&MI);
-              LastMIToRegion[UpdateInst] = UpdateRegion;
+              if (CandRegion == UpdateRegion) {
+                DAG.Regions[UpdateRegion].second = UpdateInst;
+                LastMIToRegion[UpdateInst] = UpdateRegion;
+              }
+              else {
+                DAG.IgnoreRegion[UpdateRegion] = true;
+              }
             }
 
             if (FirstMIToRegion.contains(&MI)) {
               unsigned UpdateRegion = FirstMIToRegion[&MI];
               MachineInstr *UpdateInst = &*std::next(MI.getIterator());
-              DAG.Regions[UpdateRegion].first = UpdateInst;
+              unsigned CandRegion = MIRegion.at(UpdateInst);
               FirstMIToRegion.erase(&MI);
-              FirstMIToRegion[UpdateInst] = UpdateRegion;
+              if (CandRegion == UpdateRegion) {
+                DAG.Regions[UpdateRegion].first = UpdateInst;
+                FirstMIToRegion[UpdateInst] = UpdateRegion;
+              }
+              else {
+                DAG.IgnoreRegion[UpdateRegion] = true;
+              }
             }
 
 
@@ -1745,6 +1774,22 @@ bool PreRARematStage::canRemat(Register Reg) {
   return true;
 }
 
+bool PreRARematStage::isRematIntoLegal(MachineBasicBlock *MBB) {
+  auto EntryMI = &*MBB->begin();
+  auto Opc = EntryMI->getOpcode();
+  if (Opc != AMDGPU::S_OR_B32 && Opc != AMDGPU::S_OR_B64)
+    return true;
+      
+  auto DefReg = EntryMI->getOperand(0).getReg();
+  if (DefReg.isPhysical()) {
+    auto DefMC = DefReg.asMCReg();
+    if (DefMC == reinterpret_cast<const SIRegisterInfo *>(DAG.TRI)->getExec()) {      
+      return false;
+    }
+  }
+  return true;
+}
+
 
 void PreRARematStage::collectRematSeeds(bool Aggressive) {
   unsigned MaxDepth = 0;
@@ -1802,6 +1847,8 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
         for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
           if (!Aggressive &&
               !isReachableFrom(TargetBlock, TheUseInst.getParent()))
+            continue;
+          if (!isRematIntoLegal(TheUseInst.getParent()))
             continue;
           MachineBasicBlock::iterator InstPt = &TheUseInst;
           RematCandidate R(Def, CI.getCycleDepth(InstPt->getParent()), I,
