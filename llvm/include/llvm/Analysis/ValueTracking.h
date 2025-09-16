@@ -44,7 +44,7 @@ class TargetLibraryInfo;
 class IntrinsicInst;
 template <typename T> class ArrayRef;
 
-constexpr unsigned MaxAnalysisRecursionDepth = 26;
+constexpr unsigned MaxAnalysisRecursionDepth = 6;
 
 /// The max limit of the search depth in DecomposeGEPExpression() and
 /// getUnderlyingObject().

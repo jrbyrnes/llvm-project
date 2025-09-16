@@ -32,7 +32,6 @@ class GCNSchedStage;
 
 enum class GCNSchedStageID : unsigned {
   OccInitialSchedule = 0,
-  RewriteSchedule = 1,
   UnclusteredHighRPReschedule = 2,
   ClusteredLowOccupancyReschedule = 3,
   PreRARematerialize = 4,
@@ -250,6 +249,8 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
 
   // Record regions with high register pressure.
   BitVector RegionsWithHighRP;
+
+  BitVector IgnoreRegion;
 
   // Record regions with excess register pressure over the physical register
   // limit. Register pressure in these regions usually will result in spilling.
@@ -826,6 +827,8 @@ private:
 
   unsigned LiveThruBias = 40;
   unsigned LiveInBias = 3;
+
+  bool isRematIntoLegal(MachineBasicBlock *MBB);
 
   bool canRemat(Register Reg);
 

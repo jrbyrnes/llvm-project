@@ -105,7 +105,7 @@ static cl::opt<bool>
     SinkInstsIntoCycle("sink-insts-to-avoid-spills",
                        cl::desc("Sink instructions into cycles to avoid "
                                 "register spills"),
-                       cl::init(false), cl::Hidden);
+                       cl::init(true), cl::Hidden);
 
 static cl::opt<unsigned> SinkIntoCycleLimit(
     "machine-sink-cycle-limit",
@@ -873,7 +873,7 @@ bool MachineSinking::run(MachineFunction &MF) {
     EverMadeChange = true;
   }
 
-  if (false && SinkInstsIntoCycle) {
+  if (SinkInstsIntoCycle) {
     SmallVector<MachineCycle *, 8> Cycles(CI->toplevel_cycles());
     SchedModel.init(STI);
     bool HasHighPressure;
