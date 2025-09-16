@@ -416,6 +416,10 @@ public:
     return true;
   }
 
+  virtual bool hackyHoist(const MachineInstr &MI) const {
+    return false;
+  }
+
   /// Re-issue the specified 'original' instruction at the
   /// specific location targeting a new destination register.
   /// The register in Orig->getOperand(0).getReg() will be substituted by

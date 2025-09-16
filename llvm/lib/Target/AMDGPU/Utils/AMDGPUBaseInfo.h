@@ -212,6 +212,9 @@ public:
   std::string toString() const;
 };
 
+unsigned getVGPRReductionToIncreaseWavesPerEU(const MCSubtargetInfo *STI,
+                                              unsigned NumVGPRs);
+
 /// \returns Wavefront size for given subtarget \p STI.
 unsigned getWavefrontSize(const MCSubtargetInfo *STI);
 
