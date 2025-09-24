@@ -87,9 +87,22 @@ void RegAllocBase::seedLiveRegs() {
 void RegAllocBase::allocatePhysRegs() {
   seedLiveRegs();
 
-  MachineCycleInfo CI;
-  CI.clear();
-  CI.compute(VRM->getMachineFunction());
+
+  MachineFunction &MF =VRM->getMachineFunction();
+   MachineCycleInfo CI;
+   CI.clear();
+  CI.compute(MF);
+
+  MachineCycle *FirstCycle;
+
+  for (auto &MBB : MF) {
+      auto Cycle = CI.getCycle(&MBB);
+      if (!Cycle)
+        continue;
+      FirstCycle = Cycle;
+      break;
+  }
+
 
   // Continue assigning vregs one at a time to available physical registers.
   while (const LiveInterval *VirtReg = dequeue()) {
@@ -102,7 +115,7 @@ void RegAllocBase::allocatePhysRegs() {
       for (auto &UseInst: MRI->use_nodbg_instructions(TheReg)) {
         auto UseBlock = UseInst.getParent();
         auto Cycle = CI.getCycle(UseBlock);
-        if (Cycle) {
+        if (Cycle && Cycle == FirstCycle) {
           FoundCycle = true;
           break;
         }
