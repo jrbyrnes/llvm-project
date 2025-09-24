@@ -95,20 +95,22 @@ void RegAllocBase::allocatePhysRegs() {
   while (const LiveInterval *VirtReg = dequeue()) {
 
 
-    
-    auto TheReg = VirtReg->reg();
-    bool FoundCycle = false;
-    for (auto &UseInst: MRI->use_nodbg_instructions(TheReg)) {
-      auto UseBlock = UseInst.getParent();
-      auto Cycle = CI.getCycle(UseBlock);
-      if (Cycle) {
-        FoundCycle = true;
-        break;
+  
+    if (TRI->disableLoopSpill()) {
+      auto TheReg = VirtReg->reg();
+      bool FoundCycle = false;
+      for (auto &UseInst: MRI->use_nodbg_instructions(TheReg)) {
+        auto UseBlock = UseInst.getParent();
+        auto Cycle = CI.getCycle(UseBlock);
+        if (Cycle) {
+          FoundCycle = true;
+          break;
+        }
       }
-    }
 
-    if (FoundCycle) {
-      const_cast<LiveInterval *>(VirtReg)->setWeight(huge_valf);
+      if (FoundCycle) {
+        const_cast<LiveInterval *>(VirtReg)->setWeight(huge_valf);
+      }
     }
 
     assert(!VRM->hasPhys(VirtReg->reg()) && "Register already assigned");
