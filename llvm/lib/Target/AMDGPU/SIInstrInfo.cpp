@@ -174,8 +174,8 @@ static bool resultDependsOnExec(const MachineInstr &MI) {
   switch (MI.getOpcode()) {
   default:
     break;
-  case AMDGPU::V_READFIRSTLANE_B32:
-    return true;
+  //case AMDGPU::V_READFIRSTLANE_B32:
+  //  return true;
   }
 
   return false;

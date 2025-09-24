@@ -1127,7 +1127,7 @@ bool MachineLICMImpl::IsLICMCandidate(MachineInstr &I, MachineLoop *CurLoop) {
   // communication which results are implicitly affected by the enclosing
   // control flows. It is not safe to hoist or sink such operations across
   // control flow.
-  if (I.isConvergent())
+  if (I.isConvergent() && !TII->hackyHoist(I))
     return false;
 
   if (!TII->shouldHoist(I, CurLoop))
@@ -1296,6 +1296,9 @@ bool MachineLICMImpl::IsProfitableToHoist(MachineInstr &MI,
   //   needs to be live in the loop. This lowers register pressure in the loop.
 
   if (HoistConstStores &&  isCopyFeedingInvariantStore(MI, MRI, TRI))
+    return true;
+
+  if (TII->hackyHoist(MI))
     return true;
 
   bool CheapInstr = IsCheapInstruction(MI);
@@ -1634,7 +1637,8 @@ unsigned MachineLICMImpl::Hoist(MachineInstr *MI, MachineBasicBlock *Preheader,
   }
   // First check whether we should hoist this instruction.
   bool HasExtractHoistableLoad = false;
-  if (!TII->hackyHoist(*MI) && (!IsLoopInvariantInst(*MI, CurLoop) ||
+
+  if ((!IsLoopInvariantInst(*MI, CurLoop) ||
       !IsProfitableToHoist(*MI, CurLoop))) {
     // If not, try unfolding a hoistable load.
     MI = ExtractHoistableLoad(MI, CurLoop);
