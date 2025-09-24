@@ -17,6 +17,7 @@
 #include "llvm/CodeGen/LiveInterval.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveRegMatrix.h"
+#include "llvm/CodeGen/MachineCycleAnalysis.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -86,8 +87,30 @@ void RegAllocBase::seedLiveRegs() {
 void RegAllocBase::allocatePhysRegs() {
   seedLiveRegs();
 
+  MachineCycleInfo CI;
+  CI.clear();
+  CI.compute(VRM->getMachineFunction());
+
   // Continue assigning vregs one at a time to available physical registers.
   while (const LiveInterval *VirtReg = dequeue()) {
+
+
+    
+    auto TheReg = VirtReg->reg();
+    bool FoundCycle = false;
+    for (auto &UseInst: MRI->use_nodbg_instructions(TheReg)) {
+      auto UseBlock = UseInst.getParent();
+      auto Cycle = CI.getCycle(UseBlock);
+      if (Cycle) {
+        FoundCycle = true;
+        break;
+      }
+    }
+
+    if (FoundCycle) {
+      const_cast<LiveInterval *>(VirtReg)->setWeight(huge_valf);
+    }
+
     assert(!VRM->hasPhys(VirtReg->reg()) && "Register already assigned");
 
     // Unused registers can appear when the spiller coalesces snippets.
