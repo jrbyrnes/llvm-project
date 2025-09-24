@@ -36,6 +36,8 @@ private:
   bool isWave32;
   BitVector RegPressureIgnoredUnits;
 
+  bool HasGoodPressure = false;
+
   /// Sub reg indexes for getRegSplitParts.
   /// First index represents subreg size from 1 to 16 DWORDs.
   /// The inner vector is sorted by bit offset.
@@ -108,6 +110,14 @@ public:
   // want to minimize the number of used registers.
   unsigned getCSRFirstUseCost() const override {
     return 100;
+  }
+
+  bool disableLoopSpill() const override {
+    return HasGoodPressure;
+  }
+
+  void setGoodPressure(bool IsPressureGood) {
+    HasGoodPressure = IsPressureGood;
   }
 
   const TargetRegisterClass *

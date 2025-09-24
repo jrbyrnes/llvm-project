@@ -958,6 +958,8 @@ public:
                         const VirtRegMap *VRM = nullptr,
                         const LiveRegMatrix *Matrix = nullptr) const;
 
+  virtual bool disableLoopSpill() const {return false;}
+
   /// A callback to allow target a chance to update register allocation hints
   /// when a register is "changed" (e.g. coalesced) to another register.
   /// e.g. On ARM, some virtual registers should target register pairs,

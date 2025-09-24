@@ -996,6 +996,19 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
     Stage->finalizeGCNSchedStage();
   }
+
+  bool FoundBad = false;
+  for (auto P : Pressure) {
+    auto NumVGPR = P.getVGPRNum(true);
+    if (NumVGPR >= 256) {
+      FoundBad = true;
+      break;
+    }
+  }
+
+  auto *SRI = const_cast<SIRegisterInfo *>(static_cast<const SIRegisterInfo *>(TRI));
+  SRI->setGoodPressure(!FoundBad);
+
 }
 
 #ifndef NDEBUG
