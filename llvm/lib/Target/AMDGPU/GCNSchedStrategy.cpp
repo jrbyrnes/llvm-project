@@ -1231,7 +1231,6 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");
 
@@ -1917,10 +1916,14 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
       bool FoundBlockUse = false;
       if (!Aggressive) {
         for (auto &TheUseInst : DAG.MRI.use_nodbg_instructions(TheReg)) {
-          for (auto &CycleBlock : Cycle->blocks())
-          if (TheUseInst.getParent() == CycleBlock && !BlocksWithIGLP.contains(TheUseInst.getParent())) {
-            FoundBlockUse = true;
-            break;
+          for (auto &CycleBlock : Cycle->blocks())  {
+            if (TheUseInst.getParent() == CycleBlock) {
+              const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG.TII);
+              if (SII->isDS(TheUseInst.getOpcode())) {
+                FoundBlockUse = true;
+                break;
+              }
+            }
           }
         }
       }
