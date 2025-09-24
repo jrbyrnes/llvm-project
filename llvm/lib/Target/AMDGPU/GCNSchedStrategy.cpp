@@ -1775,6 +1775,20 @@ bool PreRARematStage::initGCNSchedStage() {
     return false;
   }
 
+  collectRematSeeds(false, true);
+  if (Cands.empty()) {
+    return false;
+  }
+
+  if (!createRematPlan()) {
+    ;
+  }
+
+  if (!implementRematPlan(TII)) {
+    return false;
+  }
+
+
   bool NeedAggressive = false;
   for (unsigned I = 0; I < OptRegionRPReduction.size(); I++) {
     assert(LiveThruBias >= LiveInBias);
@@ -1873,7 +1887,7 @@ bool PreRARematStage::isRematIntoLegal(MachineBasicBlock *MBB) {
 }
 
 
-void PreRARematStage::collectRematSeeds(bool Aggressive) {
+void PreRARematStage::collectRematSeeds(bool Aggressive, bool SecondLoop) {
   unsigned MaxDepth = 0;
   unsigned MaxDepthRegion = 0;
 
@@ -1888,11 +1902,23 @@ void PreRARematStage::collectRematSeeds(bool Aggressive) {
   }
 
   if (!Aggressive) {
+    MachineCycle *FirstCycle = nullptr;
     for (unsigned I = 0, E = DAG.Regions.size(); I != E; I++) {
       auto TheBlock = DAG.Regions[I].first->getParent();
       auto Cycle = CI.getCycle(TheBlock);
       if (!Cycle)
         continue;
+      
+      if (!FirstCycle) {
+        FirstCycle = Cycle;
+        TargetBlock = nullptr;
+        if (SecondLoop)
+          continue;
+      }
+
+      if (SecondLoop && Cycle == FirstCycle)
+        continue;
+
       auto CurrDepth = Cycle->getDepth();
 
       if (CurrDepth > MaxDepth) {
