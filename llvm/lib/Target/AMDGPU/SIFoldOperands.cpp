@@ -23,6 +23,11 @@
 #define DEBUG_TYPE "si-fold-operands"
 using namespace llvm;
 
+static cl::opt<bool>
+    InflateToAVGPR("amdgpu-avgpr-inflation", cl::Hidden, cl::init(false),
+                   cl::desc("Enable register inflation to avgpr register class "
+                            "(which can be assigned to either AGPR or VGPR)."));
+
 namespace {
 
 /// Track a value we may want to fold into downstream users, applying
@@ -2761,9 +2766,21 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   bool IsIEEEMode = MFI->getMode().IEEE;
   bool HasNSZ = MFI->hasNoSignedZerosFPMath();
 
+  bool IsMultiWave = MFI->getMinWavesPerEU() > 1;
   bool Changed = false;
   for (MachineBasicBlock *MBB : depth_first(&MF)) {
     MachineOperand *CurrentKnownM0Val = nullptr;
+
+    for (auto &MI : *MBB) {
+
+      if (InflateToAVGPR && !IsMultiWave && ST->hasGFX90AInsts() &&
+          (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
+        MRI->recomputeRegClass(Reg);
+        continue;
+      }
+    }
+
+
     for (auto &MI : make_early_inc_range(*MBB)) {
       Changed |= tryFoldCndMask(MI);
 
