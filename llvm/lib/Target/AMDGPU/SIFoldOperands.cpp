@@ -2766,19 +2766,10 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   bool IsIEEEMode = MFI->getMode().IEEE;
   bool HasNSZ = MFI->hasNoSignedZerosFPMath();
 
-  bool IsMultiWave = MFI->getMinWavesPerEU() > 1;
   bool Changed = false;
   for (MachineBasicBlock *MBB : depth_first(&MF)) {
     MachineOperand *CurrentKnownM0Val = nullptr;
 
-    for (auto &MI : *MBB) {
-
-      if (InflateToAVGPR && !IsMultiWave && ST->hasGFX90AInsts() &&
-          (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
-        MRI->recomputeRegClass(Reg);
-        continue;
-      }
-    }
 
 
     for (auto &MI : make_early_inc_range(*MBB)) {
@@ -2819,6 +2810,22 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
           !tryFoldOMod(MI))
         Changed |= tryFoldClamp(MI);
     }
+
+
+  if (MFI->getMinWavesPerEU() > 1)
+    return Changed;
+
+
+  for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
+    Register Reg = Register::index2VirtReg(I);
+    const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+
+    if (InflateToAVGPR && ST->hasGFX90AInsts() &&
+        (TRI->isAGPRClass(RC) || TRI->isVGPRClass(RC))) {
+      bool Inflated = MRI->recomputeRegClass(Reg);
+      Changed |= Inflated;
+    }
+  }
 
     Changed |= tryOptimizeAGPRPhis(*MBB);
   }
