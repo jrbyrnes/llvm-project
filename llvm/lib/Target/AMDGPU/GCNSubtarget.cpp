@@ -197,8 +197,6 @@ GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
   RegBankInfo = std::make_unique<AMDGPURegisterBankInfo>(*this);
   InstSelector =
       std::make_unique<AMDGPUInstructionSelector>(*this, *RegBankInfo, TM);
-
-  ShouldCoerceIllegalTypes = CoerceIllegal;
 }
 
 const SelectionDAGTargetInfo *GCNSubtarget::getSelectionDAGInfo() const {
