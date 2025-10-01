@@ -63,6 +63,11 @@ static cl::opt<bool> GCNTrackers(
     cl::desc("Use the AMDGPU specific RPTrackers during scheduling"),
     cl::init(false));
 
+static cl::opt<bool> AlwaysRemat(
+    "amdgpu-ping-pong-remat", cl::Hidden,
+    cl::desc("Override compiler heuristics and performance remat for ping-pong"),
+    cl::init(true));
+
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
 GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
@@ -1742,7 +1747,7 @@ bool PreRARematStage::initGCNSchedStage() {
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
 
-  if (DAG.RegionsWithExcessRP.none() || DAG.Regions.size() == 1)
+  if ((!AlwaysRemat && DAG.RegionsWithExcessRP.none()) || DAG.Regions.size() == 1)
     return false;
 
   const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
