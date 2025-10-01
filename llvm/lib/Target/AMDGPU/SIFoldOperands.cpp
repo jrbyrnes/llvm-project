@@ -20,6 +20,13 @@
 #define DEBUG_TYPE "si-fold-operands"
 using namespace llvm;
 
+
+static cl::opt<bool> HackyHoistValu(
+    "amdgpu-move-valu-from-buffer-load", cl::Hidden,
+    cl::desc("Use a hack to hoist valu from buffer-load"),
+    cl::init(false));
+
+
 namespace {
 
 struct FoldCandidate {
@@ -2362,6 +2369,9 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
 
     Changed |= tryOptimizeAGPRPhis(*MBB);
   }
+
+  if (!HackyHoistValu)
+    Changed;
 
   for (MachineBasicBlock &MBB : MF) {
     SmallVector<MachineInstr *, 4> Hoistable;

@@ -100,7 +100,6 @@ void RegAllocBase::allocatePhysRegs() {
       break;
     }
   }
-
   // Continue assigning vregs one at a time to available physical registers.
   while (const LiveInterval *VirtReg = dequeue()) {
 

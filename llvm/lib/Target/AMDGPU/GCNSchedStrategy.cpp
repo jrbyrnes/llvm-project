@@ -68,6 +68,12 @@ static cl::opt<bool> AlwaysRemat(
     cl::desc("Override compiler heuristics and performance remat for ping-pong"),
     cl::init(true));
 
+static cl::opt<bool> RematInto(
+    "amdgpu-ping-pong-remat-into", cl::Hidden,
+    cl::desc("Remat into the loop"),
+    cl::init(true));
+
+
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
 GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)
@@ -1743,6 +1749,7 @@ bool PreRARematStage::eliminateDeadMI() {
   return AnyChanges;
 }
 
+
 bool PreRARematStage::initGCNSchedStage() {
   if (!GCNSchedStage::initGCNSchedStage())
     return false;
@@ -1751,7 +1758,6 @@ bool PreRARematStage::initGCNSchedStage() {
     return false;
 
   const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
-
   // Check maximum occupancy
   //if (ST.computeOccupancy(MF.getFunction(), MFI.getLDSSize()).first ==
   //    DAG.MinOccupancy)
@@ -1962,7 +1968,7 @@ void PreRARematStage::collectRematSeeds(bool Aggressive, bool SecondLoop) {
           for (auto &CycleBlock : Cycle->blocks())  {
             if (TheUseInst.getParent() == CycleBlock) {
               const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG.TII);
-              if (SII->isDS(TheUseInst.getOpcode())) {
+              if (RematInto && (SII->isDS(TheUseInst.getOpcode()) || SII->isFLAT(TheUseInst.getOpcode()) || SII->isMUBUF(TheUseInst.getOpcode())) || !RematInto) {
                 FoundBlockUse = true;
                 break;
               }
