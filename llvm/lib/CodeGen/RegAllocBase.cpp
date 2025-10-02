@@ -118,7 +118,7 @@ void RegAllocBase::allocatePhysRegs() {
       }
 
       if (FoundCycle) {
-        const_cast<LiveInterval *>(VirtReg)->setWeight(huge_valf);
+        const_cast<LiveInterval *>(VirtReg)->setWeight(VirtReg->weight() * 1000);
       }
     }
 
