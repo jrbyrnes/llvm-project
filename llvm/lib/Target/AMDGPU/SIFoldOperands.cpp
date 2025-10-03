@@ -2371,7 +2371,7 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   }
 
   if (!HackyHoistValu)
-    Changed;
+    return Changed;
 
   for (MachineBasicBlock &MBB : MF) {
     SmallVector<MachineInstr *, 4> Hoistable;

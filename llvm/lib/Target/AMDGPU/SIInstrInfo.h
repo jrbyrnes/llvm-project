@@ -1298,8 +1298,6 @@ public:
   void insertNoops(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
                    unsigned Quantity) const override;
 
-  bool hackyHoist(const MachineInstr &MI) const override;
-
   void insertReturn(MachineBasicBlock &MBB) const;
 
   /// Build instructions that simulate the behavior of a `s_trap 2` instructions

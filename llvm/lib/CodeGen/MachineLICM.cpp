@@ -1127,7 +1127,7 @@ bool MachineLICMImpl::IsLICMCandidate(MachineInstr &I, MachineLoop *CurLoop) {
   // communication which results are implicitly affected by the enclosing
   // control flows. It is not safe to hoist or sink such operations across
   // control flow.
-  if (I.isConvergent() && !TII->hackyHoist(I))
+  if (I.isConvergent())
     return false;
 
   if (!TII->shouldHoist(I, CurLoop))
@@ -1296,9 +1296,6 @@ bool MachineLICMImpl::IsProfitableToHoist(MachineInstr &MI,
   //   needs to be live in the loop. This lowers register pressure in the loop.
 
   if (HoistConstStores &&  isCopyFeedingInvariantStore(MI, MRI, TRI))
-    return true;
-
-  if (TII->hackyHoist(MI))
     return true;
 
   bool CheapInstr = IsCheapInstruction(MI);
