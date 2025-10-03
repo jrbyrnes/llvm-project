@@ -1968,7 +1968,7 @@ void PreRARematStage::collectRematSeeds(bool Aggressive, bool SecondLoop) {
           for (auto &CycleBlock : Cycle->blocks())  {
             if (TheUseInst.getParent() == CycleBlock) {
               const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG.TII);
-              if (RematInto && (SII->isDS(TheUseInst.getOpcode()) || SII->isFLAT(TheUseInst.getOpcode()) || SII->isMUBUF(TheUseInst.getOpcode())) || !RematInto) {
+              if ((RematInto && (SII->isDS(TheUseInst.getOpcode()) || SII->isFLAT(TheUseInst.getOpcode()) || SII->isMUBUF(TheUseInst.getOpcode()))) || !RematInto) {
                 FoundBlockUse = true;
                 break;
               }
