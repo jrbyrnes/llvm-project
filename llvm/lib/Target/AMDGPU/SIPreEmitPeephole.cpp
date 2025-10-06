@@ -604,8 +604,7 @@ void SIPreEmitPeephole::collectUnpackingCandidates(
     if (Instr.isMetaInstruction())
       continue;
     if ((Instr.isTerminator()) ||
-        (TII->isNeverCoissue(Instr) && !isUnpackingSupportedInstr(Instr)) ||
-        (SIInstrInfo::modifiesModeRegister(Instr) &&
+         (SIInstrInfo::modifiesModeRegister(Instr) &&
          Instr.modifiesRegister(AMDGPU::EXEC, TRI)))
       return;
 
