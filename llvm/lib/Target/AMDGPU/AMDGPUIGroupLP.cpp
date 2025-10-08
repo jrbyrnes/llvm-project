@@ -2417,9 +2417,18 @@ bool SchedGroup::canAddMI(const MachineInstr &MI) const {
            TII->isVALU(MI) && !TII->isMFMAorWMMA(MI) && !TII->isTRANS(MI) && !TII->isVMEM(MI))
     Result = true;
 
-  else if (((SGMask & SchedGroupMask::SALU) != SchedGroupMask::NONE) &&
-           TII->isSALU(MI))
-    Result = true;
+  else if (((SGMask & SchedGroupMask::SALU) != SchedGroupMask::NONE)) {
+    if (TII->isSALU(MI))
+      Result = true;
+    if (MI.isCopy() && MI.getOperand(1).isReg() && MI.getOperand(1).getReg().isVirtual()) {
+      const auto *const RC = DAG->MRI.getRegClass(MI.getOperand(1).getReg());
+      const auto *STI =
+        static_cast<const SIRegisterInfo *>(DAG->MRI.getTargetRegisterInfo());
+      if (STI->isSGPRClass(RC))
+        Result = true;
+    }
+  }
+
 
   else if (((SGMask & SchedGroupMask::MFMA) != SchedGroupMask::NONE) &&
            TII->isMFMAorWMMA(MI))
