@@ -614,7 +614,7 @@ void SIPreEmitPeephole::collectUnpackingCandidates(
         SchedModel.getWriteProcResBegin(InstrSchedClassDesc)->ReleaseAtCycle;
     TotalCyclesBetweenCandidates += Latency;
 
-    if (TotalCyclesBetweenCandidates >= NumMFMACycles - 1)
+    if (TotalCyclesBetweenCandidates >= NumMFMACycles)
       return;
     // Identify register dependencies between those used by the MFMA
     // instruction and the following packed instructions. Also checks for
@@ -632,6 +632,7 @@ void SIPreEmitPeephole::collectUnpackingCandidates(
 
     if (canUnpackingClobberRegister(Instr))
       return;
+
     // If it's a packed instruction, adjust latency: remove the packed
     // latency, add latency of two unpacked instructions (currently estimated
     // as 2 cycles).
@@ -639,7 +640,7 @@ void SIPreEmitPeephole::collectUnpackingCandidates(
     // TODO: improve latency handling based on instruction modeling.
     TotalCyclesBetweenCandidates += 2;
     // Subtract 1 to account for MFMA issue latency.
-    if (TotalCyclesBetweenCandidates < NumMFMACycles - 1)
+    if (TotalCyclesBetweenCandidates <= NumMFMACycles)
       InstrsToUnpack.insert(&Instr);
   }
   return;

@@ -60,6 +60,12 @@ static cl::opt<bool> UseCostHeur(
              "Experimentally, results are mixed, so this should be set on a "
              "case-by-case basis."));
 
+static cl::opt<bool> PackedFP32Are2(
+    "amdgpu-packedfp32-are-2valu", cl::Hidden,
+    cl::desc("Whether to count packedfp32 instructions as 2 fp32 in VALU sched groups."),
+    cl::init(false));
+
+
 // Components of the mask that determines which instruction types may be may be
 // classified into a SchedGroup.
 enum class SchedGroupMask {
@@ -146,6 +152,8 @@ private:
   // SchedGroup object.
   bool canAddMI(const MachineInstr &MI) const;
 
+  unsigned PackedFP32Count = 0;
+
 public:
   // Collection of SUnits that are classified as members of this group.
   SmallVector<SUnit *, 32> Collection;
@@ -176,7 +184,12 @@ public:
   void link(SchedGroup &OtherGroup);
 
   // Returns true if no more instructions may be added to this group.
-  bool isFull() const { return MaxSize && Collection.size() >= *MaxSize; }
+  bool isFull() const { 
+    if (!PackedFP32Are2)
+      return MaxSize && Collection.size() >= *MaxSize; 
+
+    return MaxSize && ((Collection.size() + PackedFP32Count) >= *MaxSize);
+  }
 
   // Append a constraint that SUs must meet in order to fit into this
   // SchedGroup. Since many rules involve the relationship between a SchedGroup
@@ -202,6 +215,9 @@ public:
                       << format_hex((int)SGMask, 10, true) << " adding "
                       << *SU.getInstr());
     Collection.push_back(&SU);
+    auto Opc = SU.getInstr()->getOpcode();
+    if (Opc == AMDGPU::V_PK_MUL_F32 || Opc == AMDGPU::V_PK_FMA_F32 || Opc == AMDGPU::V_PK_ADD_F32)
+      ++PackedFP32Count;
   }
 
   // Remove last element in the SchedGroup
