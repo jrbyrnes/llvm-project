@@ -1781,6 +1781,9 @@ void SIRegisterInfo::buildSpillLoadStore(
         if (!IsFirstSubReg || (Lane != LaneS))
           State &= ~RegState::Define;
         MIB.addReg(ValueReg, RegState::Implicit | State);
+        if (State & RegState::Define && !(State & RegState::Kill)) {
+          MIB.addReg(ValueReg, RegState::Implicit);
+        }
       }
       RemEltSize -= 4;
     }
@@ -1879,8 +1882,11 @@ void SIRegisterInfo::buildSpillLoadStore(
 
     bool IsSrcDstDef = SrcDstRegState & RegState::Define;
     if (NeedSuperRegImpOperand &&
-        (IsFirstSubReg || (IsLastSubReg && !IsSrcDstDef)))
+        (IsFirstSubReg || (IsLastSubReg && !IsSrcDstDef))) {
       MIB.addReg(ValueReg, RegState::Implicit | SrcDstRegState);
+      if (SrcDstRegState & RegState::Define && !(SrcDstRegState & RegState::Kill))
+        MIB.addReg(ValueReg, RegState::Implicit);
+    }
 
     // The epilog restore of a wwm-scratch register can cause undesired
     // optimization during machine-cp post PrologEpilogInserter if the same
