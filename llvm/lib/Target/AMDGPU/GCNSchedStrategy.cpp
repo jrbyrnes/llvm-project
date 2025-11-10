@@ -83,6 +83,29 @@ static cl::opt<unsigned> PendingQueueLimit(
         "Max (Available+Pending) size to inspect pending queue (0 disables)"),
     cl::init(256));
 
+namespace {
+
+struct VGPRThresholdParser : public cl::parser<unsigned> {
+  VGPRThresholdParser(cl::Option &O) : cl::parser<unsigned>(O) {}
+
+  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg, unsigned &Value) {
+    if (Arg.getAsInteger(0, Value))
+      return O.error("'" + Arg + "' value invalid for uint argument!");
+
+    if (Value > 100)
+      return O.error("'" + Arg + "' value must be in the range [0, 100]!");
+
+    return false;
+  }
+};
+
+} // end anonymous namespace
+
+static cl::opt<unsigned, false, VGPRThresholdParser> VGPRThresholdPercent(
+    "amdgpu-vgpr-excess-threshold-percent", cl::init(90), cl::Hidden,
+    cl::desc(
+        "Percent of maximum available VGPRs to use as excess RP threshold"));
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 #define DUMP_MAX_REG_PRESSURE
 static cl::opt<bool> PrintMaxRPRegUsageBeforeScheduler(
@@ -101,6 +124,11 @@ static cl::opt<bool> PrintMaxRPRegUsageAfterScheduler(
 static cl::opt<bool> DisableRewriteMFMAFormSchedStage(
     "amdgpu-disable-rewrite-mfma-form-sched-stage", cl::Hidden,
     cl::desc("Disable rewrite mfma rewrite scheduling stage"), cl::init(true));
+
+#ifndef NDEBUG
+extern cl::opt<int> DebugOnlyBlock;
+#endif
+
 
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
@@ -158,7 +186,13 @@ void GCNSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   SGPRCriticalLimit -= std::min(SGPRLimitBias + ErrorMargin, SGPRCriticalLimit);
   VGPRCriticalLimit -= std::min(VGPRLimitBias + ErrorMargin, VGPRCriticalLimit);
   SGPRExcessLimit -= std::min(SGPRLimitBias + ErrorMargin, SGPRExcessLimit);
-  VGPRExcessLimit -= std::min(VGPRLimitBias + ErrorMargin, VGPRExcessLimit);
+  if (VGPRThresholdPercent) {
+    float Ratio = (float)VGPRThresholdPercent / 100.0;
+    VGPRExcessLimit *= Ratio;
+  }
+  else 
+    VGPRExcessLimit -= std::min(VGPRLimitBias + ErrorMargin, VGPRExcessLimit);
+
   LLVM_DEBUG(dbgs() << "VGPRCriticalLimit = " << VGPRCriticalLimit
                     << ", VGPRExcessLimit = " << VGPRExcessLimit
                     << ", SGPRCriticalLimit = " << SGPRCriticalLimit
@@ -257,10 +291,7 @@ unsigned GCNSchedStrategy::getStructuralStallCycles(SchedBoundary &Zone,
   }
 
   // Query HazardRecognizer for sequence-dependent hazard penalties.
-  // AMDGPU currently installs GCNHazardRecognizer for MI scheduling only in
-  // the post-RA configuration without vreg liveness.
-  if (!DAG->hasVRegLiveness() && Zone.HazardRec &&
-      Zone.HazardRec->isEnabled()) {
+  if (Zone.HazardRec && Zone.HazardRec->isEnabled()) {
     auto *HR = static_cast<GCNHazardRecognizer *>(Zone.HazardRec);
     Stall = std::max(Stall, HR->getHazardWaitStates(MI));
   }
@@ -282,6 +313,8 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
 
   Pressure.clear();
   MaxPressure.clear();
+
+  unsigned OldVGPRPressure = VGPRPressure;
 
   // We try to use the cached PressureDiffs in the ScheduleDAG whenever
   // possible over querying the RegPressureTracker.
@@ -336,6 +369,8 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
   unsigned NewSGPRPressure = Pressure[AMDGPU::RegisterPressureSets::SReg_32];
   unsigned NewVGPRPressure = Pressure[AMDGPU::RegisterPressureSets::VGPR_32];
 
+
+
   // If two instructions increase the pressure of different register sets
   // by the same amount, the generic scheduler will prefer to schedule the
   // instruction that increases the set with the least amount of registers,
@@ -346,7 +381,8 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
   // FIXME: Better heuristics to determine whether to prefer SGPRs or VGPRs.
   const unsigned MaxVGPRPressureInc = 16;
   bool ShouldTrackVGPRs = VGPRPressure + MaxVGPRPressureInc >= VGPRExcessLimit;
-  bool ShouldTrackSGPRs = !ShouldTrackVGPRs && SGPRPressure >= SGPRExcessLimit;
+  bool ShouldTrackSGPRs =
+      false && !ShouldTrackVGPRs && SGPRPressure >= SGPRExcessLimit;
 
   // FIXME: We have to enter REG-EXCESS before we reach the actual threshold
   // to increase the likelihood we don't go over the limits.  We should improve
@@ -389,6 +425,14 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
       Cand.RPDelta.CriticalMax.setUnitInc(VGPRDelta);
     }
   }
+
+
+  int VGPRReduction = (int)NewVGPRPressure - (int)OldVGPRPressure;
+  if (true) {
+      Cand.RPDelta.CriticalMax =
+          PressureChange(AMDGPU::RegisterPressureSets::VGPR_32);
+          Cand.RPDelta.CriticalMax.setUnitInc(VGPRReduction);
+  }
 }
 
 static bool shouldCheckPending(SchedBoundary &Zone,
@@ -411,7 +455,7 @@ static SUnit *pickOnlyChoice(SchedBoundary &Zone,
 
 void GCNSchedStrategy::printCandidateDecision(const SchedCandidate &Current,
                                               const SchedCandidate &Preferred) {
-  LLVM_DEBUG({
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", {
     dbgs() << "Prefer:\t\t";
     DAG->dumpNode(*Preferred.SU);
 
@@ -449,10 +493,9 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       VGPRPressure = T->getPressure().getArchVGPRNum();
     }
   }
-  LLVM_DEBUG(dbgs() << "Available Q:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Available Q:\n");
   ReadyQueue &AQ = Zone.Available;
   for (SUnit *SU : AQ) {
-
     SchedCandidate TryCand(ZonePolicy);
     initCandidate(TryCand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
                   VGPRPressure, IsBottomUp);
@@ -463,7 +506,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       // Initialize resource delta if needed in case future heuristics query it.
       if (TryCand.ResDelta == SchedResourceDelta())
         TryCand.initResourceDelta(Zone.DAG, SchedModel);
-      LLVM_DEBUG(printCandidateDecision(Cand, TryCand));
+      printCandidateDecision(Cand, TryCand);
       Cand.setBest(TryCand);
     } else {
       printCandidateDecision(TryCand, Cand);
@@ -473,10 +516,9 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
   if (!shouldCheckPending(Zone, SchedModel))
     return;
 
-  LLVM_DEBUG(dbgs() << "Pending Q:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Pending Q:\n");
   ReadyQueue &PQ = Zone.Pending;
   for (SUnit *SU : PQ) {
-
     SchedCandidate TryCand(ZonePolicy);
     initCandidate(TryCand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
                   VGPRPressure, IsBottomUp);
@@ -487,7 +529,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       // Initialize resource delta if needed in case future heuristics query it.
       if (TryCand.ResDelta == SchedResourceDelta())
         TryCand.initResourceDelta(Zone.DAG, SchedModel);
-      LLVM_DEBUG(printCandidateDecision(Cand, TryCand));
+      printCandidateDecision(Cand, TryCand);
       IsPending = true;
       Cand.setBest(TryCand);
     } else {
@@ -521,7 +563,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
 
   bool BotPending = false;
   // See if BotCand is still valid (because we previously scheduled from Top).
-  LLVM_DEBUG(dbgs() << "Picking from Bot:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Picking from Bot:\n");
   if (!BotCand.isValid() || BotCand.SU->isScheduled ||
       BotCand.Policy != BotPolicy) {
     BotCand.reset(CandPolicy());
@@ -530,7 +572,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
                       /*IsBottomUp=*/true);
     assert(BotCand.Reason != NoCand && "failed to find the first candidate");
   } else {
-    LLVM_DEBUG(traceCandidate(BotCand));
+    DEBUG_WITH_TYPE("machine-scheduler-verbose", traceCandidate(BotCand));
 #ifndef NDEBUG
     if (VerifyScheduling) {
       SchedCandidate TCand;
@@ -546,7 +588,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
 
   bool TopPending = false;
   // Check if the top Q has a better candidate.
-  LLVM_DEBUG(dbgs() << "Picking from Top:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Picking from Top:\n");
   if (!TopCand.isValid() || TopCand.SU->isScheduled ||
       TopCand.Policy != TopPolicy) {
     TopCand.reset(CandPolicy());
@@ -555,7 +597,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
                       /*IsBottomUp=*/false);
     assert(TopCand.Reason != NoCand && "failed to find the first candidate");
   } else {
-    LLVM_DEBUG(traceCandidate(TopCand));
+    DEBUG_WITH_TYPE("machine-scheduler-verbose", traceCandidate(TopCand));
 #ifndef NDEBUG
     if (VerifyScheduling) {
       SchedCandidate TCand;
@@ -570,8 +612,10 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
   }
 
   // Pick best from BotCand and TopCand.
-  LLVM_DEBUG(dbgs() << "Top Cand: "; traceCandidate(TopCand);
-             dbgs() << "Bot Cand: "; traceCandidate(BotCand););
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", {
+    dbgs() << "Top Cand: "; traceCandidate(TopCand);
+    dbgs() << "Bot Cand: "; traceCandidate(BotCand);
+  });
   SchedCandidate Cand = BotPending ? TopCand : BotCand;
   SchedCandidate TryCand = BotPending ? BotCand : TopCand;
   PickedPending = BotPending && TopPending;
@@ -587,7 +631,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
     Cand.setBest(TryCand);
   }
 
-  LLVM_DEBUG(dbgs() << "Picking: "; traceCandidate(Cand););
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", { dbgs() << "Picking: "; traceCandidate(Cand); });
 
   IsTopNode = Cand.AtTop;
   return Cand.SU;
@@ -610,7 +654,8 @@ SUnit *GCNSchedStrategy::pickNode(bool &IsTopNode) {
       if (!SU) {
         CandPolicy NoPolicy;
         TopCand.reset(NoPolicy);
-        pickNodeFromQueue(Top, NoPolicy, DAG->getTopRPTracker(), TopCand,
+        setPolicy(TopCand.Policy, /*IsPostRA=*/false, Top, &Bot);
+        pickNodeFromQueue(Top, TopCand.Policy, DAG->getTopRPTracker(), TopCand,
                           PickedPending,
                           /*IsBottomUp=*/false);
         assert(TopCand.Reason != NoCand && "failed to find a candidate");
@@ -622,7 +667,8 @@ SUnit *GCNSchedStrategy::pickNode(bool &IsTopNode) {
       if (!SU) {
         CandPolicy NoPolicy;
         BotCand.reset(NoPolicy);
-        pickNodeFromQueue(Bot, NoPolicy, DAG->getBotRPTracker(), BotCand,
+        setPolicy(BotCand.Policy, /*IsPostRA=*/false, Bot, &Top);
+        pickNodeFromQueue(Bot, BotCand.Policy, DAG->getBotRPTracker(), BotCand,
                           PickedPending,
                           /*IsBottomUp=*/true);
         assert(BotCand.Reason != NoCand && "failed to find a candidate");
@@ -697,7 +743,7 @@ GCNSchedStageID GCNSchedStrategy::getNextStage() const {
 
 bool GCNSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                                            SchedCandidate &TryCand,
-                                           SchedBoundary *Zone) const {
+                                           SchedBoundary *Zone) {
   // Initialize the candidate if needed.
   if (!Cand.isValid()) {
     TryCand.Reason = NodeOrder;
@@ -740,13 +786,10 @@ GCNMaxOccupancySchedStrategy::GCNMaxOccupancySchedStrategy(
     const MachineSchedContext *C, bool IsLegacyScheduler)
     : GCNSchedStrategy(C) {
   SchedStages.push_back(GCNSchedStageID::OccInitialSchedule);
-  if (!DisableRewriteMFMAFormSchedStage)
-    SchedStages.push_back(GCNSchedStageID::RewriteMFMAForm);
   SchedStages.push_back(GCNSchedStageID::UnclusteredHighRPReschedule);
   SchedStages.push_back(GCNSchedStageID::ClusteredLowOccupancyReschedule);
   SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
-  if (IsLegacyScheduler)
-    GCNTrackersOverride = std::nullopt;
+  UseGCNTrackers = GCNTrackers & !IsLegacyScheduler;
 }
 
 GCNMaxILPSchedStrategy::GCNMaxILPSchedStrategy(const MachineSchedContext *C)
@@ -1198,10 +1241,22 @@ void GCNScheduleDAGMILive::runSchedStages() {
     for (auto Region : Regions) {
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+
+#ifndef NDEBUG
+      // Temporarily disable debug output for non-matching blocks.
+      bool SavedDebugFlag = DebugFlag;
+      if (DebugOnlyBlock >= 0 &&
+          DebugOnlyBlock != (int)RegionBegin->getParent()->getNumber())
+        DebugFlag = false;
+#endif
+
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
         exitRegion();
+#ifndef NDEBUG
+        DebugFlag = SavedDebugFlag;
+#endif
         continue;
       }
 
@@ -1216,12 +1271,37 @@ void GCNScheduleDAGMILive::runSchedStages() {
         reinterpret_cast<GCNRPTracker *>(UpwardTracker)
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
+
+
+                             //errs() << "LiveInPressure: "; DownwardTracker->getPressure().dump();
+            GCNRegPressure LiveThru;
+            //errs() << "LiveOutPressure: "; UpwardTracker->getPressure().dump();
+
+            for (auto LR : DownwardTracker->getLiveRegs()) {
+              bool FoundUse = false;
+              for (auto &UseMI : MRI.use_nodbg_instructions(LR.first)) {
+                if (UseMI.getParent() == RegionBegin->getParent()) {
+                  FoundUse = true;
+                  break;
+                }
+
+              }
+              if (!FoundUse) {
+                LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
+              }
+            }
+
+            //errs() << "LiveThruPressure: "; LiveThru.dump();
       }
 
       ScheduleDAGMILive::schedule();
       Stage->finalizeGCNRegion();
       Stage->advanceRegion();
       exitRegion();
+
+#ifndef NDEBUG
+      DebugFlag = SavedDebugFlag;
+#endif
     }
 
     Stage->finalizeGCNSchedStage();
@@ -1882,6 +1962,10 @@ void PreRARematStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
+  DAG.Pressure[RegionIdx] = PressureAfter;
+  SIMachineFunctionInfo *SMI = static_cast<SIMachineFunctionInfo *>(&DAG.MFI);
+  SMI->setMaxRP(DAG.Pressure[RegionIdx].getArchVGPRNum());
+  return;
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
   LLVM_DEBUG(dbgs() << "Region: " << RegionIdx << ".\n");

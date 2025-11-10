@@ -1083,6 +1083,8 @@ public:
   /// available instruction, or NULL if there are multiple candidates.
   LLVM_ABI SUnit *pickOnlyChoice();
 
+  void checkAvailable();
+
   /// Dump the state of the information that tracks resource usage.
   LLVM_ABI void dumpReservedCycles() const;
   LLVM_ABI void dumpScheduledState() const;
@@ -1333,6 +1335,10 @@ protected:
                          SchedCandidate &Candidate);
 
   void reschedulePhysReg(SUnit *SU, bool isTop);
+
+  unsigned getClusterID(bool isTop) const {
+    return isTop ? TopClusterID : BotClusterID;
+  }
 };
 
 /// PostGenericScheduler - Interface to the scheduling algorithm used by
@@ -1374,7 +1380,7 @@ public:
 
   SUnit *pickNode(bool &IsTopNode) override;
 
-  SUnit *pickNodeBidirectional(bool &IsTopNode);
+  SUnit *pickNodeBidirectional(bool &IsTopNode, bool &IsPending);
 
   void scheduleTree(unsigned SubtreeID) override {
     llvm_unreachable("PostRA scheduler does not support subtree analysis.");
@@ -1397,9 +1403,10 @@ public:
   }
 
 protected:
-  virtual bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand);
+  virtual bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone = nullptr);
 
-  void pickNodeFromQueue(SchedBoundary &Zone, SchedCandidate &Cand);
+  void pickNodeFromQueue(SchedBoundary &Zone, SchedCandidate &Cand,
+                         bool &IsPending);
 };
 
 /// If ReorderWhileClustering is set to true, no attempt will be made to
