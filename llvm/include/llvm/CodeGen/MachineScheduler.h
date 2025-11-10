@@ -1332,6 +1332,10 @@ protected:
                          SchedCandidate &Candidate);
 
   void reschedulePhysReg(SUnit *SU, bool isTop);
+
+  unsigned getClusterID(bool isTop) const {
+    return isTop ? TopClusterID : BotClusterID;
+  }
 };
 
 /// PostGenericScheduler - Interface to the scheduling algorithm used by
