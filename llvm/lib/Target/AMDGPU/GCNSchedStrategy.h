@@ -16,9 +16,7 @@
 #include "GCNRegPressure.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
-#include "llvm/CodeGen/MachineBasicBlock.h"
-#include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
-#include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
+#include "llvm/ADT/PriorityWorklist.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
@@ -42,6 +40,7 @@ enum class GCNSchedStageID : unsigned {
 #ifndef NDEBUG
 raw_ostream &operator<<(raw_ostream &OS, const GCNSchedStageID &StageID);
 #endif
+
 
 /// This is a minimal scheduler strategy.  The main difference between this
 /// and the GenericScheduler is that GCNSchedStrategy uses different
@@ -72,8 +71,8 @@ protected:
   /// invisible to scheduling heuristics. However, in certain scenarios (such as
   /// avoiding register spilling), it may be beneficial to consider scheduling
   /// these not-yet-ready instructions.
-  bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
-                           SchedBoundary *Zone) const;
+  virtual bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
+                                   SchedBoundary *Zone);
 
   void printCandidateDecision(const SchedCandidate &Current,
                               const SchedCandidate &Preferred);
@@ -110,8 +109,6 @@ protected:
   mutable GCNUpwardRPTracker UpwardTracker;
 
   bool UseGCNTrackers = false;
-
-  std::optional<bool> GCNTrackersOverride;
 
 public:
   // schedule() have seen register pressure over the critical limits and had to
@@ -160,9 +157,7 @@ public:
 
   bool hasNextStage() const;
 
-  bool useGCNTrackers() const {
-    return GCNTrackersOverride.value_or(UseGCNTrackers);
-  }
+  bool useGCNTrackers() const { return UseGCNTrackers; }
 
   GCNSchedStageID getNextStage() const;
 
@@ -174,6 +169,7 @@ public:
 /// The goal of this scheduling strategy is to maximize kernel occupancy (i.e.
 /// maximum number of waves per simd).
 class GCNMaxOccupancySchedStrategy final : public GCNSchedStrategy {
+protected:
 public:
   GCNMaxOccupancySchedStrategy(const MachineSchedContext *C,
                                bool IsLegacyScheduler = false);
