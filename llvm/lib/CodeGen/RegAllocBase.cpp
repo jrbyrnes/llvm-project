@@ -40,6 +40,12 @@ using namespace llvm;
 
 STATISTIC(NumNewQueued, "Number of new live ranges queued");
 
+
+static cl::opt<bool> DisableLoopSpill(
+    "disable-loop-spill", cl::Hidden,
+    cl::desc("Artifically inflate the weight of LIs in loops to discourage spilling inside loops."),
+    cl::init(false));
+
 // Temporary verification option until we can put verification inside
 // MachineVerifier.
 static cl::opt<bool, true>
@@ -105,7 +111,7 @@ void RegAllocBase::allocatePhysRegs() {
 
 
   
-    if (TRI->disableLoopSpill()) {
+    if (DisableLoopSpill && TRI->disableLoopSpill()) {
       auto TheReg = VirtReg->reg();
       bool FoundCycle = false;
       for (auto &UseInst: MRI->use_nodbg_instructions(TheReg)) {
