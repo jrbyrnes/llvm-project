@@ -80,6 +80,8 @@ protected:
   bool ATTRIBUTE = DEFAULT;
 #include "AMDGPUGenSubtargetInfo.inc"
 
+  bool DisablePostMISched = false;
+
 private:
   SIInstrInfo InstrInfo;
   SITargetLowering TLInfo;
