@@ -503,8 +503,8 @@ def : HWWriteRes<WriteLDS,               [HWLGKM,   HWRC], 20>;
 def : HWWriteRes<WriteSALU,              [HWSALU,   HWRC], 2>;
 def : HWWriteRes<WriteSFPU,              [HWSALU,   HWRC], 4>;
 def : HWWriteRes<WriteSMEM,              [HWLGKM,   HWRC], 20>;
-def : HWWriteRes<WriteVMEM,              [HWVMEM,   HWRC], 320>;
-def : HWWriteRes<WriteBarrier,           [HWBranch],       2000>;
+def : HWWriteRes<WriteVMEM,              [HWVMEM,   HWRC], 1>;
+def : HWWriteRes<WriteBarrier,           [HWBranch],       1>;
 
 def : InstRW<[WriteCopy], (instrs COPY)>;
 
