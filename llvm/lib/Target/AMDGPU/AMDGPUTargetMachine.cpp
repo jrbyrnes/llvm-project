@@ -632,6 +632,7 @@ static ScheduleDAGInstrs *createSIMachineScheduler(MachineSchedContext *C) {
 }
 
 static bool isMLWorkload(const Function &F) {
+  return true;
   Attribute WorkloadAttr = F.getFnAttribute("amdgpu-workload-type");
   return WorkloadAttr.isValid() && WorkloadAttr.getValueAsString() == "ml";
 }
