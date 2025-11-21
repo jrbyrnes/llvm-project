@@ -160,6 +160,20 @@ void AMDGPUMLSchedStrategy::collectUse() {
 bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
                                                 SchedCandidate &Cand,
                                                 SchedBoundary *Zone) const {
+  bool CandIsLoad = Cand.SU->getInstr()->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2;
+  if (CandIsLoad) {
+    if (Cand.Reason > RegCritical)
+      Cand.Reason = RegCritical;
+    return true;
+  }
+
+  bool TryIsLoad = TryCand.SU->getInstr()->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2;
+  if (TryIsLoad) {
+    TryCand.Reason = RegCritical;
+    return true;
+  }
+
+
   if (CriticalResourceIdx == SchedModel->getNumProcResourceKinds() + 1)
     return false;
 
@@ -191,6 +205,12 @@ bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
   if (SecondaryResourceIdx != CriticalResourceIdx &&
       tryCriticalResourceDependency(TryCand, Cand, Zone,
                                     SecondaryResourceIdx)) {
+    return true;
+  }
+
+  if (SecondaryResourceIdx != CriticalResourceIdx && SecondaryResourceIdx != 8 &&
+      tryCriticalResourceDependency(TryCand, Cand, Zone,
+                                    8)) {
     return true;
   }
 
@@ -282,6 +302,10 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
     unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
     ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+  }
+
+  else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
+    return 0;
   }
 
   if (ReadyCycle > CurrCycle)
@@ -378,6 +402,15 @@ bool AMDGPUMLSchedStrategy::tryCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone,
+                                      CriticalResourceIdx)) {
+      return TryCand.Reason != NoCand;
+    }
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone,
+                                      8)) {
+      return TryCand.Reason != NoCand;
+    }
+
     // For loops that are acyclic path limited, aggressively schedule for
     // latency. Within an single cycle, whenever CurrMOps > 0, allow normal
     // heuristics to take precedence.
@@ -385,10 +418,6 @@ bool AMDGPUMLSchedStrategy::tryCandidate(SchedCandidate &Cand,
         tryLatency(TryCand, Cand, *Zone))
       return TryCand.Reason != NoCand;
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone,
-                                      CriticalResourceIdx)) {
-      return TryCand.Reason != NoCand;
-    }
   }
 
   // Keep clustered nodes together to encourage downstream peephole
@@ -596,7 +625,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
 
 
-  #if 0
+  #if 1
   // Prefer WMMA if there is no hazard.
   if (Cand.SU && Cand.SU->getInstr() && TryCand.SU &&
       TryCand.SU->getInstr()) {
