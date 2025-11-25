@@ -34,8 +34,12 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   HWUInfo.resize(NumPR);
   for (unsigned I = 0; I < NumPR; I++) {
     HWUInfo[I].setRes(SM.getProcResource(I));
+    HWUInfo[I].Idx = I;
   }
-  CriticalResourceIdx = NumPR + 1;
+  if (NumPR > 8)
+    HWUInfo[8].IsAsync = true;
+  if (NumPR > 4)
+    HWUInfo[4].IsIgnoreable = true;
 }
 
 static bool shouldCheckPending(SchedBoundary &Zone,
@@ -69,10 +73,18 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
              PI = SchedModel->getWriteProcResBegin(SC),
              PE = SchedModel->getWriteProcResEnd(SC);
          PI != PE; ++PI) {
-      HWUInfo[PI->ProcResourceIdx].schedule(SU, PI->ReleaseAtCycle);
-    }
 
-    updateCriticalResource();
+      unsigned I = 0;
+      bool FoundIt = false;
+      for (; I < HWUInfo.size(); I++) {
+        if (HWUInfo[I].Idx == PI->ProcResourceIdx) {
+          FoundIt = true;
+          break;
+        }
+      }
+      assert(FoundIt);
+      HWUInfo[I].schedule(SU, PI->ReleaseAtCycle);
+    }
 
     if (SII->isMFMAorWMMA(*MI)) {
       SchedMFMA.push_back(SU);
@@ -83,47 +95,6 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   }
 
   GCNSchedStrategy::schedNode(SU, IsTopNode);
-}
-
-void AMDGPUMLSchedStrategy::updateCriticalResource() {
-  unsigned MaxCycles = 0;
-
-  unsigned I = 0;
-  bool Updated = false;
-
-  for (auto &HWUI : HWUInfo) {
-    if (I == 4) {
-      I++;
-      continue;
-    }
-    if (HWUI.getTotalCycles() > MaxCycles) {
-      assert(HWUI.getProcRes() && "Missing resource?");
-      CriticalResourceIdx = I;
-      MaxCycles = HWUI.getTotalCycles();
-    }
-    I++;
-  }
-  unsigned SecondaryCycles = 0;
-  I = 0;
-
-  for (auto &HWUI : HWUInfo) {
-    if (I == 4) {
-      I++;
-      continue;
-    }
-    if (HWUI.getTotalCycles() > SecondaryCycles &&
-        HWUI.getTotalCycles() <= MaxCycles && CriticalResourceIdx != I) {
-      assert(HWUI.getProcRes() && "Missing resource?");
-      SecondaryResourceIdx = I;
-      Updated = true;
-      SecondaryCycles = HWUI.getTotalCycles();
-    }
-    I++;
-  }
-
-  if (!Updated) {
-    SecondaryResourceIdx = CriticalResourceIdx;
-  }
 }
 
 void AMDGPUMLSchedStrategy::collectUse() {
@@ -153,8 +124,22 @@ void AMDGPUMLSchedStrategy::collectUse() {
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
     }
   }
+}
 
-  updateCriticalResource();
+static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
+  // Highest priority should be first.
+  sort(HWUInfo, [](HardwareUnitInfo &A, HardwareUnitInfo &B) {
+    // The most demanded resource is the highest priority
+    if (A.getTotalCycles() != B.getTotalCycles())
+      return A.getTotalCycles() > B.getTotalCycles();
+
+    // In ties -- prefer the resource with longer latency instructions
+    if (A.size() != B.size())
+      return A.size() < B.size();
+
+    // Default to HardwareUnitInfo order
+    return A.Idx < B.Idx;
+  });
 }
 
 bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
@@ -173,113 +158,145 @@ bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
     return true;
   }
 
+  for (unsigned I = 0; I < HWUInfo.size(); I++) {
 
-  if (CriticalResourceIdx == SchedModel->getNumProcResourceKinds() + 1)
-    return false;
+    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
 
-  unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
+    HardwareUnitInfo HWUI = HWUInfo[I];
+    unsigned CriticalUsage = HWUI.getTotalCycles();
 
-  HardwareUnitInfo HWUI = HWUInfo[CriticalResourceIdx];
-  unsigned CriticalUsage = HWUI.getTotalCycles();
+    if (MaxAvailableLat > CriticalUsage)
+      return false;
 
-  if (MaxAvailableLat > CriticalUsage)
-    return false;
+    bool CandUsesCrit = HWUI.contains(Cand.SU);
+    bool TryCandUsesCrit = HWUI.contains(TryCand.SU);
 
-  bool CandUsesCrit = HWUI.contains(Cand.SU);
-  bool TryCandUsesCrit = HWUI.contains(TryCand.SU);
+    if (!CandUsesCrit && !TryCandUsesCrit)
+      continue;
 
-  if (!CandUsesCrit && !TryCandUsesCrit)
-    return false;
+    if (CandUsesCrit && !TryCandUsesCrit) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+      return true;
+    }
 
-  if (CandUsesCrit && !TryCandUsesCrit) {
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
-    return true;
-  }
+    if (!CandUsesCrit && TryCandUsesCrit) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
 
-  if (!CandUsesCrit && TryCandUsesCrit) {
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+      return true;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+      return true;
+    }
+
+    if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+      return true;
+    }
+
     TryCand.Reason = RegCritical;
     return true;
   }
 
-  if (SecondaryResourceIdx != CriticalResourceIdx &&
-      tryCriticalResourceDependency(TryCand, Cand, Zone,
-                                    SecondaryResourceIdx)) {
-    return true;
-  }
-
-  if (SecondaryResourceIdx != CriticalResourceIdx && SecondaryResourceIdx != 8 &&
-      tryCriticalResourceDependency(TryCand, Cand, Zone,
-                                    8)) {
-    return true;
-  }
-
-  if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
-    return true;
-  }
-
-  TryCand.Reason = RegCritical;
-  return true;
+  return false;
 }
 
 bool AMDGPUMLSchedStrategy::tryCriticalResourceDependency(
     SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone,
-    unsigned ResourceIdx) const {
-  if (ResourceIdx == SchedModel->getNumProcResourceKinds() + 1)
-    return false;
+    bool IsAsync) const {
 
-  unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
-  HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
-  unsigned CriticalUsage = HWUI.getTotalCycles();
+  auto IsCandidateResource = [Zone, this](unsigned ResourceIdx) {
+    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    unsigned CriticalUsage = HWUI.getTotalCycles();
 
-  if (MaxAvailableLat > CriticalUsage)
-    return false;
+    if (MaxAvailableLat > CriticalUsage)
+      return false;
 
-  auto *TargetSU = HWUI.getNextTargetSU();
-  if (!TargetSU)
-    return false;
+    auto *TargetSU = HWUI.getNextTargetSU();
+    if (!TargetSU)
+      return false;
 
-  bool CandEnables = DAG->IsReachable(TargetSU, Cand.SU);
-  bool TryCandEnables = DAG->IsReachable(TargetSU, TryCand.SU);
+    return true;
+  };
 
-  if (!CandEnables && !TryCandEnables)
-    return false;
+  auto TryEnablesResource = [&Cand, &TryCand, this](unsigned ResourceIdx) {
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    auto *TargetSU = HWUI.getNextTargetSU();
 
-  if (CandEnables && !TryCandEnables) {
+    bool CandEnables =
+        TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
+    bool TryCandEnables =
+        TargetSU != TryCand.SU && DAG->IsReachable(TargetSU, TryCand.SU);
+
+    if (!CandEnables && !TryCandEnables)
+      return false;
+
+    if (CandEnables && !TryCandEnables) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+
+      return true;
+    }
+
+    if (!CandEnables && TryCandEnables) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
+
+    // Both enable, prefer the critical path.
+    bool CandHeight = Cand.SU->getHeight();
+    bool TryCandHeight = TryCand.SU->getHeight();
+
+    if (CandHeight > TryCandHeight) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+
+      return true;
+    }
+
+    if (CandHeight < TryCandHeight) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
+
+    // Same critical path, just prefer original candidate.
     if (Cand.Reason > RegCritical)
       Cand.Reason = RegCritical;
 
     return true;
+  };
+
+  if (IsAsync) {
+    for (unsigned I = 0; I < HWUInfo.size(); I++) {
+      if (!HWUInfo[I].IsAsync)
+        continue;
+
+      if (!IsCandidateResource(I))
+        return false;
+
+      return TryEnablesResource(I);
+    }
+    return false;
   }
 
-  if (!CandEnables && TryCandEnables) {
-    TryCand.Reason = RegCritical;
-    return true;
+  for (unsigned I = 0; I < HWUInfo.size(); I++) {
+    // If we have encountered a resource that is not critical, then neither
+    // candidate enables a critical resource
+    if (!IsCandidateResource(I))
+      return false;
+
+    bool Enabled = TryEnablesResource(I);
+    // If neither has enabled the resource, continue to the next resource
+    if (Enabled)
+      return true;
   }
-
-  // Both enable, prefer the critical path.
-  bool CandHeight = Cand.SU->getHeight();
-  bool TryCandHeight = TryCand.SU->getHeight();
-
-  if (CandHeight > TryCandHeight) {
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
-
-    return true;
-  }
-
-  if (CandHeight < TryCandHeight) {
-    TryCand.Reason = RegCritical;
-    return true;
-  }
-
-  // Same critical path, just prefer original candidate.
-  if (Cand.Reason > RegCritical)
-    Cand.Reason = RegCritical;
-
-  return true;
+  return false;
 }
 
 unsigned
@@ -315,7 +332,7 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
 
 bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                                                 SchedCandidate &TryCand,
-                                                SchedBoundary *Zone) const {
+                                                SchedBoundary *Zone) {
   // Initialize the candidate if needed.
   if (!Cand.isValid()) {
     TryCand.Reason = NodeOrder;
@@ -347,7 +364,16 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
 
+    sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
       return TryCand.Reason != NoCand;
     }
   }
@@ -355,9 +381,9 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   return false;
 }
 
-bool AMDGPUMLSchedStrategy::tryCandidate(SchedCandidate &Cand,
-                                         SchedCandidate &TryCand,
-                                         SchedBoundary *Zone) const {
+bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
+                                                 SchedCandidate &TryCand,
+                                                 SchedBoundary *Zone) {
   // Initialize the candidate if needed.
   if (!Cand.isValid()) {
     TryCand.Reason = FirstValid;
@@ -398,16 +424,15 @@ bool AMDGPUMLSchedStrategy::tryCandidate(SchedCandidate &Cand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
 
+    sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone,
-                                      CriticalResourceIdx)) {
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
       return TryCand.Reason != NoCand;
     }
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone,
-                                      8)) {
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
       return TryCand.Reason != NoCand;
     }
 
