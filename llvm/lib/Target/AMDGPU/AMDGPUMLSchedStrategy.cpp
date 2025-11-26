@@ -13,6 +13,7 @@
 
 #include "AMDGPUMLSchedStrategy.h"
 #include "llvm/CodeGen/MachineScheduler.h"
+#include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "machine-scheduler"
 
@@ -47,6 +48,10 @@ AMDGPUMLSchedStrategy::AMDGPUMLSchedStrategy(const MachineSchedContext *C)
 }
 
 void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
+  // ML scheduling strategy is only done top-down to support new resource
+  // balancing heuristics.
+  RegionPolicy.OnlyTopDown = true;
+  RegionPolicy.OnlyBottomUp = false;
   GCNSchedStrategy::initialize(DAG);
 
   const MCSchedModel &SM = MF->getSubtarget().getSchedModel();
@@ -131,7 +136,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
   SchedMFMA.clear();
   SchedEXP.clear();
   SchedTDM.clear();
-  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+  //const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
     HWUI.reset();
@@ -829,6 +834,7 @@ SUnit *AMDGPUMLSchedStrategy::pickNode(bool &IsTopNode) {
 
   return SU;
 }
+
 
 AMDGPUMLPostSchedStrategy::AMDGPUMLPostSchedStrategy(
     const MachineSchedContext *C)
