@@ -1440,6 +1440,10 @@ public:
     return HasMinimum3Maximum3F16;
   }
 
+  /// \returns true if the target supports using software to avoid hazards
+  /// between VMEM and VALU instructions in some instances.
+  bool hasSoftwareHazardMode() const { return getGeneration() >= GFX12; }
+
   bool hasMin3Max3PKF16() const { return HasMin3Max3PKF16; }
 
   bool hasTanhInsts() const { return HasTanhInsts; }

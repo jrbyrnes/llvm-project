@@ -44,8 +44,9 @@ enum {
   GFX90A = 8,
   GFX940 = 9,
   GFX11 = 10,
-  GFX12 = 11,
-  GFX1250 = 12,
+  GFX1170 = 11,
+  GFX12 = 12,
+  GFX1250 = 13,
 };
 }
 
@@ -523,6 +524,7 @@ enum Id { // HwRegCode, (6) [5:0]
   ID_HW_ID1 = 23,
   ID_HW_ID2 = 24,
   ID_POPS_PACKER = 25,
+  ID_SCHED_MODE = 26,
   ID_PERF_SNAPSHOT_DATA_gfx11 = 27,
   ID_IB_STS2 = 28,
   ID_SHADER_CYCLES = 29,

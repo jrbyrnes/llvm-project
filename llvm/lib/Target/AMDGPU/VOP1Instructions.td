@@ -263,15 +263,18 @@ let HasOMod = 0, HasClamp = 0 in {
 let isReMaterializable = 1 in {
 let SchedRW = [WriteDoubleCvt] in {
 // OMod clears exceptions when set in this instruction
+let IsDPMACCInstruction = 1 in
 defm V_CVT_I32_F64 : VOP1Inst <"v_cvt_i32_f64", VOP_I32_F64_SPECIAL_OMOD,  fp_to_sint>;
 
 let mayRaiseFPException = 0 in {
 defm V_CVT_F64_I32 : VOP1Inst <"v_cvt_f64_i32", VOP1_F64_I32, sint_to_fp>;
 }
 
+let IsDPMACCInstruction = 1 in {
 defm V_CVT_F32_F64 : VOP1Inst <"v_cvt_f32_f64", VOP_F32_F64,  fpround>;
 defm V_CVT_F64_F32 : VOP1Inst <"v_cvt_f64_f32", VOP_F64_F32,  any_fpextend>;
 // OMod clears exceptions when set in this instruction
+} // IsDPMACCInstruction = 1
 defm V_CVT_U32_F64 : VOP1Inst <"v_cvt_u32_f64", VOP_I32_F64_SPECIAL_OMOD,  fp_to_uint>;
 
 let mayRaiseFPException = 0 in {
@@ -349,7 +352,7 @@ defm V_RSQ_F32 : VOP1Inst <"v_rsq_f32", VOP_F32_F32, AMDGPUrsq>;
 defm V_SQRT_F32 : VOP1Inst <"v_sqrt_f32", VOP_F32_F32, int_amdgcn_sqrt>;
 } // End TRANS = 1, SchedRW = [WriteTrans32]
 
-let TRANS = 1, SchedRW = [WriteTrans64] in {
+let TRANS = 1, SchedRW = [WriteTrans64], IsDPMACCInstruction = 1 in {
 defm V_RCP_F64 : VOP1Inst <"v_rcp_f64", VOP_F64_F64_NO_DPP, AMDGPUrcp>;
 defm V_RSQ_F64 : VOP1Inst <"v_rsq_f64", VOP_F64_F64_NO_DPP, AMDGPUrsq>;
 defm V_SQRT_F64 : VOP1Inst <"v_sqrt_f64", VOP_F64_F64_NO_DPP, int_amdgcn_sqrt>;
@@ -369,7 +372,7 @@ defm V_FFBH_U32 : VOP1Inst <"v_ffbh_u32", VOP_I32_I32, AMDGPUffbh_u32>;
 defm V_FFBL_B32 : VOP1Inst <"v_ffbl_b32", VOP_I32_I32, AMDGPUffbl_b32>;
 defm V_FFBH_I32 : VOP1Inst <"v_ffbh_i32", VOP_I32_I32, AMDGPUffbh_i32>;
 
-let SchedRW = [WriteDoubleAdd] in {
+let SchedRW = [WriteDoubleAdd], IsDPMACCInstruction = 1 in {
 defm V_FREXP_EXP_I32_F64 : VOP1Inst <"v_frexp_exp_i32_f64", VOP_I32_F64_SPECIAL_OMOD, int_amdgcn_frexp_exp>;
 defm V_FREXP_MANT_F64 : VOP1Inst <"v_frexp_mant_f64", VOP_F64_F64, int_amdgcn_frexp_mant>;
 let FPDPRounding = 1 in {
@@ -493,7 +496,7 @@ let SubtargetPredicate = isGFX7GFX8GFX9 in {
 } // End SubtargetPredicate = isGFX7GFX8GFX9
 
 let SubtargetPredicate = isGFX7Plus in {
-  let SchedRW = [WriteDoubleAdd] in {
+  let SchedRW = [WriteDoubleAdd], IsDPMACCInstruction = 1 in {
     defm V_TRUNC_F64 : VOP1Inst<"v_trunc_f64", VOP_F64_F64, ftrunc>;
     defm V_CEIL_F64  : VOP1Inst<"v_ceil_f64", VOP_F64_F64, fceil>;
     defm V_RNDNE_F64 : VOP1Inst<"v_rndne_f64", VOP_F64_F64, froundeven>;
