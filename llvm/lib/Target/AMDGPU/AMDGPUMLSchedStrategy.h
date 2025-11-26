@@ -152,7 +152,7 @@ protected:
   void collectUse();
 
   bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
-                           SchedBoundary *Zone);
+                           SchedBoundary *Zone) override;
 
   void pickNodeFromQueue(SchedBoundary &Zone, const CandPolicy &ZonePolicy,
                          const RegPressureTracker &RPTracker,
