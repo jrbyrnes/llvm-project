@@ -20,18 +20,11 @@ namespace llvm {
 class HardwareUnitInfo {
 private:
   const MCProcResourceDesc *ProcRes = nullptr;
-  // Ideally these would be sorted on how much they enable a secondary resource,
-  // but that creates a chicken and egg problem and compile time explosion.
   SmallSetVector<SUnit *, 16> PrioritySUs;
   SmallSetVector<SUnit *, 16> AllSUs;
   unsigned TotalCycles = 0;
 
 public:
-  // TODO -- handle this stuff better.
-  bool IsIgnoreable = false;
-  bool IsAsync = false;
-  unsigned Idx;
-
   HardwareUnitInfo(const MCProcResourceDesc *Res) : ProcRes(Res) {};
   HardwareUnitInfo() {}
 
@@ -39,8 +32,6 @@ public:
 
   unsigned size() { return AllSUs.size(); }
   SUnit *getTargetSU() { return *PrioritySUs.begin(); }
-
-  // TODO -- should we allow looking past the a single depth?
   SUnit *getNextTargetSU() {
     for (auto *PrioritySU : PrioritySUs) {
       if (!PrioritySU->isTopReady())
@@ -129,8 +120,8 @@ public:
 
 class AMDGPUMLSchedStrategy final : public GCNSchedStrategy {
 protected:
-  bool tryCandidateBalanced(SchedCandidate &Cand, SchedCandidate &TryCand,
-                            SchedBoundary *Zone);
+  bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
+                    SchedBoundary *Zone) const override;
 
   SmallVector<SUnit *, 16> SchedDSR;
 
@@ -140,8 +131,10 @@ protected:
 
   void collectUse();
 
+  void updateCriticalResource();
+
   bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
-                           SchedBoundary *Zone);
+                           SchedBoundary *Zone) const;
 
   void pickNodeFromQueue(SchedBoundary &Zone, const CandPolicy &ZonePolicy,
                          const RegPressureTracker &RPTracker,
@@ -162,10 +155,12 @@ public:
 
   bool tryCriticalResourceDependency(SchedCandidate &TryCand,
                                      SchedCandidate &Cand, SchedBoundary *Zone,
-                                     bool IsAsyncPipe = false) const;
+                                     unsigned ResourceIdx) const;
 
   unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle) const;
 
+  unsigned CriticalResourceIdx;
+  unsigned SecondaryResourceIdx;
 };
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
