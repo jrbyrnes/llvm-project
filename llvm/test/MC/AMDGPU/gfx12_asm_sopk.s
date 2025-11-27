@@ -247,6 +247,9 @@ s_getreg_b32 s0, hwreg(HW_REG_WAVE_HW_ID1)
 s_getreg_b32 s0, hwreg(HW_REG_WAVE_HW_ID2)
 // GFX12: encoding: [0x18,0xf8,0x80,0xb8]
 
+s_getreg_b32 s0, hwreg(HW_REG_WAVE_SCHED_MODE)
+// GFX12: encoding: [0x1a,0xf8,0x80,0xb8]
+
 s_getreg_b32 s0, hwreg(HW_REG_WAVE_DVGPR_ALLOC_LO)
 // GFX12: encoding: [0x1f,0xf8,0x80,0xb8]
 
