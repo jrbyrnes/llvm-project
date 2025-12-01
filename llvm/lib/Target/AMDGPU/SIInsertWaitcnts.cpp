@@ -67,7 +67,7 @@ static cl::opt<bool> SoftwareHazardModeFlag(
     "amdgpu-software-hazard-mode",
     cl::desc("Enable expert scheduling mode 2 for all kernel functions (GFX12+ "
              "only)"),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 namespace {
 // Class of object that encapsulates latest instruction counter score
