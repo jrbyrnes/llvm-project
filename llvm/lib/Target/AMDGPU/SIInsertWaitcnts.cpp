@@ -67,7 +67,7 @@ static cl::opt<bool> ForceEmitZeroLoadFlag(
 static cl::opt<bool> ExpertSchedulingModeFlag(
     "amdgpu-expert-scheduling-mode",
     cl::desc("Enable expert scheduling mode 2 for all functions (GFX12+ only)"),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 namespace {
 // Get the maximum wait count value for a given counter type.
