@@ -705,8 +705,9 @@ static ScheduleDAGInstrs *createSIMachineScheduler(MachineSchedContext *C) {
 }
 
 static bool isMLWorkload(const Function &F) {
-  Attribute WorkloadAttr = F.getFnAttribute("amdgpu-workload-type");
-  return WorkloadAttr.isValid() && WorkloadAttr.getValueAsString() == "ml";
+  return true;
+  //Attribute WorkloadAttr = F.getFnAttribute("amdgpu-workload-type");
+  //return WorkloadAttr.isValid() && WorkloadAttr.getValueAsString() == "ml";
 }
 
 static ScheduleDAGInstrs *
@@ -1825,7 +1826,7 @@ bool GCNPassConfig::addRegAssignAndRewriteOptimized() {
   addPass(&GCNPreRALongBranchRegID);
 
   addPass(createSGPRAllocPass(true));
-
+  addPreRewrite();
   // Commit allocated register changes. This is mostly necessary because too
   // many things rely on the use lists of the physical registers, such as the
   // verifier. This is only necessary with allocators which use LiveIntervals,
@@ -2516,6 +2517,7 @@ Error AMDGPUCodeGenPassBuilder::addRegAssignmentOptimized(
   else
     addMachineFunctionPass(RAGreedyPass({onlyAllocateSGPRs, "sgpr"}), PMW);
 
+  addPreRewrite(addPass);
   // Commit allocated register changes. This is mostly necessary because too
   // many things rely on the use lists of the physical registers, such as the
   // verifier. This is only necessary with allocators which use LiveIntervals,
