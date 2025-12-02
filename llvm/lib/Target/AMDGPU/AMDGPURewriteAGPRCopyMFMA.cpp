@@ -550,6 +550,64 @@ void AMDGPURewriteAGPRCopyMFMAImpl::eliminateSpillsOfReassignedVGPRs() const {
 bool AMDGPURewriteAGPRCopyMFMAImpl::run(MachineFunction &MF) const {
   // This only applies on subtargets that have a configurable AGPR vs. VGPR
   // allocation.
+
+  for (auto &MBB : MF) {
+    for (auto &MI : MBB) {
+      if (!MI.isCopy())
+        continue;
+      
+      auto &Def = MI.getOperand(0);
+      assert(Def.isReg());
+
+      if (Def.getReg().isPhysical())
+        continue;
+
+      const TargetRegisterClass *AssignedRC = TRI.getRegClassForReg(MRI, Def.getReg());
+      if (!TRI.isSGPRClass(AssignedRC))
+        continue;
+      
+      auto &Src = MI.getOperand(1);
+      if (!Src.isReg() || Src.getReg().isPhysical())
+        continue;
+      auto &LI = LIS.getInterval(Src.getReg());
+
+      if (!LI.hasSubRanges())
+        continue;
+      if (!Src.getSubReg())
+        continue;
+      
+      auto SubReg = Src.getSubReg();
+      LaneBitmask UseMask = TRI.getSubRegIndexLaneMask(SubReg);
+      SmallVector<MachineInstr *, 4> NewMIs;
+      
+      for (const LiveInterval::SubRange &SR : LI.subranges()) {
+        if (!(SR.LaneMask & UseMask).any())
+          continue;
+
+        if (LIS.getInstructionIndex(MI) < SR.begin()->start) {
+          const DebugLoc &DL = MI.getDebugLoc();
+          SmallVector<unsigned, 4> Indexes;
+          bool Legit = TRI.getCoveringSubRegIndexes(TRI.getRegClassForReg(MRI, Src.getReg()),
+                                       SR.LaneMask,
+                                       Indexes);
+                
+          if (!Legit)
+            break;
+          NewMIs.push_back(BuildMI(MBB, MI, DL, TII.get(AMDGPU::S_MOV_B32)).addReg(Src.getReg(), 0, Indexes[0]).addImm(0));
+        }
+      }
+
+
+      for (auto *NewMI : NewMIs) {
+        LIS.InsertMachineInstrInMaps(*NewMI);
+      }      
+    }
+
+  }
+
+  LIS.reanalyze(MF);
+
+
   if (!ST.hasGFX90AInsts())
     return false;
 
