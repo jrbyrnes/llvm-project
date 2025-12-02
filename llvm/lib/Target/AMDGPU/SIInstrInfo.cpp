@@ -9897,7 +9897,8 @@ SIInstrInfo::getSerializableTargetIndices() const {
 ScheduleHazardRecognizer *
 SIInstrInfo::CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
                                             const ScheduleDAG *DAG) const {
-  return new GCNHazardRecognizer(DAG->MF);
+  return new GCNHazardRecognizer(DAG->MF,
+                                 GCNHazardRecognizer::OperatingMode::PostRA);
 }
 
 /// This is the hazard recognizer used at -O0 by the PostRAHazardRecognizer
@@ -9905,7 +9906,7 @@ SIInstrInfo::CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
 ScheduleHazardRecognizer *
 SIInstrInfo::CreateTargetPostRAHazardRecognizer(const MachineFunction &MF,
                                                 MachineLoopInfo *MLI) const {
-  return new GCNHazardRecognizer(MF, MLI);
+  return new GCNHazardRecognizer(MF,  GCNHazardRecognizer::OperatingMode::HazardRecognizerMode, MLI);
 }
 
 // Called during:
@@ -9918,7 +9919,8 @@ SIInstrInfo::CreateTargetMIHazardRecognizer(const InstrItineraryData *II,
   // post-RA scheduling; we can tell that we're post-RA because we don't
   // track VRegLiveness.
   if (!DAG->hasVRegLiveness())
-    return new GCNHazardRecognizer(DAG->MF);
+    return new GCNHazardRecognizer(DAG->MF,
+                                   GCNHazardRecognizer::OperatingMode::PostRA);
   return TargetInstrInfo::CreateTargetMIHazardRecognizer(II, DAG);
 }
 
