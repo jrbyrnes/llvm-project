@@ -13,13 +13,18 @@
 #include "GCNHazardRecognizer.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
+#include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/ScheduleDAG.h"
+#include "llvm/CodeGen/ScheduleHazardRecognizer.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/TargetParser/TargetParser.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "gcn-hazard-rec"
 
 namespace {
 
@@ -56,25 +61,211 @@ static cl::opt<unsigned>
 static bool shouldRunLdsBranchVmemWARHazardFixup(const MachineFunction &MF,
                                                  const GCNSubtarget &ST);
 
-GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF)
-    : IsHazardRecognizerMode(false), CurrCycleInstr(nullptr), MF(MF),
-      ST(MF.getSubtarget<GCNSubtarget>()), TII(*ST.getInstrInfo()),
-      TRI(TII.getRegisterInfo()), TSchedModel(TII.getSchedModel()),
-      ClauseUses(TRI.getNumRegUnits()), ClauseDefs(TRI.getNumRegUnits()) {
+GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF,
+                                         OperatingMode Mode)
+    : Mode(Mode), IsHazardRecognizerMode(Mode == OperatingMode::HazardRecognizerMode),
+      CurrCycleInstr(nullptr), MF(MF), ST(MF.getSubtarget<GCNSubtarget>()),
+      TII(*ST.getInstrInfo()), TRI(TII.getRegisterInfo()),
+      TSchedModel(TII.getSchedModel()), ClauseUses(TRI.getNumRegUnits()),
+      ClauseDefs(TRI.getNumRegUnits()) {
   MaxLookAhead = MF.getRegInfo().isPhysRegUsed(AMDGPU::AGPR0) ? 19 : 5;
   RunLdsBranchVmemWARHazardFixup = shouldRunLdsBranchVmemWARHazardFixup(MF, ST);
 }
 
+GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF)
+    : GCNHazardRecognizer(MF, OperatingMode::HazardRecognizerMode) {}
+
+void GCNHazardRecognizer::preRAReset() {
+  WMMAPipelineState.clear();
+  LastIssuedWasTRANS32 = false;
+}
+
 void GCNHazardRecognizer::Reset() {
   EmittedInstrs.clear();
+  if (isPreRA() || isPostRA())
+    preRAReset();
 }
 
 void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
   EmitInstruction(SU->getInstr());
 }
 
+void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
+  updateWMMAPipelineState(*MI);
+  updateTRANS32State(*MI);
+  
+  // Control instructions don't consume a pipeline slot - they can be issued
+  // "for free" without advancing the cycle.
+  if (!SIInstrInfo::isControlInstr(*MI))
+    preRAAdvanceCycle();
+}
+
+unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) const {
+  // No hazard if pipeline is empty.
+  if (WMMAPipelineState.empty())
+    return 0;
+
+  // Check what the current slot allows.
+  WMMASlotType CurrentSlot = WMMAPipelineState.front();
+
+  // Determine the instruction type.
+  bool IsWMMA = SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI);
+  bool IsVALU = SIInstrInfo::isVALU(MI) && !IsWMMA;
+  bool IsMem = SIInstrInfo::isVMEM(MI) || SIInstrInfo::isDS(MI);
+  bool IsControl = SIInstrInfo::isControlInstr(MI);
+  bool IsSALU = SIInstrInfo::isSALU(MI) && !IsControl;
+
+  if (IsControl)
+    return 0;
+
+  LLVM_DEBUG(dbgs() << "checkWMMACoexecHazard: CurrentSlot=" << (int)CurrentSlot
+                    << ", IsWMMA=" << IsWMMA << ", IsVALU=" << IsVALU
+                    << ", IsMem=" << IsMem << ", IsSALU=" << IsSALU << "\n");
+
+  // Check co-execution compatibility based on slot type.
+  switch (CurrentSlot) {
+  case WMMASlotType::Execute:
+    if (IsControl)
+      return 0;
+    break;
+
+  case WMMASlotType::MemCoExec:
+    // MemCoExec slots: can co-issue mem or salu.
+    if (IsMem || IsSALU)
+      return 0;
+    break;
+
+  case WMMASlotType::ValuCoExec:
+    // ValuCoExec slots: can co-issue mem, salu, valu, or wmma.
+    if (IsMem || IsSALU || IsVALU || IsWMMA)
+      return 0;
+    break;
+
+  case WMMASlotType::ValuBlocked:
+    // ValuBlocked slots: VALU blocked, can only issue wmma/mem/salu.
+    if (IsMem || IsSALU || IsWMMA)
+      return 0;
+    break;
+
+  case WMMASlotType::WMMABlocked:
+    // WMMABlocked slots: WMMA blocked, can only issue valu/mem/salu.
+    if (IsMem || IsSALU || IsVALU)
+      return 0;
+    break;
+  }
+
+  // If we get here, the instruction can't be issued in the current slot.
+  // Count how many cycles until we find a compatible slot.
+  unsigned StallCycles = 0;
+  for (WMMASlotType Slot : WMMAPipelineState) {
+    switch (Slot) {
+    case WMMASlotType::Execute:
+      if (IsSALU)
+        return StallCycles;
+      break;
+    case WMMASlotType::MemCoExec:
+      if (IsMem || IsSALU)
+        return StallCycles;
+      break;
+    case WMMASlotType::ValuCoExec:
+      if (IsMem || IsSALU || IsVALU || IsWMMA)
+        return StallCycles;
+      break;
+    case WMMASlotType::ValuBlocked:
+      if (IsMem || IsSALU || IsWMMA)
+        return StallCycles;
+      break;
+    case WMMASlotType::WMMABlocked:
+      if (IsMem || IsSALU || IsVALU)
+        return StallCycles;
+      break;
+    }
+    ++StallCycles;
+  }
+
+  // No compatible slot found in pipeline, stall until pipeline drains.
+  return StallCycles;
+}
+
+unsigned GCNHazardRecognizer::checkTRANS32Hazard(const MachineInstr &MI) const {
+  if (!LastIssuedWasTRANS32)
+    return 0;
+
+  // TRANS32 can be followed by VALU or control instructions without stall
+  if (SIInstrInfo::isVALU(MI) || SIInstrInfo::isControlInstr(MI))
+    return 0;
+
+  // Any other instruction requires a 1-cycle stall
+  LLVM_DEBUG(dbgs() << "checkTRANS32Hazard: stall after TRANS32 for: " << MI);
+  return 1;
+}
+
+void GCNHazardRecognizer::updateTRANS32State(const MachineInstr &MI) {
+  LastIssuedWasTRANS32 = SIInstrInfo::isTRANS(MI);
+}
+
+void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
+  if (!SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI))
+    return;
+
+  if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
+    return;
+
+  unsigned Latency = TSchedModel.computeInstrLatency(&MI);
+
+  LLVM_DEBUG(dbgs() << "updateWMMAPipelineState: WMMA/SWMMAC emitted, Latency=" << Latency << "\n");
+
+  SmallVector<WMMASlotType, 20> NewSlots;
+  bool IsSWMMAC = SIInstrInfo::isSWMMAC(MI);
+
+  // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
+  NewSlots.append(2, WMMASlotType::MemCoExec);
+  NewSlots.append(1, WMMASlotType::ValuCoExec);
+  NewSlots.append(2, WMMASlotType::MemCoExec);
+  NewSlots.append(2, WMMASlotType::ValuBlocked);
+
+  // Merge with existing pipeline state.
+  // The new slots start from cycle 0, but we need to merge with any
+  // remaining cycles in the pipeline.
+  size_t MergeLen = std::min(WMMAPipelineState.size(), NewSlots.size());
+
+  // For overlapping cycles, keep the more restrictive slot type.
+  auto MoreRestrictive = [](WMMASlotType A, WMMASlotType B) -> WMMASlotType {
+    if (A == WMMASlotType::Execute || B == WMMASlotType::Execute)
+      return WMMASlotType::Execute;
+
+    bool BlockWMMA = (A == WMMASlotType::MemCoExec || A == WMMASlotType::WMMABlocked ||
+                      B == WMMASlotType::MemCoExec || B == WMMASlotType::WMMABlocked);
+
+    bool BlockVALU = (A == WMMASlotType::MemCoExec || A == WMMASlotType::ValuBlocked ||
+                      B == WMMASlotType::MemCoExec || B == WMMASlotType::ValuBlocked);
+
+    if (BlockWMMA && BlockVALU)
+      return WMMASlotType::MemCoExec;
+    if (BlockWMMA)
+      return WMMASlotType::WMMABlocked;
+    if (BlockVALU)
+      return WMMASlotType::ValuBlocked;
+
+    return WMMASlotType::ValuCoExec;
+  };
+
+  for (size_t I = 0; I < MergeLen; ++I) {
+    WMMAPipelineState[I] = MoreRestrictive(WMMAPipelineState[I], NewSlots[I]);
+  }
+
+  // Append any remaining new slots.
+  if (NewSlots.size() > WMMAPipelineState.size()) {
+    WMMAPipelineState.append(NewSlots.begin() + WMMAPipelineState.size(),
+                             NewSlots.end());
+  }
+}
+
 void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
   CurrCycleInstr = MI;
+
+  if (isPreRA() || isPostRA())
+    preRAEmitInstruction(MI);
 }
 
 static bool isDivFMas(unsigned Opcode) {
@@ -180,6 +371,17 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
 
   if (MI->isBundle())
    return NoHazard;
+
+  // Hazards which cannot be mitigated with S_NOPs.
+  if (!IsHazardRecognizerMode) {
+    if (checkWMMACoexecHazard(*MI) > 0)
+      return Hazard;
+    if (checkTRANS32Hazard(*MI) > 0)
+      return Hazard;
+  }
+
+  if (isPreRA())
+    return NoHazard;
 
   if (SIInstrInfo::isSMRD(*MI) && checkSMRDHazards(MI) > 0)
     return HazardType;
@@ -321,8 +523,20 @@ unsigned GCNHazardRecognizer::PreEmitNoops(MachineInstr *MI) {
   return std::max(W, NopPadding.getValue());
 }
 
+unsigned GCNHazardRecognizer::preRAGetHazardWaitStates(MachineInstr *MI) const {
+  unsigned WaitStates = checkWMMACoexecHazard(*MI);
+  WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
+  return WaitStates;
+}
+
 unsigned GCNHazardRecognizer::getHazardWaitStates(MachineInstr *MI) const {
-  return const_cast<GCNHazardRecognizer *>(this)->PreEmitNoopsCommon(MI);
+  unsigned WaitStates =
+      const_cast<GCNHazardRecognizer *>(this)->PreEmitNoopsCommon(MI);
+
+  if (isPreRA())
+    WaitStates = std::max(WaitStates, preRAGetHazardWaitStates(MI));
+
+  return WaitStates;
 }
 
 unsigned GCNHazardRecognizer::PreEmitNoopsCommon(MachineInstr *MI) {
@@ -400,7 +614,18 @@ void GCNHazardRecognizer::EmitNoop() {
   EmittedInstrs.push_front(nullptr);
 }
 
+void GCNHazardRecognizer::preRAAdvanceCycle() {
+  if (!WMMAPipelineState.empty())
+    WMMAPipelineState.erase(WMMAPipelineState.begin());
+  // Clear TRANS32 state on cycle advance - the hazard only applies to the
+  // immediately following cycle.
+  LastIssuedWasTRANS32 = false;
+}
+
 void GCNHazardRecognizer::AdvanceCycle() {
+  if (!IsHazardRecognizerMode)
+    preRAAdvanceCycle();
+
   // When the scheduler detects a stall, it will call AdvanceCycle() without
   // emitting any instructions.
   if (!CurrCycleInstr) {
@@ -2064,7 +2289,7 @@ static bool isCoexecutableVALUInst(const MachineInstr &MI) {
 static bool IsWMMAHazardInstInCategory(const MachineInstr &MI,
                                        const SIInstrInfo *TII, unsigned Latency,
                                        unsigned Category) {
-  assert(TII->isXDLWMMA(MI) && (Latency == 8 || Latency == 16) &&
+  assert(TII->isXDLWMMA(MI) && (Latency == 4 || Latency == 8) &&
          "Handle me if the xdl wmma instruction latency changes");
 
   switch (Category) {
@@ -2075,13 +2300,13 @@ static bool IsWMMAHazardInstInCategory(const MachineInstr &MI,
           //   WMMA_*BF8FP8
           //   WMMA_*BF8BF8
           //   WMMA_*F8F6F4 if SRCA & SRCB != F8
-    return Latency == 8 && SIInstrInfo::isWMMA(MI);
+    return Latency == 4 && SIInstrInfo::isWMMA(MI);
 
   case 1: // Dense WMMA Instructions:
           //   WMMA_IU8
           //   WMMA_IU4
           //   WMMA_*F8F6F4 if SRCA OR SRCB == F8
-    return Latency == 16 && SIInstrInfo::isWMMA(MI);
+    return Latency == 8 && SIInstrInfo::isWMMA(MI);
 
   case 2: // Dense SWMMAC Instructions
           //   SWMMAC_*F16, SWMMAC_*BF16,
@@ -2089,12 +2314,12 @@ static bool IsWMMAHazardInstInCategory(const MachineInstr &MI,
           //   SWMMAC_*BF8FP8
           //   SWMMAC_*FP8BF8
           //   SWMMAC_*BF8BF8
-    return Latency == 8 && SIInstrInfo::isSWMMAC(MI);
+    return Latency == 4 && SIInstrInfo::isSWMMAC(MI);
 
   case 3: // Sparse WMMA Instructions:
           //   SWMMAC_IU8
           //   SWMMAC_IU4
-    return Latency == 16 && SIInstrInfo::isSWMMAC(MI);
+    return Latency == 8 && SIInstrInfo::isSWMMAC(MI);
   default:
     break;
   } // end switch.

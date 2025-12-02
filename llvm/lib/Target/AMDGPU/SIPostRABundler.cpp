@@ -142,6 +142,7 @@ PreservedAnalyses SIPostRABundlerPass::run(MachineFunction &MF,
 }
 
 bool SIPostRABundler::run(MachineFunction &MF) {
+  return false;
 
   TRI = MF.getSubtarget<GCNSubtarget>().getRegisterInfo();
   BitVector BundleUsedRegUnits(TRI->getNumRegUnits());

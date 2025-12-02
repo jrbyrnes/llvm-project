@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPUMLSchedStrategy.h"
+#include "GCNHazardRecognizer.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/Support/Debug.h"
 
@@ -65,6 +66,12 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
     HWUInfo[8].IsAsync = true;
   
   CI.compute(*MF);
+  if (Top.HazardRec) {
+    delete Top.HazardRec;
+    Top.HazardRec = nullptr;
+  }
+  Top.HazardRec = new GCNHazardRecognizer(
+      DAG->MF, GCNHazardRecognizer::OperatingMode::PreRA);
 }
 
 static bool shouldCheckPending(SchedBoundary &Zone,
@@ -136,7 +143,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
   SchedMFMA.clear();
   SchedEXP.clear();
   SchedTDM.clear();
-  //const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
     HWUI.reset();

@@ -457,6 +457,11 @@ public:
     return get(Opcode).TSFlags & SIInstrFlags::SALU;
   }
 
+  static bool isControlInstr(const MachineInstr &MI) {
+    return MI.getOpcode() == AMDGPU::S_DELAY_ALU ||
+           MI.getOpcode() == AMDGPU::S_SET_VGPR_MSB;
+  }
+
   static bool isVALU(const MachineInstr &MI) {
     return MI.getDesc().TSFlags & SIInstrFlags::VALU;
   }
