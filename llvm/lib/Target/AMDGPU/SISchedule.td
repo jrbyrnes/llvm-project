@@ -482,14 +482,14 @@ def WriteWMMAScale_16X16X128_F8F6F4 : SchedWriteVariant<[
 
 multiclass GFX125xCommonWriteRes {
 
+let ReleaseAtCycles = [4] in
+def : HWWriteRes<WriteXDL2PassWMMA, [HWXDL], 4>;
 let ReleaseAtCycles = [8] in
-def : HWWriteRes<WriteXDL2PassWMMA, [HWXDL], 8>;
-let ReleaseAtCycles = [16] in
-def : HWWriteRes<WriteXDL4PassWMMA, [HWXDL], 16>;
+def : HWWriteRes<WriteXDL4PassWMMA, [HWXDL], 8>;
 
-def : HWWriteRes<Write4PassWMMA,  [HWVALU], 16>;
-def : HWWriteRes<Write8PassWMMA,  [HWVALU], 32>;
-def : HWWriteRes<Write16PassWMMA, [HWVALU], 64>;
+def : HWWriteRes<Write4PassWMMA,  [HWVALU], 8>;
+def : HWWriteRes<Write8PassWMMA,  [HWVALU], 16>;
+def : HWWriteRes<Write16PassWMMA, [HWVALU], 32>;
 
 def : HWWriteRes<Write32Bit,             [HWVALU, HWRC],   5>;
 def : HWWriteRes<WriteFloatCvt,          [HWVALU, HWRC],   5>;

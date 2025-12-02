@@ -35,8 +35,26 @@ public:
   typedef function_ref<bool(const MachineInstr &, int WaitStates)> IsExpiredFn;
   typedef function_ref<unsigned int(const MachineInstr &)> GetNumWaitStatesFn;
 
+  /// Operating mode for the hazard recognizer.
+  /// - PreRA: Used during pre-RA scheduling (virtual registers, limited hazard checking)
+  /// - PostRA: Used during post-RA scheduling (physical registers, full hazard checking)
+  /// - HazardRecognizerMode: Used by the standalone hazard recognizer pass (inserts NOPs)
+  enum class OperatingMode { PreRA, PostRA, HazardRecognizerMode };
+
+  /// WMMA pipeline slot types for co-execution tracking.
+  /// Based on GFX1250 WMMA pipeline behavior:
+  /// - Execute: WMMA execution cycle, can only co-issue control instructions
+  /// - MemCoExec: Can co-issue mem or salu (non-control)
+  /// - ValuCoExec: Can co-issue mem, salu, or valu
+  /// - ValuBlocked: VALU blocked after WMMA completes, can only issue wmma/mem/salu
+  /// - WMMABlocked: WMMA blocked, can issue mem/salu/valu
+  enum class WMMASlotType { Execute, MemCoExec, ValuCoExec, ValuBlocked, WMMABlocked };
+
 private:
-  // Distinguish if we are called from scheduler or hazard recognizer
+  // Operating mode determines which hazards are checked and whether fixes are applied.
+  OperatingMode Mode;
+
+  // Legacy flag for backward compatibility - true when in HazardRecognizerMode.
   bool IsHazardRecognizerMode;
 
   // This variable stores the instruction that has been emitted this cycle. It
@@ -50,6 +68,45 @@ private:
   const SIRegisterInfo &TRI;
   const TargetSchedModel &TSchedModel;
   bool RunLdsBranchVmemWARHazardFixup;
+
+  /// Current WMMA pipeline state for pre-RA scheduling.
+  /// Tracks remaining cycles and their slot types.
+  SmallVector<WMMASlotType, 16> WMMAPipelineState;
+
+  /// Track if the last instruction emitted was a TRANS32 instruction.
+  bool LastIssuedWasTRANS32 = false;
+
+  /// Check WMMA co-execution hazards for pre-RA scheduling.
+  /// Returns the number of stall cycles needed before MI can be issued.
+  unsigned checkWMMACoexecHazard(const MachineInstr &MI) const;
+
+  /// Check for TRANS32 hazards.
+  /// Returns the number of stall cycles needed before MI can be issued.
+  unsigned checkTRANS32Hazard(const MachineInstr &MI) const;
+
+  /// Update WMMA pipeline state when a WMMA instruction is emitted.
+  void updateWMMAPipelineState(const MachineInstr &MI);
+
+  /// Update TRANS32 state when an instruction is emitted.
+  void updateTRANS32State(const MachineInstr &MI);
+
+  //===--------------------------------------------------------------------===//
+  // Pre-RA scheduling mode wrappers.
+  // These methods handle pre-RA specific state tracking and can be extended
+  // for future pre-RA hazard recognition features.
+  //===--------------------------------------------------------------------===//
+
+  /// Pre-RA wrapper for EmitInstruction - updates pre-RA specific state.
+  void preRAEmitInstruction(MachineInstr *MI);
+
+  /// Pre-RA wrapper for AdvanceCycle - advances pre-RA pipeline state.
+  void preRAAdvanceCycle();
+
+  /// Pre-RA wrapper for Reset - clears pre-RA specific state.
+  void preRAReset();
+
+  /// Pre-RA hazard check - returns additional wait states for pre-RA mode.
+  unsigned preRAGetHazardWaitStates(MachineInstr *MI) const;
 
   /// RegUnits of uses in the current soft memory clause.
   BitVector ClauseUses;
@@ -146,7 +203,21 @@ private:
   int checkPermlaneHazards(MachineInstr *MI);
 
 public:
+  /// Construct with explicit operating mode.
+  GCNHazardRecognizer(const MachineFunction &MF, OperatingMode Mode);
+
+  /// Legacy constructor - defaults to HazardRecognizerMode for backward compatibility.
   GCNHazardRecognizer(const MachineFunction &MF);
+
+  /// Returns the current operating mode.
+  OperatingMode getOperatingMode() const { return Mode; }
+
+  /// Returns true if running in pre-RA scheduling mode.
+  bool isPreRA() const { return Mode == OperatingMode::PreRA; }
+
+  /// Returns true if running in post-RA scheduling mode.
+  bool isPostRA() const { return Mode == OperatingMode::PostRA; }
+
   // We can only issue one instruction per cycle.
   bool atIssueLimit() const override { return true; }
   void EmitInstruction(SUnit *SU) override;
