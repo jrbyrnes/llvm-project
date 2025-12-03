@@ -13,6 +13,7 @@
 
 #include "GCNSchedStrategy.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/Analysis/CycleAnalysis.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -144,6 +145,8 @@ protected:
 
   SmallVector<HardwareUnitInfo, 8> HWUInfo;
 
+  SmallVector<SUnit *, 16> SchedTDM;
+
   void collectUse();
 
   bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
@@ -155,6 +158,8 @@ protected:
                          bool IsBottomUp);
 
   SUnit *pickNode(bool &IsTopNode) override;
+
+  MachineCycleInfo CI;
 
 public:
   AMDGPUMLSchedStrategy(const MachineSchedContext *C);
