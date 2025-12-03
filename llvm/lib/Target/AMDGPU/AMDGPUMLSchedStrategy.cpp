@@ -21,7 +21,7 @@ using namespace llvm;
 static cl::opt<unsigned> ResourcesToBalance(
     "amdgpu-resource-balancing", cl::Hidden,
     cl::desc("Number of resources we will try to balance during scheduling."),
-    cl::init(2));
+    cl::init(100));
 
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -100,12 +100,16 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     if (SII->isDS(*MI) && MI->mayLoad()) {
       SchedDSR.push_back(SU);
     }
+    if (SII->isTRANS(*MI)) {
+      SchedEXP.push_back(SU);
+    }
   }
 
   GCNSchedStrategy::schedNode(SU, IsTopNode);
 }
 
 void AMDGPUMLSchedStrategy::collectUse() {
+  errs() << "\n\nCollect use\n";
   CollectedUse = true;
   SchedDSR.clear();
   SchedMFMA.clear();
@@ -118,11 +122,13 @@ void AMDGPUMLSchedStrategy::collectUse() {
     return;
 
   for (auto &SU : DAG->SUnits) {
+    errs() << "Instr: "; SU.getInstr()->dump();
     const MCSchedClassDesc *SC = DAG->getSchedClass(&SU);
     for (TargetSchedModel::ProcResIter
              PI = SchedModel->getWriteProcResBegin(SC),
              PE = SchedModel->getWriteProcResEnd(SC);
          PI != PE; ++PI) {
+          errs() << "Uses Proc: " << PI->ProcResourceIdx << "\n";
       auto Opc = SU.getInstr()->getOpcode();
       bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
                    Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
@@ -134,6 +140,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
       unsigned Latency = IsDMA ? SU.Latency : PI->ReleaseAtCycle;
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
+      errs() << "For: " << Latency << " Cycles\n";
     }
   }
 
@@ -356,8 +363,38 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     return 0;
   }
 
-  if (ReadyCycle > CurrCycle)
+  else if (SII->isTRANS(*MI) && SchedEXP.size()) {
+    auto PrevExp = SchedEXP[SchedEXP.size() - 1];
+    unsigned PrevExpIssue = PrevExp->TopReadyCycle;
+    ReadyCycle = std::max(PrevExpIssue + 2, ReadyCycle);
+  }
+
+  if ((SII->isTRANS(*MI) || (SII->isVALU(*MI) && !MI->mayLoad())) && SchedMFMA.size()) {
+    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+    if (PrevMFMA->Latency == 8) {
+      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+      unsigned CycleDiff = CurrCycle - PrevMFMAIssue;
+      if (CycleDiff < 10) {
+        if (CycleDiff <= 3) {
+          ReadyCycle = std::max(CurrCycle + 3, ReadyCycle);
+        }
+        else if (CycleDiff <= 6) {
+          ReadyCycle = std::max(CurrCycle + 6, ReadyCycle);
+        }
+        else if (CycleDiff <= 7) {
+          ReadyCycle = std::max(CurrCycle + 7, ReadyCycle);
+        }
+        else {
+          ReadyCycle = std::max(CurrCycle + 10, ReadyCycle);
+        }
+      }
+    }
+  }
+
+  if (ReadyCycle > CurrCycle) {
+    SU->TopReadyCycle = ReadyCycle;
     return ReadyCycle - CurrCycle;
+  }
   return 0;
 }
 
@@ -683,7 +720,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
 
 
-  #if 1
+  #if 0
   // Prefer WMMA if there is no hazard.
   if (Cand.SU && Cand.SU->getInstr() && TryCand.SU &&
       TryCand.SU->getInstr()) {
