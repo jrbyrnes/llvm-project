@@ -254,7 +254,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   bool Changed = false;
 
   // Add RA anti-hints to reduce MFMA hazard NOPs
-  if (EnableAntiHintsForMFMARegs && ST.hasMAIInsts()) {
+  if (EnableAntiHintsForMFMARegs) {
     // Max lookback window for RAW or WAW hazard
     constexpr unsigned MaxLookbackWindow = 19;
     for (const MachineBasicBlock &MBB : MF) {
@@ -306,7 +306,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           // Helper to get named operand
           auto collectNamedOperand = [&](AMDGPU::OpName OpName,
                                          const char *OpNameStr) {
-            const MachineOperand *MO = TII->getNamedOperand(MI, OpName);
+            const MachineOperand *MO = &MI.getOperand(1);
             if (!MO) {
               LLVM_DEBUG(dbgs() << "    Named operand " << OpNameStr
                                 << " not found\n");
@@ -328,7 +328,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           if (!TransRegisters.empty()) {
             RecentEXPs.emplace_back(std::move(TransRegisters));
             // Maintain window
-            if (RecentEXPs.size() > MaxLookbackWindow)
+            if (RecentEXPs.size() > 1)
               RecentEXPs.erase(RecentEXPs.begin());
           }
           continue;
@@ -367,6 +367,8 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
               }
             }
           }
+          if (!MO.isDef())
+            continue;
           for (auto It = RecentEXPs.rbegin(); It != RecentEXPs.rend(); ++It) {
             const SmallVector<Register, 4> &EXPRegs = *It;
             for (Register EXPReg : EXPRegs) {
