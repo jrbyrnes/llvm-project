@@ -140,6 +140,8 @@ protected:
 
   SmallVector<SUnit *, 16> SchedMFMA;
 
+  SmallVector<SUnit *, 16> SchedEXP;
+
   SmallVector<HardwareUnitInfo, 8> HWUInfo;
 
   void collectUse();

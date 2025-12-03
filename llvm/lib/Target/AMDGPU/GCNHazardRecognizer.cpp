@@ -194,6 +194,8 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   if (!IsHazardRecognizerMode) {
     if (checkWMMACoexecutionHazards(MI) > 0)
       return Hazard;
+    if (SIInstrInfo::isVALU(*MI) && checkVALUHazards(MI) > 0)
+      return Hazard;
   }
 
   if (ST.hasNoDataDepHazard())
@@ -1047,6 +1049,29 @@ int GCNHazardRecognizer::checkVALUHazards(MachineInstr *VALU) {
         TransDefWaitstates -
         getWaitStatesSince(IsTransDefFn, TransDefWaitstates);
     WaitStatesNeeded = std::max(WaitStatesNeeded, WaitStatesNeededForDef);
+  }
+
+  if (true) {
+    const int TransDefWaitstates = 1;
+    auto IsTransUseFn = [this, VALU](const MachineInstr &MI) {
+      if (!SIInstrInfo::isTRANS(MI))
+        return false;
+      const SIRegisterInfo *TRI = ST.getRegisterInfo();
+      const SIInstrInfo *TII = ST.getInstrInfo();
+      Register Def = TII->getNamedOperand(*VALU, AMDGPU::OpName::vdst)->getReg();
+    
+      for (const MachineOperand &Use : MI.explicit_uses()) {
+        if (Use.isReg() && TRI->regsOverlap(Def, Use.getReg()))
+          return true;
+      }
+
+      return false;
+    };
+    int WaitStatesNeededForUse =
+        TransDefWaitstates -
+        getWaitStatesSince(IsTransUseFn, TransDefWaitstates);
+    WaitStatesNeeded = std::max(WaitStatesNeeded, WaitStatesNeededForUse);
+
   }
 
   if (ST.hasDstSelForwardingHazard() || ST.hasCvtScaleForwardingHazard()) {
