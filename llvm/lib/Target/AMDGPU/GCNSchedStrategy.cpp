@@ -1161,7 +1161,6 @@ void GCNScheduleDAGMILive::runSchedStages() {
       }
 
       ScheduleDAGMILive::schedule();
-      dump();
       Stage->finalizeGCNRegion();
     }
 
