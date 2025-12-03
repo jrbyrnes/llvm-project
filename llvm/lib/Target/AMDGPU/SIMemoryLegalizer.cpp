@@ -2346,6 +2346,7 @@ bool SIGfx12CacheControl::setScope(const MachineBasicBlock::iterator MI,
 
 bool SIGfx12CacheControl::insertWaitsBeforeSystemScopeStore(
     const MachineBasicBlock::iterator MI) const {
+      return false;
   // TODO: implement flag for frontend to give us a hint not to insert waits.
 
   MachineBasicBlock &MBB = *MI->getParent();

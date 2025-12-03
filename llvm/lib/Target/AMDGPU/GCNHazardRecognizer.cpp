@@ -194,8 +194,8 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   if (!IsHazardRecognizerMode) {
     if (checkWMMACoexecutionHazards(MI) > 0)
       return Hazard;
-    if (SIInstrInfo::isVALU(*MI) && checkVALUHazards(MI) > 0)
-      return Hazard;
+    //if (SIInstrInfo::isVALU(*MI) && checkVALUHazards(MI) > 0)
+    //  return Hazard;
   }
 
   if (ST.hasNoDataDepHazard())
