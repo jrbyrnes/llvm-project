@@ -109,10 +109,10 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
 }
 
 void AMDGPUMLSchedStrategy::collectUse() {
-  errs() << "\n\nCollect use\n";
   CollectedUse = true;
   SchedDSR.clear();
   SchedMFMA.clear();
+  SchedEXP.clear();
 
   for (auto &HWUI : HWUInfo) {
     HWUI.reset();
@@ -122,13 +122,11 @@ void AMDGPUMLSchedStrategy::collectUse() {
     return;
 
   for (auto &SU : DAG->SUnits) {
-    errs() << "Instr: "; SU.getInstr()->dump();
     const MCSchedClassDesc *SC = DAG->getSchedClass(&SU);
     for (TargetSchedModel::ProcResIter
              PI = SchedModel->getWriteProcResBegin(SC),
              PE = SchedModel->getWriteProcResEnd(SC);
          PI != PE; ++PI) {
-          errs() << "Uses Proc: " << PI->ProcResourceIdx << "\n";
       auto Opc = SU.getInstr()->getOpcode();
       bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
                    Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
@@ -140,7 +138,6 @@ void AMDGPUMLSchedStrategy::collectUse() {
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
       unsigned Latency = IsDMA ? SU.Latency : PI->ReleaseAtCycle;
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
-      errs() << "For: " << Latency << " Cycles\n";
     }
   }
 
