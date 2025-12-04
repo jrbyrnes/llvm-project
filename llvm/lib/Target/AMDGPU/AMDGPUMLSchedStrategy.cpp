@@ -23,6 +23,11 @@ static cl::opt<unsigned> ResourcesToBalance(
     cl::desc("Number of resources we will try to balance during scheduling."),
     cl::init(100));
 
+static cl::opt<unsigned> DSLatency(
+    "amdgpu-ds-fifo-latency", cl::Hidden,
+    cl::desc("Hazard latency of DS_LOAD FIFO Full."),
+    cl::init(40));
+
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
   cl::desc("Whether or not to ignore VALU unit when balancing HW resoiurces."),
@@ -121,6 +126,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
   SchedMFMA.clear();
   SchedEXP.clear();
   SchedTDM.clear();
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
     HWUI.reset();
@@ -145,6 +151,8 @@ void AMDGPUMLSchedStrategy::collectUse() {
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
       unsigned Latency = IsDMA ? SU.Latency : PI->ReleaseAtCycle;
+      if (SII->isDS(*SU.getInstr()) && SU.getInstr()->mayLoad())
+        Latency = DSLatency;
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
     }
   }
@@ -350,11 +358,11 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   if (SII->isDS(*MI) && MI->mayLoad()) {
-    if (SchedDSR.size() >= 8) {
-      unsigned TopOfFIFO = SchedDSR.size() - 8;
+    if (SchedDSR.size() >= 16) {
+      unsigned TopOfFIFO = SchedDSR.size() - 16;
       unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
       // TODO -- should be release at cycle.
-      ReadyCycle = std::max(TopOfFIFOIssue + 20, ReadyCycle);
+      ReadyCycle = std::max(TopOfFIFOIssue + DSLatency, ReadyCycle);
     }
   }
 
