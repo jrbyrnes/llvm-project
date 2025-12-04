@@ -26,7 +26,7 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-fifo-latency", cl::Hidden,
     cl::desc("Hazard latency of DS_LOAD FIFO Full."),
-    cl::init(20));
+    cl::init(50));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
@@ -117,7 +117,7 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     }
 
     auto Opc = MI->getOpcode();
-    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
+    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT) {
       SchedTDM.push_back(SU);
     }
   }
@@ -140,6 +140,10 @@ void AMDGPUMLSchedStrategy::collectUse() {
   if (!SchedModel || !SchedModel->hasInstrSchedModel())
     return;
 
+  unsigned I = 0;
+  unsigned PrevDSR = 0;
+  unsigned PrevFence = 0;
+  unsigned FencedDSRCount = 0;
   for (auto &SU : DAG->SUnits) {
     const MCSchedClassDesc *SC = DAG->getSchedClass(&SU);
     for (TargetSchedModel::ProcResIter
@@ -156,12 +160,35 @@ void AMDGPUMLSchedStrategy::collectUse() {
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
       unsigned Latency = IsDMA ? SU.Latency : PI->ReleaseAtCycle;
-      //if (SII->isDS(*SU.getInstr()) && SU.getInstr()->mayLoad())
-        //Latency = DSLatency;
+      if (SII->isDS(*SU.getInstr()) && SU.getInstr()->mayLoad())
+        Latency = DSLatency;
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
     }
+
+    auto MI = SU.getInstr();
+    if (SII->isDS(*MI) && MI->mayLoad()) {
+      PrevDSR = I;
+    }
+    if (MI->getOpcode() == AMDGPU::ATOMIC_FENCE) {
+      if (PrevFence < PrevDSR) {
+        ++FencedDSRCount;
+      }
+      PrevFence = I;
+    }
+    I++;
   }
 
+
+  unsigned MaxCycles = 0;
+  if (FencedDSRCount) {
+    for (auto HWUI : HWUInfo) {
+      MaxCycles = std::max(MaxCycles, HWUI.getTotalCycles());
+    }
+
+    FencedDSRLatency = MaxCycles / FencedDSRCount;
+    FencedDSRLatency = std::max(DSLatency.getValue(), FencedDSRLatency);
+  }
+  
 
   HWUInfo[4].reset();
   if (IgnoreVALU)
@@ -367,7 +394,7 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
       unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
       unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
       // TODO -- should be release at cycle.
-      ReadyCycle = std::max(TopOfFIFOIssue + DSLatency, ReadyCycle);
+      ReadyCycle = std::max(TopOfFIFOIssue + 20, ReadyCycle);
     }
   }
 
@@ -381,11 +408,15 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     return 0;
   }
 
-  else if (MI->getOpcode() == AMDGPU::ATOMIC_FENCE && SchedTDM.size()) {
-    auto Prev = SchedTDM[SchedTDM.size() - 1];
-    auto PrevOp = Prev->getInstr()->getOpcode();
-    if (PrevOp != AMDGPU::ATOMIC_FENCE)
-      ReadyCycle = std::max(ReadyCycle, Prev->TopReadyCycle + 100);
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT) && SchedTDM.size() && SchedDSR.size()) {
+    auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
+    auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
+    if (PrevDSR->TopReadyCycle > PrevTDM->TopReadyCycle) {
+      ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + 300);
+    }
+    else {
+      return 0;
+    }
   }
 
   else if (SII->isTRANS(*MI) && SchedEXP.size()) {
