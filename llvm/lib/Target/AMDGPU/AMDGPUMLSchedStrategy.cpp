@@ -26,7 +26,12 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-fifo-latency", cl::Hidden,
     cl::desc("Hazard latency of DS_LOAD FIFO Full."),
-    cl::init(40));
+    cl::init(20));
+
+static cl::opt<unsigned> DSFIFOSize(
+    "amdgpu-ds-fifo-size", cl::Hidden,
+    cl::desc("Hazard latency of DS_LOAD FIFO Full."),
+    cl::init(8));
 
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -358,8 +363,8 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   if (SII->isDS(*MI) && MI->mayLoad()) {
-    if (SchedDSR.size() >= 16) {
-      unsigned TopOfFIFO = SchedDSR.size() - 16;
+    if (SchedDSR.size() >= DSFIFOSize) {
+      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
       unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
       // TODO -- should be release at cycle.
       ReadyCycle = std::max(TopOfFIFOIssue + DSLatency, ReadyCycle);
