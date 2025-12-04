@@ -33,6 +33,7 @@ public:
 };
 
 void BarrierLatency::apply(ScheduleDAGInstrs *DAG) {
+  return;
   constexpr unsigned SyntheticLatency = 2000;
   for (SUnit &SU : DAG->SUnits) {
     const MachineInstr *MI = SU.getInstr();
