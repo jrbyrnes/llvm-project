@@ -31,7 +31,7 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
     cl::desc("Hazard latency of DS_LOAD FIFO Full."),
-    cl::init(8));
+    cl::init(4));
 
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -156,8 +156,8 @@ void AMDGPUMLSchedStrategy::collectUse() {
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
       unsigned Latency = IsDMA ? SU.Latency : PI->ReleaseAtCycle;
-      if (SII->isDS(*SU.getInstr()) && SU.getInstr()->mayLoad())
-        Latency = DSLatency;
+      //if (SII->isDS(*SU.getInstr()) && SU.getInstr()->mayLoad())
+        //Latency = DSLatency;
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
     }
   }
@@ -379,6 +379,13 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
 
   else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
     return 0;
+  }
+
+  else if (MI->getOpcode() == AMDGPU::ATOMIC_FENCE && SchedTDM.size()) {
+    auto Prev = SchedTDM[SchedTDM.size() - 1];
+    auto PrevOp = Prev->getInstr()->getOpcode();
+    if (PrevOp != AMDGPU::ATOMIC_FENCE)
+      ReadyCycle = std::max(ReadyCycle, Prev->TopReadyCycle + 100);
   }
 
   else if (SII->isTRANS(*MI) && SchedEXP.size()) {
