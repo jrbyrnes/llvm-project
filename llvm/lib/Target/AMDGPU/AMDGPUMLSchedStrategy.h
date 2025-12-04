@@ -147,6 +147,8 @@ protected:
 
   SmallVector<SUnit *, 16> SchedTDM;
 
+  unsigned FencedDSRLatency = 0;
+
   void collectUse();
 
   bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
