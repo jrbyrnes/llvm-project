@@ -92,7 +92,9 @@ public:
   void schedule(SUnit *SU, unsigned ReleaseAtCycle) {
     AllSUs.remove(SU);
     PrioritySUs.remove(SU);
-    TotalCycles -= ReleaseAtCycle;
+    if (TotalCycles > ReleaseAtCycle)
+      TotalCycles -= ReleaseAtCycle;
+    else TotalCycles = 0;
     if (AllSUs.empty())
       return;
     if (PrioritySUs.empty()) {
@@ -141,8 +143,6 @@ protected:
 
   SmallVector<SUnit *, 16> SchedMFMA;
 
-  SmallVector<SUnit *, 16> SchedEXP;
-
   SmallVector<HardwareUnitInfo, 8> HWUInfo;
 
   SmallVector<SUnit *, 16> SchedTDM;
@@ -150,6 +150,8 @@ protected:
   unsigned FencedDSRLatency = 0;
 
   void collectUse();
+
+  unsigned getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle);
 
   bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
                            SchedBoundary *Zone) override;
@@ -177,7 +179,7 @@ public:
                                      SchedCandidate &Cand, SchedBoundary *Zone,
                                      bool IsAsyncPipe = false) const;
 
-  unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle) const;
+  unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
 
 };
 
