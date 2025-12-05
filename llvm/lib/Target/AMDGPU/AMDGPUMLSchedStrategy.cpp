@@ -26,14 +26,29 @@ static cl::opt<unsigned> ResourcesToBalance(
     cl::init(100));
 
 static cl::opt<unsigned> DSLatency(
-    "amdgpu-ds-fifo-latency", cl::Hidden,
-    cl::desc("Hazard latency of DS_LOAD FIFO Full."),
+    "amdgpu-ds-latency", cl::Hidden,
+    cl::desc("Latency of DS_LOAD for resource usage."),
     cl::init(50));
+
+static cl::opt<unsigned> DSLatencySplit(
+    "amdgpu-ds-latency-split", cl::Hidden,
+    cl::desc("Latency between neighboring DS_LOAD."),
+    cl::init(2));
+
+static cl::opt<unsigned> DSLatencyFIFO(
+    "amdgpu-ds-fifo-latency", cl::Hidden,
+    cl::desc("Hazard latency DS_LOAD FIFO full."),
+    cl::init(30));
+
+static cl::opt<unsigned> DSLatencyForFence(
+    "amdgpu-ds-fence-latency", cl::Hidden,
+    cl::desc("Hazard latency between DS_LOAD and FENCE."),
+    cl::init(250));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
-    cl::desc("Hazard latency of DS_LOAD FIFO Full."),
-    cl::init(4));
+    cl::desc("DS_LOAD FIFO size."),
+    cl::init(16));
 
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -95,6 +110,24 @@ static SUnit *pickOnlyChoice(SchedBoundary &Zone,
   return nullptr;
 }
 
+unsigned AMDGPUMLSchedStrategy::getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle) {
+  auto MI = SU->getInstr();
+  auto Opc = SU->getInstr()->getOpcode();
+  bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
+                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
+                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
+                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+  unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
+  if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
+        Latency = DSLatency;
+
+  return Latency;
+}
+
 void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   auto MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
@@ -115,7 +148,9 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
         }
       }
       assert(FoundIt);
-      HWUInfo[I].schedule(SU, PI->ReleaseAtCycle);
+
+      unsigned Latency = getHWUICyclesForInst(SU, SII, PI->ReleaseAtCycle);
+      HWUInfo[I].schedule(SU, Latency);
     }
 
     if (SII->isMFMAorWMMA(*MI)) {
@@ -123,9 +158,6 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     }
     if (SII->isDS(*MI) && MI->mayLoad()) {
       SchedDSR.push_back(SU);
-    }
-    if (SII->isTRANS(*MI)) {
-      SchedEXP.push_back(SU);
     }
 
     auto Opc = MI->getOpcode();
@@ -141,7 +173,6 @@ void AMDGPUMLSchedStrategy::collectUse() {
   CollectedUse = true;
   SchedDSR.clear();
   SchedMFMA.clear();
-  SchedEXP.clear();
   SchedTDM.clear();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
@@ -162,18 +193,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
              PI = SchedModel->getWriteProcResBegin(SC),
              PE = SchedModel->getWriteProcResEnd(SC);
          PI != PE; ++PI) {
-      auto Opc = SU.getInstr()->getOpcode();
-      bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
-                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
-                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
-                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
-                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
-                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
-                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
-      unsigned Latency = IsDMA ? SU.Latency : PI->ReleaseAtCycle;
-      if (SII->isDS(*SU.getInstr()) && SU.getInstr()->mayLoad())
-        Latency = DSLatency;
+      unsigned Latency = getHWUICyclesForInst(&SU, SII, PI->ReleaseAtCycle);
       HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
     }
 
@@ -396,7 +416,8 @@ bool AMDGPUMLSchedStrategy::tryCriticalResourceDependency(
 
 unsigned
 AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
-                                             unsigned CurrCycle) const {
+                                             unsigned CurrCycle,
+                                             SchedBoundary *Zone) const {
   unsigned ReadyCycle = SU->TopReadyCycle;
   auto *MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
@@ -406,7 +427,12 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
       unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
       unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
       // TODO -- should be release at cycle.
-      ReadyCycle = std::max(TopOfFIFOIssue + 20, ReadyCycle);
+      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
+    }
+    if (SchedDSR.size()) {
+      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() -1]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
     }
   }
 
@@ -424,38 +450,18 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
     auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
     if (PrevDSR->TopReadyCycle > PrevTDM->TopReadyCycle) {
-      ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + 300);
+      ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
     }
     else {
       return 0;
     }
   }
 
-  else if (SII->isTRANS(*MI) && SchedEXP.size()) {
-    auto PrevExp = SchedEXP[SchedEXP.size() - 1];
-    unsigned PrevExpIssue = PrevExp->TopReadyCycle;
-    ReadyCycle = std::max(PrevExpIssue + 2, ReadyCycle);
-  }
-
-  if ((SII->isTRANS(*MI) || (SII->isVALU(*MI) && !MI->mayLoad())) && SchedMFMA.size()) {
-    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-    if (PrevMFMA->Latency == 8) {
-      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-      unsigned CycleDiff = CurrCycle - PrevMFMAIssue;
-      if (CycleDiff < 10) {
-        if (CycleDiff <= 3) {
-          ReadyCycle = std::max(CurrCycle + 3, ReadyCycle);
-        }
-        else if (CycleDiff <= 6) {
-          ReadyCycle = std::max(CurrCycle + 6, ReadyCycle);
-        }
-        else if (CycleDiff <= 7) {
-          ReadyCycle = std::max(CurrCycle + 7, ReadyCycle);
-        }
-        else {
-          ReadyCycle = std::max(CurrCycle + 10, ReadyCycle);
-        }
-      }
+  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
+  if (HazardRec) {
+    unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
+    if (HazardStates + CurrCycle >= ReadyCycle) {
+      return HazardStates;
     }
   }
 
@@ -463,6 +469,7 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     SU->TopReadyCycle = ReadyCycle;
     return ReadyCycle - CurrCycle;
   }
+
   return 0;
 }
 
@@ -495,8 +502,8 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
     // Prioritize instructions that read unbuffered resources by stall cycles.
-    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle()),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle()), TryCand,
+    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
 
@@ -622,8 +629,8 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   if (SameBoundary) {
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
-    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle()),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle()), TryCand,
+    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
 

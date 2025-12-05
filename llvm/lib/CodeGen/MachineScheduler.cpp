@@ -2956,6 +2956,7 @@ void SchedBoundary::bumpNode(SUnit *SU) {
     // Scheduling an instruction may have made pending instructions available.
     CheckPending = true;
   }
+
   // checkHazard should prevent scheduling multiple instructions per cycle that
   // exceed the issue width.
   const MCSchedClassDesc *SC = DAG->getSchedClass(SU);

@@ -77,7 +77,7 @@ GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF)
 
 void GCNHazardRecognizer::preRAReset() {
   WMMAPipelineState.clear();
-  LastIssuedWasTRANS32 = false;
+  CyclesUntilTRANS32 = 0;
 }
 
 void GCNHazardRecognizer::Reset() {
@@ -91,13 +91,14 @@ void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
 }
 
 void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
-  updateWMMAPipelineState(*MI);
-  updateTRANS32State(*MI);
-  
   // Control instructions don't consume a pipeline slot - they can be issued
   // "for free" without advancing the cycle.
-  if (!SIInstrInfo::isControlInstr(*MI))
-    preRAAdvanceCycle();
+  //if (!SIInstrInfo::isControlInstr(*MI)) {
+  //  preRAAdvanceCycle();
+  //}
+  
+  updateWMMAPipelineState(*MI);
+  updateTRANS32State(*MI);
 }
 
 unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) const {
@@ -118,9 +119,11 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
   if (IsControl)
     return 0;
 
-  LLVM_DEBUG(dbgs() << "checkWMMACoexecHazard: CurrentSlot=" << (int)CurrentSlot
+  LLVM_DEBUG(
+    errs() << "checkWMMACoexecHazard: CurrentSlot=" << (int)CurrentSlot
                     << ", IsWMMA=" << IsWMMA << ", IsVALU=" << IsVALU
-                    << ", IsMem=" << IsMem << ", IsSALU=" << IsSALU << "\n");
+                    << ", IsMem=" << IsMem << ", IsSALU=" << IsSALU << "\n";
+                    );
 
   // Check co-execution compatibility based on slot type.
   switch (CurrentSlot) {
@@ -188,11 +191,12 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
 }
 
 unsigned GCNHazardRecognizer::checkTRANS32Hazard(const MachineInstr &MI) const {
-  if (!LastIssuedWasTRANS32)
+  if (!CyclesUntilTRANS32) {
     return 0;
+  }
 
   // TRANS32 can be followed by VALU or control instructions without stall
-  if (SIInstrInfo::isVALU(MI) || SIInstrInfo::isControlInstr(MI))
+  if ((SIInstrInfo::isVALU(MI) && !SIInstrInfo::isTRANS(MI)) || SIInstrInfo::isControlInstr(MI))
     return 0;
 
   // Any other instruction requires a 1-cycle stall
@@ -201,7 +205,8 @@ unsigned GCNHazardRecognizer::checkTRANS32Hazard(const MachineInstr &MI) const {
 }
 
 void GCNHazardRecognizer::updateTRANS32State(const MachineInstr &MI) {
-  LastIssuedWasTRANS32 = SIInstrInfo::isTRANS(MI);
+  if (SIInstrInfo::isTRANS(MI))
+    CyclesUntilTRANS32 = 2;
 }
 
 void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
@@ -219,9 +224,10 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   bool IsSWMMAC = SIInstrInfo::isSWMMAC(MI);
 
   // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
-  NewSlots.append(2, WMMASlotType::MemCoExec);
+  NewSlots.append(3, WMMASlotType::MemCoExec);
   NewSlots.append(1, WMMASlotType::ValuCoExec);
   NewSlots.append(2, WMMASlotType::MemCoExec);
+  NewSlots.append(2, WMMASlotType::ValuCoExec);
   NewSlots.append(2, WMMASlotType::ValuBlocked);
 
   // Merge with existing pipeline state.
@@ -264,8 +270,9 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
 void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
   CurrCycleInstr = MI;
 
-  if (isPreRA() || isPostRA())
+  if (isPreRA() || isPostRA()) {
     preRAEmitInstruction(MI);
+  }
 }
 
 static bool isDivFMas(unsigned Opcode) {
@@ -619,7 +626,8 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
     WMMAPipelineState.erase(WMMAPipelineState.begin());
   // Clear TRANS32 state on cycle advance - the hazard only applies to the
   // immediately following cycle.
-  LastIssuedWasTRANS32 = false;
+  if (CyclesUntilTRANS32)
+    --CyclesUntilTRANS32;
 }
 
 void GCNHazardRecognizer::AdvanceCycle() {

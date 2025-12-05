@@ -74,7 +74,7 @@ private:
   SmallVector<WMMASlotType, 16> WMMAPipelineState;
 
   /// Track if the last instruction emitted was a TRANS32 instruction.
-  bool LastIssuedWasTRANS32 = false;
+  unsigned CyclesUntilTRANS32 = 0;
 
   /// Check WMMA co-execution hazards for pre-RA scheduling.
   /// Returns the number of stall cycles needed before MI can be issued.
