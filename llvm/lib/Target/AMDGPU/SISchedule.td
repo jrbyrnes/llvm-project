@@ -475,7 +475,7 @@ def PredIsF8_WMMA_SCALE : SchedPredicate<[{
 // If either matrix format is f8, the instruction takes 2x as many
 // cycles. TODO: This isn't reflected in MCA.
 def WriteWMMAScale_16X16X128_F8F6F4 : SchedWriteVariant<[
-    SchedVar<PredIsF8_WMMA_SCALE, [WriteXDL2PassWMMA]>,
+    SchedVar<PredIsF8_WMMA_SCALE, [WriteXDL4PassWMMA]>,
     SchedVar<NoSchedPred, [WriteXDL2PassWMMA]>
 ]>;
 
@@ -493,7 +493,6 @@ def : HWWriteRes<Write16PassWMMA, [HWVALU], 32>;
 
 def : HWWriteRes<Write32Bit,             [HWVALU, HWRC],   5>;
 def : HWWriteRes<WriteFloatCvt,          [HWVALU, HWRC],   5>;
-let ReleaseAtCycles = [2,0] in
 def : HWWriteRes<WriteTrans32,           [HWTransVALU, HWRC],   7>;
 def : HWWriteRes<WriteQuarterRate32,     [HWVALU, HWRC],   6>;
 def : HWWriteRes<WriteFloatFMA,          [HWVALU, HWRC],   5>;
