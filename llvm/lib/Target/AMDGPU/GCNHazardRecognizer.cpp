@@ -95,6 +95,13 @@ void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
   updateTRANS32State(*MI);
 }
 
+bool GCNHazardRecognizer::isVALUWMMACoexecSlot() {
+  if (WMMAPipelineState.empty())
+    return false;
+  WMMASlotType CurrentSlot = WMMAPipelineState.front();
+  return CurrentSlot == WMMASlotType::ValuCoExec || CurrentSlot == WMMASlotType::ValuCoExecNoTrans;
+}
+
 unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) const {
   // No hazard if pipeline is empty.
   if (WMMAPipelineState.empty())
@@ -109,6 +116,7 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
   bool IsMem = SIInstrInfo::isVMEM(MI) || SIInstrInfo::isDS(MI);
   bool IsControl = SIInstrInfo::isControlInstr(MI);
   bool IsSALU = SIInstrInfo::isSALU(MI) && !IsControl;
+  bool IsTrans = SIInstrInfo::isTRANS(MI);
 
   if (IsControl)
     return 0;
@@ -135,6 +143,11 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
   case WMMASlotType::ValuCoExec:
     // ValuCoExec slots: can co-issue mem, salu, valu, or wmma.
     if (IsMem || IsSALU || IsVALU || IsWMMA)
+      return 0;
+    break;
+
+  case WMMASlotType::ValuCoExecNoTrans:
+    if ((IsMem || IsSALU || IsVALU || IsWMMA) && !IsTrans)
       return 0;
     break;
 
@@ -176,6 +189,10 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
       if (IsMem || IsSALU || IsVALU)
         return StallCycles;
       break;
+    case WMMASlotType::ValuCoExecNoTrans:
+    if ((IsMem || IsSALU || IsVALU || IsWMMA) && !IsTrans)
+      return StallCycles;
+    break;
     }
     ++StallCycles;
   }
@@ -209,10 +226,10 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
 
   // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
   WMMAPipelineState.clear();
-  WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
+  WMMAPipelineState.append(3, WMMASlotType::MemCoExec);
   WMMAPipelineState.append(1, WMMASlotType::ValuCoExec);
   WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
-  WMMAPipelineState.append(2, WMMASlotType::ValuCoExec);
+  WMMAPipelineState.append(2, WMMASlotType::ValuCoExecNoTrans);
   WMMAPipelineState.append(2, WMMASlotType::ValuBlocked);
 }
 
