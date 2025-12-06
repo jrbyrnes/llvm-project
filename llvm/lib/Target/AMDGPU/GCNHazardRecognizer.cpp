@@ -197,7 +197,7 @@ unsigned GCNHazardRecognizer::checkTRANS32Hazard(const MachineInstr &MI) const {
   }
 
   // TRANS32 can be followed by VALU or control instructions without stall
-  if ((SIInstrInfo::isVALU(MI) && !SIInstrInfo::isTRANS(MI)) || SIInstrInfo::isProgramStateSALU(MI))
+  if (!SIInstrInfo::isTRANS(MI))
     return 0;
 
   // Any other instruction requires a 1-cycle stall
