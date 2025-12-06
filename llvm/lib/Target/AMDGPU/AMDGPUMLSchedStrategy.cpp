@@ -33,17 +33,17 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned> DSLatencySplit(
     "amdgpu-ds-latency-split", cl::Hidden,
     cl::desc("Latency between neighboring DS_LOAD."),
-    cl::init(2));
+    cl::init(0));
 
 static cl::opt<unsigned> DSLatencyFIFO(
     "amdgpu-ds-fifo-latency", cl::Hidden,
     cl::desc("Hazard latency DS_LOAD FIFO full."),
-    cl::init(30));
+    cl::init(50));
 
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(250));
+    cl::init(300));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
@@ -242,6 +242,35 @@ static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
     // Default to HardwareUnitInfo order
     return A.Idx < B.Idx;
   });
+}
+
+
+
+bool AMDGPUMLSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
+                                                SchedCandidate &Cand,
+                                                SchedBoundary *Zone) const {
+  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
+  if (!HazardRec->isVALUWMMACoexecSlot())
+    return false;
+
+  const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
+  bool TryIsVALUOnly = SII->isVALU(*TryCand.SU->getInstr()) && !SII->isTRANS(*TryCand.SU->getInstr());
+  bool CandIsVALUOnly = SII->isVALU(*Cand.SU->getInstr()) && !SII->isTRANS(*Cand.SU->getInstr());
+
+  if (!TryIsVALUOnly && !CandIsVALUOnly)
+    return false;
+  
+  if (TryIsVALUOnly && CandIsVALUOnly)
+    return true;
+  
+  if (TryIsVALUOnly) {
+    TryCand.Reason = RegCritical;
+    return true;
+  }
+
+  if (Cand.Reason > RegCritical)
+    Cand.Reason = RegCritical;
+  return true;
 }
 
 bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
@@ -507,6 +536,10 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
 
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
     sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone)) {
       return TryCand.Reason != NoCand;
@@ -633,6 +666,10 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
                 getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
+
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
 
     sortResources(HWUInfo);
 

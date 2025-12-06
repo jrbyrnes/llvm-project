@@ -181,6 +181,7 @@ public:
 
   unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
 
+  bool tryVALUCoexecSlot(SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone) const;
 };
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
