@@ -40,6 +40,11 @@ static cl::opt<unsigned> DSLatencyFIFO(
     cl::desc("Hazard latency DS_LOAD FIFO full."),
     cl::init(50));
 
+static cl::opt<unsigned> LatencyForSignal(
+    "amdgpu-signal-latency", cl::Hidden,
+    cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
+    cl::init(0));
+
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
@@ -161,7 +166,7 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     }
 
     auto Opc = MI->getOpcode();
-    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT) {
+    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_BARRIER_WAIT || Opc == AMDGPU::S_BARRIER_SIGNAL_IMM) {
       SchedTDM.push_back(SU);
     }
   }
@@ -475,15 +480,18 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     return 0;
   }
 
-  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT) && SchedTDM.size() && SchedDSR.size()) {
+  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
     auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
+
+    if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+      ReadyCycle = std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
+    }
+  
+  }
+
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT) && SchedTDM.size() && SchedDSR.size()) {
     auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
-    if (PrevDSR->TopReadyCycle > PrevTDM->TopReadyCycle) {
-      ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
-    }
-    else {
-      return 0;
-    }
+    ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
   }
 
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
@@ -591,7 +599,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     if ((CandIsBArrierSignal || TryCandIsBArrierSignal) && SchedTDM.size()) {
       auto Prev = SchedTDM[SchedTDM.size() - 1];
       auto PrevOp = Prev->getInstr()->getOpcode();
-      if (PrevOp == AMDGPU::ATOMIC_FENCE) {
+      if (PrevOp == AMDGPU::ATOMIC_FENCE || PrevOp == AMDGPU::S_BARRIER_SIGNAL_IMM || PrevOp == AMDGPU::S_BARRIER_WAIT) {
         if (CandIsBArrierSignal) {
           Cand.Reason = RegCritical;
           return true;
