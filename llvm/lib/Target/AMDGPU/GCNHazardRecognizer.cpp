@@ -91,12 +91,6 @@ void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
 }
 
 void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
-  // Control instructions don't consume a pipeline slot - they can be issued
-  // "for free" without advancing the cycle.
-  //if (!SIInstrInfo::isControlInstr(*MI)) {
-  //  preRAAdvanceCycle();
-  //}
-  
   updateWMMAPipelineState(*MI);
   updateTRANS32State(*MI);
 }
@@ -210,61 +204,16 @@ void GCNHazardRecognizer::updateTRANS32State(const MachineInstr &MI) {
 }
 
 void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
-  if (!SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI))
-    return;
-
   if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
     return;
 
-  unsigned Latency = TSchedModel.computeInstrLatency(&MI);
-
-  LLVM_DEBUG(dbgs() << "updateWMMAPipelineState: WMMA/SWMMAC emitted, Latency=" << Latency << "\n");
-
-  SmallVector<WMMASlotType, 20> NewSlots;
-  bool IsSWMMAC = SIInstrInfo::isSWMMAC(MI);
-
   // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
-  NewSlots.append(3, WMMASlotType::MemCoExec);
-  NewSlots.append(1, WMMASlotType::ValuCoExec);
-  NewSlots.append(2, WMMASlotType::MemCoExec);
-  NewSlots.append(2, WMMASlotType::ValuCoExec);
-  NewSlots.append(2, WMMASlotType::ValuBlocked);
-
-  // Merge with existing pipeline state.
-  // The new slots start from cycle 0, but we need to merge with any
-  // remaining cycles in the pipeline.
-  size_t MergeLen = std::min(WMMAPipelineState.size(), NewSlots.size());
-
-  // For overlapping cycles, keep the more restrictive slot type.
-  auto MoreRestrictive = [](WMMASlotType A, WMMASlotType B) -> WMMASlotType {
-    if (A == WMMASlotType::Execute || B == WMMASlotType::Execute)
-      return WMMASlotType::Execute;
-
-    bool BlockWMMA = (A == WMMASlotType::MemCoExec || A == WMMASlotType::WMMABlocked ||
-                      B == WMMASlotType::MemCoExec || B == WMMASlotType::WMMABlocked);
-
-    bool BlockVALU = (A == WMMASlotType::MemCoExec || A == WMMASlotType::ValuBlocked ||
-                      B == WMMASlotType::MemCoExec || B == WMMASlotType::ValuBlocked);
-
-    if (BlockWMMA && BlockVALU)
-      return WMMASlotType::MemCoExec;
-    if (BlockWMMA)
-      return WMMASlotType::WMMABlocked;
-    if (BlockVALU)
-      return WMMASlotType::ValuBlocked;
-
-    return WMMASlotType::ValuCoExec;
-  };
-
-  for (size_t I = 0; I < MergeLen; ++I) {
-    WMMAPipelineState[I] = MoreRestrictive(WMMAPipelineState[I], NewSlots[I]);
-  }
-
-  // Append any remaining new slots.
-  if (NewSlots.size() > WMMAPipelineState.size()) {
-    WMMAPipelineState.append(NewSlots.begin() + WMMAPipelineState.size(),
-                             NewSlots.end());
-  }
+  WMMAPipelineState.clear();
+  WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
+  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec);
+  WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
+  WMMAPipelineState.append(2, WMMASlotType::ValuCoExec);
+  WMMAPipelineState.append(2, WMMASlotType::ValuBlocked);
 }
 
 void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
@@ -622,6 +571,16 @@ void GCNHazardRecognizer::EmitNoop() {
 }
 
 void GCNHazardRecognizer::preRAAdvanceCycle() {
+  // Don't advance pipeline state with meta instructions.
+  if (CurrCycleInstr)  {
+    if (SIInstrInfo::isControlInstr(*CurrCycleInstr))
+      return;
+
+    if (!SIInstrInfo::isVALU(*CurrCycleInstr) && !SIInstrInfo::isSALU(*CurrCycleInstr) &&
+      !SIInstrInfo::isVMEM(*CurrCycleInstr) && !SIInstrInfo::isDS(*CurrCycleInstr))
+    return;
+  }
+
   if (!WMMAPipelineState.empty())
     WMMAPipelineState.erase(WMMAPipelineState.begin());
   // Clear TRANS32 state on cycle advance - the hazard only applies to the
