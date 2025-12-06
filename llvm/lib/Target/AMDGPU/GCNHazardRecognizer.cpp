@@ -101,6 +101,13 @@ void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
   updateTRANS32State(*MI);
 }
 
+bool GCNHazardRecognizer::isVALUWMMACoexecSlot() {
+  if (WMMAPipelineState.empty())
+    return false;
+  WMMASlotType CurrentSlot = WMMAPipelineState.front();
+  return CurrentSlot == WMMASlotType::ValuCoExec || CurrentSlot == WMMASlotType::ValuCoExecNoTrans;
+}
+
 unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) const {
   // No hazard if pipeline is empty.
   if (WMMAPipelineState.empty())
@@ -115,6 +122,7 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
   bool IsMem = SIInstrInfo::isVMEM(MI) || SIInstrInfo::isDS(MI);
   bool IsControl = SIInstrInfo::isControlInstr(MI);
   bool IsSALU = SIInstrInfo::isSALU(MI) && !IsControl;
+  bool IsTrans = SIInstrInfo::isTRANS(MI);
 
   if (IsControl)
     return 0;
@@ -141,6 +149,11 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
   case WMMASlotType::ValuCoExec:
     // ValuCoExec slots: can co-issue mem, salu, valu, or wmma.
     if (IsMem || IsSALU || IsVALU || IsWMMA)
+      return 0;
+    break;
+
+  case WMMASlotType::ValuCoExecNoTrans:
+    if ((IsMem || IsSALU || IsVALU || IsWMMA) && !IsTrans)
       return 0;
     break;
 
@@ -182,6 +195,10 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
       if (IsMem || IsSALU || IsVALU)
         return StallCycles;
       break;
+    case WMMASlotType::ValuCoExecNoTrans:
+    if ((IsMem || IsSALU || IsVALU || IsWMMA) && !IsTrans)
+      return StallCycles;
+    break;
     }
     ++StallCycles;
   }
@@ -196,7 +213,7 @@ unsigned GCNHazardRecognizer::checkTRANS32Hazard(const MachineInstr &MI) const {
   }
 
   // TRANS32 can be followed by VALU or control instructions without stall
-  if ((SIInstrInfo::isVALU(MI) && !SIInstrInfo::isTRANS(MI)) || SIInstrInfo::isControlInstr(MI))
+  if (!SIInstrInfo::isTRANS(MI))
     return 0;
 
   // Any other instruction requires a 1-cycle stall
@@ -227,7 +244,7 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   NewSlots.append(3, WMMASlotType::MemCoExec);
   NewSlots.append(1, WMMASlotType::ValuCoExec);
   NewSlots.append(2, WMMASlotType::MemCoExec);
-  NewSlots.append(2, WMMASlotType::ValuCoExec);
+  NewSlots.append(2, WMMASlotType::ValuCoExecNoTrans);
   NewSlots.append(2, WMMASlotType::ValuBlocked);
 
   // Merge with existing pipeline state.
@@ -246,12 +263,17 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
     bool BlockVALU = (A == WMMASlotType::MemCoExec || A == WMMASlotType::ValuBlocked ||
                       B == WMMASlotType::MemCoExec || B == WMMASlotType::ValuBlocked);
 
+
+    bool BlockTrans = (A == WMMASlotType::ValuCoExecNoTrans || B == WMMASlotType::ValuCoExecNoTrans);
+
     if (BlockWMMA && BlockVALU)
       return WMMASlotType::MemCoExec;
     if (BlockWMMA)
       return WMMASlotType::WMMABlocked;
     if (BlockVALU)
       return WMMASlotType::ValuBlocked;
+    if (BlockTrans)
+      return WMMASlotType::ValuCoExecNoTrans;
 
     return WMMASlotType::ValuCoExec;
   };
