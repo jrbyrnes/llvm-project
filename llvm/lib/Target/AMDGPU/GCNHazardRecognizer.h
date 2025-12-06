@@ -48,7 +48,9 @@ public:
   /// - ValuCoExec: Can co-issue mem, salu, or valu
   /// - ValuBlocked: VALU blocked after WMMA completes, can only issue wmma/mem/salu
   /// - WMMABlocked: WMMA blocked, can issue mem/salu/valu
-  enum class WMMASlotType { Execute, MemCoExec, ValuCoExec, ValuBlocked, WMMABlocked };
+  enum class WMMASlotType { Execute, MemCoExec, ValuCoExec, ValuBlocked, WMMABlocked, ValuCoExecNoTrans };
+
+  bool isVALUWMMACoexecSlot();
 
 private:
   // Operating mode determines which hazards are checked and whether fixes are applied.
@@ -79,6 +81,8 @@ private:
   /// Check WMMA co-execution hazards for pre-RA scheduling.
   /// Returns the number of stall cycles needed before MI can be issued.
   unsigned checkWMMACoexecHazard(const MachineInstr &MI) const;
+
+
 
   /// Check for TRANS32 hazards.
   /// Returns the number of stall cycles needed before MI can be issued.
