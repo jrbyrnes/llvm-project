@@ -28,12 +28,12 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-latency", cl::Hidden,
     cl::desc("Latency of DS_LOAD for resource usage."),
-    cl::init(50));
+    cl::init(25));
 
 static cl::opt<unsigned> DSLatencySplit(
     "amdgpu-ds-latency-split", cl::Hidden,
     cl::desc("Latency between neighboring DS_LOAD."),
-    cl::init(0));
+    cl::init(2));
 
 static cl::opt<unsigned> DSLatencyFIFO(
     "amdgpu-ds-fifo-latency", cl::Hidden,
@@ -43,12 +43,12 @@ static cl::opt<unsigned> DSLatencyFIFO(
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(25));
+    cl::init(0));
 
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(150));
+    cl::init(200));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
