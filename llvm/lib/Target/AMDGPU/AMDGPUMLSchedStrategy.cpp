@@ -116,7 +116,6 @@ static SUnit *pickOnlyChoice(SchedBoundary &Zone,
 }
 
 unsigned AMDGPUMLSchedStrategy::getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle) {
-  auto MI = SU->getInstr();
   auto Opc = SU->getInstr()->getOpcode();
   bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
                    Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
