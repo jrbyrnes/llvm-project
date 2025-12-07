@@ -102,7 +102,7 @@ bool GCNHazardRecognizer::isVALUWMMACoexecSlot() {
   return CurrentSlot == WMMASlotType::ValuCoExec || CurrentSlot == WMMASlotType::ValuCoExecNoTrans;
 }
 
-unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) const {
+unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const {
   // No hazard if pipeline is empty.
   if (WMMAPipelineState.empty())
     return 0;
@@ -121,11 +121,10 @@ unsigned GCNHazardRecognizer::checkWMMACoexecHazard(const MachineInstr &MI) cons
   if (IsControl)
     return 0;
 
-  LLVM_DEBUG(
-    errs() << "checkWMMACoexecHazard: CurrentSlot=" << (int)CurrentSlot
+  LLVM_DEBUG(errs() << "checkWMMACoexecHazard: CurrentSlot=" << (int)CurrentSlot
                     << ", IsWMMA=" << IsWMMA << ", IsVALU=" << IsVALU
-                    << ", IsMem=" << IsMem << ", IsSALU=" << IsSALU << "\n";
-                    );
+                    << ", IsMem=" << IsMem << ", IsSALU=" << IsSALU << " : "
+                    << MI << "\n";);
 
   // Check co-execution compatibility based on slot type.
   switch (CurrentSlot) {
@@ -226,10 +225,12 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
 
   // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
   WMMAPipelineState.clear();
-  WMMAPipelineState.append(3, WMMASlotType::MemCoExec);
+  WMMAPipelineState.append(1, WMMASlotType::Execute);
+  WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
   WMMAPipelineState.append(1, WMMASlotType::ValuCoExec);
   WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
-  WMMAPipelineState.append(2, WMMASlotType::ValuCoExecNoTrans);
+  WMMAPipelineState.append(1, WMMASlotType::ValuCoExecNoTrans);
+  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec);
   WMMAPipelineState.append(2, WMMASlotType::ValuBlocked);
 }
 
@@ -345,9 +346,8 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   if (MI->isBundle())
    return NoHazard;
 
-  // Hazards which cannot be mitigated with S_NOPs.
   if (!IsHazardRecognizerMode) {
-    if (checkWMMACoexecHazard(*MI) > 0)
+    if (checkWMMACoexecSlot(*MI) > 0)
       return Hazard;
     if (checkTRANS32Hazard(*MI) > 0)
       return Hazard;
@@ -369,8 +369,6 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   if (!IsHazardRecognizerMode) {
     if (checkWMMACoexecutionHazards(MI) > 0)
       return Hazard;
-    //if (SIInstrInfo::isVALU(*MI) && checkVALUHazards(MI) > 0)
-    //  return Hazard;
   }
 
   if (ST.hasNoDataDepHazard())
@@ -497,7 +495,7 @@ unsigned GCNHazardRecognizer::PreEmitNoops(MachineInstr *MI) {
 }
 
 unsigned GCNHazardRecognizer::preRAGetHazardWaitStates(MachineInstr *MI) const {
-  unsigned WaitStates = checkWMMACoexecHazard(*MI);
+  unsigned WaitStates = checkWMMACoexecSlot(*MI);
   WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
   return WaitStates;
 }

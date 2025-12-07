@@ -459,7 +459,8 @@ public:
 
   static bool isControlInstr(const MachineInstr &MI) {
     return MI.getOpcode() == AMDGPU::S_DELAY_ALU ||
-           MI.getOpcode() == AMDGPU::S_SET_VGPR_MSB;
+           MI.getOpcode() == AMDGPU::S_SET_VGPR_MSB ||
+           MI.getOpcode() == AMDGPU::ATOMIC_FENCE;
   }
 
   static bool isVALU(const MachineInstr &MI) {
