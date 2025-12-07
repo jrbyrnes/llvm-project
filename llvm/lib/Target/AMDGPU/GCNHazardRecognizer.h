@@ -17,6 +17,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/ScheduleHazardRecognizer.h"
 #include "llvm/CodeGen/TargetSchedule.h"
+#include "SIInstrInfo.h"
 #include <list>
 
 namespace llvm {
@@ -25,7 +26,6 @@ class MachineFunction;
 class MachineInstr;
 class MachineOperand;
 class MachineRegisterInfo;
-class SIInstrInfo;
 class SIRegisterInfo;
 class GCNSubtarget;
 
@@ -33,7 +33,7 @@ class GCNHazardRecognizer final : public ScheduleHazardRecognizer {
 public:
   typedef function_ref<bool(const MachineInstr &)> IsHazardFn;
   typedef function_ref<bool(const MachineInstr &, int WaitStates)> IsExpiredFn;
-  typedef function_ref<unsigned int(const MachineInstr &)> GetNumWaitStatesFn;
+  typedef function_ref<unsigned int(const MachineInstr *)> GetNumWaitStatesFn;
 
   /// Operating mode for the hazard recognizer.
   /// - PreRA: Used during pre-RA scheduling (virtual registers, limited hazard checking)
@@ -64,6 +64,22 @@ private:
   // called.
   MachineInstr *CurrCycleInstr;
   std::list<MachineInstr*> EmittedInstrs;
+
+  /// Separate tracking for VALU pipeline hazards (WMMA coexecution).
+  /// Only contains VALU/WMMA instructions. nullptr entries represent V_NOP
+  /// stalls that were inserted specifically to resolve VALU-pipeline hazards.
+  /// This allows WMMA hazard detection to ignore S_NOP stalls that don't help.
+  std::list<MachineInstr*> EmittedVALUInstrs;
+
+  /// Maximum depth to track in EmittedVALUInstrs.
+  /// WMMA hazards can require up to 9 VALU instructions between dependent ops.
+  static constexpr unsigned MaxVALULookAhead = 10;
+
+  /// Tracks whether a WMMA coexecution hazard was detected in the last
+  /// getHazardType() call. If the scheduler stalls for this hazard, we need
+  /// to record a V_NOP placeholder in EmittedVALUInstrs.
+  bool HasPendingWMMAHazard = false;
+
   const MachineFunction &MF;
   const GCNSubtarget &ST;
   const SIInstrInfo &TII;
@@ -137,9 +153,19 @@ private:
   // used on a newly inserted instruction before returning from PreEmitNoops.
   void runOnInstruction(MachineInstr *MI);
 
-  int getWaitStatesSince(IsHazardFn IsHazard, int Limit,
-                         GetNumWaitStatesFn GetNumWaitStates);
-  int getWaitStatesSince(IsHazardFn IsHazard, int Limit);
+  static unsigned getDefaultNumWaitStates(const MachineInstr *MI) {
+    return MI ? SIInstrInfo::getNumWaitStates(*MI) : 1;
+  }
+
+  int getWaitStatesSince(
+      IsHazardFn IsHazard, int Limit,
+      GetNumWaitStatesFn GetNumWaitStates = getDefaultNumWaitStates);
+
+  /// Query the VALU-specific instruction list for hazards.
+  /// This only considers VALU/WMMA instructions and V_NOP stalls.
+  /// Used for WMMA coexecution hazards where S_NOPs don't resolve the hazard.
+  int getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit);
+
   int getWaitStatesSinceDef(unsigned Reg, IsHazardFn IsHazardDef, int Limit);
   int getWaitStatesSinceSetReg(IsHazardFn IsHazard, int Limit);
 
