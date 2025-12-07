@@ -80,7 +80,7 @@ private:
 
   /// Check WMMA co-execution hazards for pre-RA scheduling.
   /// Returns the number of stall cycles needed before MI can be issued.
-  unsigned checkWMMACoexecHazard(const MachineInstr &MI) const;
+  unsigned checkWMMACoexecSlot(const MachineInstr &MI) const;
 
 
 
