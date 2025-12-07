@@ -68,7 +68,7 @@ GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF,
       TII(*ST.getInstrInfo()), TRI(TII.getRegisterInfo()),
       TSchedModel(TII.getSchedModel()), ClauseUses(TRI.getNumRegUnits()),
       ClauseDefs(TRI.getNumRegUnits()) {
-  MaxLookAhead = MF.getRegInfo().isPhysRegUsed(AMDGPU::AGPR0) ? 19 : 5;
+  MaxLookAhead = MF.getRegInfo().isPhysRegUsed(AMDGPU::AGPR0) ? 19 : 9;
   RunLdsBranchVmemWARHazardFixup = shouldRunLdsBranchVmemWARHazardFixup(MF, ST);
 }
 
@@ -82,6 +82,8 @@ void GCNHazardRecognizer::preRAReset() {
 
 void GCNHazardRecognizer::Reset() {
   EmittedInstrs.clear();
+  EmittedVALUInstrs.clear();
+  HasPendingWMMAHazard = false;
   if (isPreRA() || isPostRA())
     preRAReset();
 }
@@ -343,10 +345,25 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   // the scheduler, track possible stalls from hazards but don't insert noops.
   auto HazardType = IsHazardRecognizerMode ? NoopHazard : Hazard;
 
+  // Reset the pending WMMA hazard flag at the start of each hazard check.
+  // It will be set if we detect a WMMA coexecution hazard below.
+  HasPendingWMMAHazard = false;
+
   if (MI->isBundle())
    return NoHazard;
 
   if (!IsHazardRecognizerMode) {
+    // Hazards which cannot be mitigated with S_NOPs - require V_NOPs.
+    int WMMAHazard = checkWMMACoexecutionHazards(MI);
+    if (WMMAHazard > 0) {
+      LLVM_DEBUG(dbgs() << "getHazardType: WMMA coexec hazard detected, need "
+                        << WMMAHazard << " more VALUs for " << *MI << "\n");
+      // Mark that this hazard requires V_NOP resolution. If the scheduler
+      // stalls for this, we need to track it in EmittedVALUInstrs.
+      HasPendingWMMAHazard = true;
+      return Hazard;
+    }
+
     if (checkWMMACoexecSlot(*MI) > 0)
       return Hazard;
     if (checkTRANS32Hazard(*MI) > 0)
@@ -365,10 +382,17 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
   if (checkFPAtomicToDenormModeHazard(MI) > 0)
     return HazardType;
 
-  // Hazards which cannot be mitigated with S_NOPs.
+  // Hazards which cannot be mitigated with S_NOPs - require V_NOPs.
   if (!IsHazardRecognizerMode) {
-    if (checkWMMACoexecutionHazards(MI) > 0)
+    int WMMAHazard = checkWMMACoexecutionHazards(MI);
+    if (WMMAHazard > 0) {
+      LLVM_DEBUG(dbgs() << "getHazardType: WMMA coexec hazard detected, need "
+                        << WMMAHazard << " more VALUs for " << *MI << "\n");
+      // Mark that this hazard requires V_NOP resolution. If the scheduler
+      // stalls for this, we need to track it in EmittedVALUInstrs.
+      HasPendingWMMAHazard = true;
       return Hazard;
+    }
   }
 
   if (ST.hasNoDataDepHazard())
@@ -611,7 +635,24 @@ void GCNHazardRecognizer::AdvanceCycle() {
   // When the scheduler detects a stall, it will call AdvanceCycle() without
   // emitting any instructions.
   if (!CurrCycleInstr) {
+    LLVM_DEBUG(dbgs() << "AdvanceCycle: STALL (no instruction), EmittedInstrs.size()="
+                      << EmittedInstrs.size() << ", EmittedVALUInstrs.size()="
+                      << EmittedVALUInstrs.size() << "\n");
     EmittedInstrs.push_front(nullptr);
+    if (EmittedInstrs.size() > getMaxLookAhead())
+      EmittedInstrs.resize(getMaxLookAhead());
+
+    // If we are stalling specifically for a WMMA hazard, we assume these
+    // stall cycles will eventually be filled with V_NOPs (which are VALU).
+    // We add placeholders to EmittedVALUInstrs to count them.
+    // If we later decide to emit a non-VALU instruction instead, we will
+    // remove these placeholders (see below).
+    if (HasPendingWMMAHazard) {
+      EmittedVALUInstrs.push_front(nullptr);
+      if (EmittedVALUInstrs.size() > MaxVALULookAhead)
+        EmittedVALUInstrs.resize(MaxVALULookAhead);
+      LLVM_DEBUG(dbgs() << "AdvanceCycle: Stalling for WMMA hazard, added V_NOP placeholder\n");
+    }
     return;
   }
 
@@ -628,6 +669,35 @@ void GCNHazardRecognizer::AdvanceCycle() {
 
   // Keep track of emitted instructions
   EmittedInstrs.push_front(CurrCycleInstr);
+
+  // Track VALU/WMMA instructions separately for WMMA coexecution hazards.
+  // These hazards can only be resolved by VALU instructions, not S_NOPs.
+  bool IsVALUOrWMMA = SIInstrInfo::isVALU(*CurrCycleInstr) ||
+                      SIInstrInfo::isWMMA(*CurrCycleInstr) ||
+                      SIInstrInfo::isSWMMAC(*CurrCycleInstr);
+  if (IsVALUOrWMMA) {
+    EmittedVALUInstrs.push_front(CurrCycleInstr);
+    if (EmittedVALUInstrs.size() > MaxVALULookAhead)
+      EmittedVALUInstrs.resize(MaxVALULookAhead);
+    LLVM_DEBUG(dbgs() << "AdvanceCycle: VALU/WMMA emitted, EmittedVALUInstrs.size()="
+                      << EmittedVALUInstrs.size() << ": " << *CurrCycleInstr);
+  } else {
+    // A non-VALU instruction was emitted. Any V_NOP placeholders (nullptr)
+    // we added to EmittedVALUInstrs while stalling for WMMA hazards were
+    // premature - those stall cycles will be S_NOPs or other non-VALU work,
+    // not V_NOPs. Remove them since they don't help resolve WMMA hazards.
+    if (!EmittedVALUInstrs.empty()) {
+      auto OldSize = EmittedVALUInstrs.size();
+      while (!EmittedVALUInstrs.empty() && EmittedVALUInstrs.front() == nullptr)
+        EmittedVALUInstrs.pop_front();
+      if (EmittedVALUInstrs.size() != OldSize) {
+        LLVM_DEBUG(dbgs() << "AdvanceCycle: Non-VALU emitted, removed "
+                          << (OldSize - EmittedVALUInstrs.size())
+                          << " V_NOP placeholders from EmittedVALUInstrs: "
+                          << *CurrCycleInstr);
+      }
+    }
+  }
 
   // Add a nullptr for each additional wait state after the first.  Make sure
   // not to add more than getMaxLookAhead() items to the list, since we
@@ -759,6 +829,9 @@ hasHazard(StateT InitialState,
   return false;
 }
 
+using StaticGetNumWaitStatesFn =
+    function_ref<unsigned int(const MachineInstr &)>;
+
 // Returns a minimum wait states since \p I walking all predecessors.
 // Only scans until \p IsExpired does not return true.
 // Can only be run in a hazard recognizer mode.
@@ -768,7 +841,7 @@ getWaitStatesSince(GCNHazardRecognizer::IsHazardFn IsHazard,
                    MachineBasicBlock::const_reverse_instr_iterator I,
                    int WaitStates, GCNHazardRecognizer::IsExpiredFn IsExpired,
                    DenseSet<const MachineBasicBlock *> &Visited,
-                   GCNHazardRecognizer::GetNumWaitStatesFn GetNumWaitStates =
+                   StaticGetNumWaitStatesFn GetNumWaitStates =
                        SIInstrInfo::getNumWaitStates) {
   for (auto E = MBB->instr_rend(); I != E; ++I) {
     // Don't add WaitStates for parent BUNDLE instructions.
@@ -805,7 +878,7 @@ static int
 getWaitStatesSince(GCNHazardRecognizer::IsHazardFn IsHazard,
                    const MachineInstr *MI,
                    GCNHazardRecognizer::IsExpiredFn IsExpired,
-                   GCNHazardRecognizer::GetNumWaitStatesFn GetNumWaitStates =
+                   StaticGetNumWaitStatesFn GetNumWaitStates =
                        SIInstrInfo::getNumWaitStates) {
   DenseSet<const MachineBasicBlock *> Visited;
   return getWaitStatesSince(IsHazard, MI->getParent(),
@@ -819,24 +892,83 @@ int GCNHazardRecognizer::getWaitStatesSince(
     auto IsExpiredFn = [Limit](const MachineInstr &, int WaitStates) {
       return WaitStates >= Limit;
     };
+    // Wrap the pointer-based callback for the static helper which uses references
+    auto WrapperFn = [GetNumWaitStates](const MachineInstr &MI) {
+      return GetNumWaitStates(&MI);
+    };
     return ::getWaitStatesSince(IsHazard, CurrCycleInstr, IsExpiredFn,
-                                GetNumWaitStates);
+                                WrapperFn);
   }
 
   int WaitStates = 0;
+  unsigned NullCount = 0;
+  unsigned InstrCount = 0;
+  unsigned VALUCount = 0;
   for (MachineInstr *MI : EmittedInstrs) {
     if (MI) {
-      if (IsHazard(*MI))
+      ++InstrCount;
+      if (SIInstrInfo::isVALU(*MI))
+        ++VALUCount;
+      if (IsHazard(*MI)) {
+        LLVM_DEBUG(dbgs() << "  getWaitStatesSince: FOUND HAZARD after "
+                          << WaitStates << " wait states (nulls=" << NullCount
+                          << ", instrs=" << InstrCount << ", VALUs=" << VALUCount
+                          << "), Limit=" << Limit << "\n");
         return WaitStates;
+      }
 
       if (MI->isInlineAsm())
         continue;
+    } else {
+      ++NullCount;
     }
-    WaitStates += MI ? GetNumWaitStates(*MI) : 1;
+    // Pass the pointer (which may be nullptr for stall cycles) to the callback.
+    // This allows hazard-specific counting, e.g., WMMA hazards only count VALUs.
+    WaitStates += GetNumWaitStates(MI);
 
     if (WaitStates >= Limit)
       break;
   }
+  LLVM_DEBUG(dbgs() << "  getWaitStatesSince: NO HAZARD found (nulls="
+                    << NullCount << ", instrs=" << InstrCount
+                    << ", VALUs=" << VALUCount << ", WaitStates=" << WaitStates
+                    << ", Limit=" << Limit << ", EmittedInstrs.size()="
+                    << EmittedInstrs.size() << ")\n");
+  return std::numeric_limits<int>::max();
+}
+
+int GCNHazardRecognizer::getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) {
+  // In hazard recognizer mode, fall back to the regular method since we don't
+  // track EmittedVALUInstrs there (it walks the CFG instead).
+  if (IsHazardRecognizerMode) {
+    // Use a VALU-only counting callback
+    auto GetVALUWaitStates = [](const MachineInstr *MI) -> unsigned {
+      return (MI && SIInstrInfo::isVALU(*MI)) ? 1 : 0;
+    };
+    return getWaitStatesSince(IsHazard, Limit, GetVALUWaitStates);
+  }
+
+  // In scheduler mode, use the dedicated VALU instruction list.
+  // This list only contains VALU/WMMA instructions, so every entry counts as 1.
+  int WaitStates = 0;
+  LLVM_DEBUG(dbgs() << "  getWaitStatesSinceVALU: checking EmittedVALUInstrs (size="
+                    << EmittedVALUInstrs.size() << ", Limit=" << Limit << ")\n");
+  for (MachineInstr *MI : EmittedVALUInstrs) {
+    if (MI) {
+      if (IsHazard(*MI)) {
+        LLVM_DEBUG(dbgs() << "    FOUND HAZARD after " << WaitStates
+                          << " VALU instructions: " << *MI);
+        return WaitStates;
+      }
+    }
+    // Every entry in EmittedVALUInstrs is a VALU/WMMA, so count it.
+    // nullptr entries would be V_NOPs inserted for WMMA hazards (not yet implemented).
+    ++WaitStates;
+
+    if (WaitStates >= Limit)
+      break;
+  }
+  LLVM_DEBUG(dbgs() << "    NO HAZARD found in EmittedVALUInstrs\n");
   return std::numeric_limits<int>::max();
 }
 
@@ -2310,12 +2442,19 @@ static bool IsWMMAHazardInstInCategory(const MachineInstr &MI,
 }
 
 int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
-  if (!AMDGPU::isGFX1250(ST))
+  LLVM_DEBUG(dbgs() << "checkWMMACoexecutionHazards called for " << *MI);
+  if (!AMDGPU::isGFX1250(ST)) {
+    LLVM_DEBUG(dbgs() << "  Not GFX1250\n");
     return 0;
+  }
 
   const SIInstrInfo *TII = ST.getInstrInfo();
   if (!TII->isXDLWMMA(*MI) && !isCoexecutableVALUInst(*MI))
     return 0;
+
+  LLVM_DEBUG(dbgs() << "checkWMMACoexecutionHazards: checking " << *MI
+                    << "  EmittedInstrs.size()=" << EmittedInstrs.size()
+                    << ", MaxLookAhead=" << getMaxLookAhead() << "\n");
 
   const SIRegisterInfo *TRI = ST.getRegisterInfo();
 
@@ -2394,33 +2533,31 @@ int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
 
   int Limit = 0;
 
-  auto GetWaitStatesFn = [](const MachineInstr &I) {
-    return SIInstrInfo::isVALU(I) ? 1 : 0;
-  };
-
   int WaitStatesNeeded = -1;
   if (TII->isXDLWMMA(*MI)) {
     for (Category = 0; WaitStatesNeeded < 0 && Category < 4; Category++) {
-      Limit = WMMAWaitStates[Category]; // for IsExpiredFn.
-      // 'getWaitStatesSince' returns the number of VALUs in between if hazard
-      // exists, and INT_MAX if there is no hazard. As a result, a negative
-      // WaitStatesNeeded here means no hazard, and we will continue to search
-      // for other categories.
+      Limit = WMMAWaitStates[Category];
+      // 'getWaitStatesSinceVALU' returns the number of VALUs in between if
+      // hazard exists, and INT_MAX if there is no hazard. As a result, a
+      // negative WaitStatesNeeded here means no hazard, and we will continue
+      // to search for other categories.
       WaitStatesNeeded =
-          Limit - getWaitStatesSince(IsWMMAHazardFn, Limit, GetWaitStatesFn);
+          Limit - getWaitStatesSinceVALU(IsWMMAHazardFn, Limit);
     }
   } else { // Must be a co-executable VALU.
     for (Category = 0; WaitStatesNeeded < 0 && Category < 4; Category++) {
-      Limit = VALUWaitStates[Category]; // for IsExpiredFn.
-      // 'getWaitStatesSince' returns the number of VALUs in between if hazard
-      // exists, and INT_MAX if there is no hazard. As a result, a negative
-      // WaitStatesNeeded here means no hazard, and we will continue to search
-      // for other categories.
+      Limit = VALUWaitStates[Category];
+      // 'getWaitStatesSinceVALU' returns the number of VALUs in between if
+      // hazard exists, and INT_MAX if there is no hazard. As a result, a
+      // negative WaitStatesNeeded here means no hazard, and we will continue
+      // to search for other categories.
       WaitStatesNeeded =
-          Limit - getWaitStatesSince(IsVALUHazardFn, Limit, GetWaitStatesFn);
+          Limit - getWaitStatesSinceVALU(IsVALUHazardFn, Limit);
     }
   }
 
+  LLVM_DEBUG(dbgs() << "checkWMMACoexecutionHazards: result WaitStatesNeeded="
+                    << WaitStatesNeeded << "\n");
   return WaitStatesNeeded;
 }
 
