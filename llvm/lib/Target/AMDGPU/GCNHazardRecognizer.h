@@ -94,6 +94,11 @@ private:
   /// Track if the last instruction emitted was a TRANS32 instruction.
   unsigned CyclesUntilTRANS32 = 0;
 
+  /// Tracks whether the last WMMA scale pipeline ended with its final
+  /// VALU co-exec slot being consumed by a VALU. When set, issuing another
+  /// WMMA immediately should incur a one cycle stall.
+  unsigned PendingWMMAScaleValuTailStall = 0;
+
   /// Check WMMA co-execution hazards for pre-RA scheduling.
   /// Returns the number of stall cycles needed before MI can be issued.
   unsigned checkWMMACoexecSlot(const MachineInstr &MI) const;
