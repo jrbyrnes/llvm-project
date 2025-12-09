@@ -4364,7 +4364,8 @@ void PostGenericScheduler::registerRoots() {
 /// \param TryCand refers to the next SUnit candidate, otherwise uninitialized.
 /// \return \c true if TryCand is better than Cand (Reason is NOT NoCand)
 bool PostGenericScheduler::tryCandidate(SchedCandidate &Cand,
-                                        SchedCandidate &TryCand) {
+                                        SchedCandidate &TryCand,
+                                        SchedBoundary *Zone) {
   // Initialize the candidate if needed.
   if (!Cand.isValid()) {
     TryCand.Reason = FirstValid;
@@ -4422,7 +4423,7 @@ void PostGenericScheduler::pickNodeFromQueue(SchedBoundary &Zone,
     TryCand.SU = SU;
     TryCand.AtTop = Zone.isTop();
     TryCand.initResourceDelta(DAG, SchedModel);
-    if (tryCandidate(Cand, TryCand)) {
+    if (tryCandidate(Cand, TryCand, &Zone)) {
       Cand.setBest(TryCand);
       LLVM_DEBUG(traceCandidate(Cand));
     }
@@ -4500,7 +4501,7 @@ SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
   assert(TopCand.isValid());
   SchedCandidate Cand = BotCand;
   TopCand.Reason = NoCand;
-  if (tryCandidate(Cand, TopCand)) {
+  if (tryCandidate(Cand, TopCand, nullptr)) {
     Cand.setBest(TopCand);
     LLVM_DEBUG(traceCandidate(Cand));
   }
