@@ -33,7 +33,7 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned> DSLatencySplit(
     "amdgpu-ds-latency-split", cl::Hidden,
     cl::desc("Latency between neighboring DS_LOAD."),
-    cl::init(0));
+    cl::init(2));
 
 static cl::opt<unsigned> DSLatencyFIFO(
     "amdgpu-ds-fifo-latency", cl::Hidden,
@@ -43,17 +43,17 @@ static cl::opt<unsigned> DSLatencyFIFO(
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(0));
+    cl::init(10));
 
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(300));
+    cl::init(50));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
     cl::desc("DS_LOAD FIFO size."),
-    cl::init(16));
+    cl::init(15));
 
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -497,13 +497,18 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
   if (HazardRec) {
     unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
     if (HazardStates + CurrCycle >= ReadyCycle) {
+        //errs() << "Wait for: "; SU->getInstr()->dump();
+        //errs() << HazardStates << "\n";
       return HazardStates;
     }
   }
 
   if (ReadyCycle > CurrCycle) {
     SU->TopReadyCycle = ReadyCycle;
-    return ReadyCycle - CurrCycle;
+    auto Wait = ReadyCycle - CurrCycle;
+    //errs() << "Wait for: "; SU->getInstr()->dump();
+    //errs() << Wait << "\n";
+    return Wait;
   }
 
   return 0;
@@ -899,7 +904,7 @@ AMDGPUMLPostSchedStrategy::AMDGPUMLPostSchedStrategy(
     : PostGenericScheduler(C) {}
 
 bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
-                                             SchedCandidate &TryCand) {
+                                             SchedCandidate &TryCand, SchedBoundary *Zone) {
   // Initialize the candidate if needed.
   if (!Cand.isValid()) {
     TryCand.Reason = FirstValid;
@@ -927,6 +932,16 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
   # endif
 
+  bool SameBoundary = Zone != nullptr;
+  if (SameBoundary) {
+    errs() << "PostRASChed same boundary\n";
+    // Prioritize instructions that read unbuffered resources by stall cycles.
+    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
+                Cand, Stall))
+      return TryCand.Reason != NoCand;
+  }
+
   // Fall through to original instruction order.
   if (TryCand.SU->NodeNum < Cand.SU->NodeNum) {
     TryCand.Reason = NodeOrder;
@@ -934,4 +949,94 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
 
   return false;
+}
+
+void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
+    auto MI = SU->getInstr();
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+
+
+
+    if (SII->isMFMAorWMMA(*MI)) {
+      SchedMFMA.push_back(SU);
+    }
+    if (SII->isDS(*MI) && MI->mayLoad()) {
+      SchedDSR.push_back(SU);
+    }
+
+    auto Opc = MI->getOpcode();
+    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_BARRIER_WAIT || Opc == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+      SchedTDM.push_back(SU);
+    }
+
+  PostGenericScheduler::schedNode(SU, IsTopNode);
+}
+
+
+unsigned
+AMDGPUMLPostSchedStrategy::getLatencyStallCycles(SUnit *SU,
+                                             unsigned CurrCycle,
+                                             SchedBoundary *Zone) const {
+  unsigned ReadyCycle = SU->TopReadyCycle;
+  auto *MI = SU->getInstr();
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+
+  if (SII->isDS(*MI) && MI->mayLoad()) {
+    if (SchedDSR.size() >= DSFIFOSize) {
+      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
+      unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
+    }
+    if (SchedDSR.size()) {
+      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() -1]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
+    }
+  }
+
+  else if (SII->isMFMAorWMMA(*MI) && SchedMFMA.size()) {
+    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+  }
+
+  else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
+    return 0;
+  }
+
+  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
+    auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
+
+    if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+      ReadyCycle = std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
+    }
+  
+  }
+
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT) && SchedTDM.size() && SchedDSR.size()) {
+    auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
+    ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+  }
+
+  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
+  if (HazardRec) {
+    unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
+    if (HazardStates + CurrCycle >= ReadyCycle) {
+        //errs() << "Wait for: "; SU->getInstr()->dump();
+        //errs() << HazardStates << "\n";
+      return HazardStates;
+    }
+  }
+
+
+  if (ReadyCycle > CurrCycle) {
+    SU->TopReadyCycle = ReadyCycle;
+    auto Wait = ReadyCycle - CurrCycle;
+    //errs() << "Wait for: "; SU->getInstr()->dump();
+    //errs() << Wait << "\n";
+    return Wait;
+  }
+
+  return 0;
 }
