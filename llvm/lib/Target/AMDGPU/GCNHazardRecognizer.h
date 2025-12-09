@@ -133,6 +133,8 @@ private:
   /// Pre-RA hazard check - returns additional wait states for pre-RA mode.
   unsigned preRAGetHazardWaitStates(MachineInstr *MI) const;
 
+  unsigned postRAGetHazardWaitStates(MachineInstr *MI) const;
+
   /// RegUnits of uses in the current soft memory clause.
   BitVector ClauseUses;
 

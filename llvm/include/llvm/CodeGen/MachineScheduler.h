@@ -1377,7 +1377,7 @@ public:
 
   SUnit *pickNode(bool &IsTopNode) override;
 
-  SUnit *pickNodeBidirectional(bool &IsTopNode);
+  SUnit *pickNodeBidirectional(bool &IsTopNode, bool &IsPending);
 
   void scheduleTree(unsigned SubtreeID) override {
     llvm_unreachable("PostRA scheduler does not support subtree analysis.");
@@ -1402,7 +1402,8 @@ public:
 protected:
   virtual bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone = nullptr);
 
-  void pickNodeFromQueue(SchedBoundary &Zone, SchedCandidate &Cand);
+  void pickNodeFromQueue(SchedBoundary &Zone, SchedCandidate &Cand,
+                         bool &IsPending);
 };
 
 /// If ReorderWhileClustering is set to true, no attempt will be made to

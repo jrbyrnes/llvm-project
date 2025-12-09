@@ -525,12 +525,22 @@ unsigned GCNHazardRecognizer::preRAGetHazardWaitStates(MachineInstr *MI) const {
   return WaitStates;
 }
 
+unsigned
+GCNHazardRecognizer::postRAGetHazardWaitStates(MachineInstr *MI) const {
+  unsigned WaitStates = checkWMMACoexecSlot(*MI);
+  WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
+  return WaitStates;
+}
+
 unsigned GCNHazardRecognizer::getHazardWaitStates(MachineInstr *MI) const {
   unsigned WaitStates =
       const_cast<GCNHazardRecognizer *>(this)->PreEmitNoopsCommon(MI);
 
   if (isPreRA())
     WaitStates = std::max(WaitStates, preRAGetHazardWaitStates(MI));
+
+  if (isPostRA())
+    WaitStates = std::max(WaitStates, postRAGetHazardWaitStates(MI));
 
   return WaitStates;
 }
