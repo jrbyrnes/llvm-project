@@ -4416,7 +4416,8 @@ bool PostGenericScheduler::tryCandidate(SchedCandidate &Cand,
 }
 
 void PostGenericScheduler::pickNodeFromQueue(SchedBoundary &Zone,
-                                             SchedCandidate &Cand) {
+                                             SchedCandidate &Cand,
+                                             bool &IsPending) {
   ReadyQueue &Q = Zone.Available;
   for (SUnit *SU : Q) {
     SchedCandidate TryCand(Cand.Policy);
@@ -4431,7 +4432,8 @@ void PostGenericScheduler::pickNodeFromQueue(SchedBoundary &Zone,
 }
 
 /// Pick the best candidate node from either the top or bottom queue.
-SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
+SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode,
+                                                   bool &IsPending) {
   // FIXME: This is similiar to GenericScheduler::pickNodeBidirectional. Factor
   // out common parts.
 
@@ -4461,7 +4463,7 @@ SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
   if (!BotCand.isValid() || BotCand.SU->isScheduled ||
       BotCand.Policy != BotPolicy) {
     BotCand.reset(CandPolicy());
-    pickNodeFromQueue(Bot, BotCand);
+    pickNodeFromQueue(Bot, BotCand, IsPending);
     assert(BotCand.Reason != NoCand && "failed to find the first candidate");
   } else {
     LLVM_DEBUG(traceCandidate(BotCand));
@@ -4469,7 +4471,7 @@ SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
     if (VerifyScheduling) {
       SchedCandidate TCand;
       TCand.reset(CandPolicy());
-      pickNodeFromQueue(Bot, BotCand);
+      pickNodeFromQueue(Bot, BotCand, IsPending);
       assert(TCand.SU == BotCand.SU &&
              "Last pick result should correspond to re-picking right now");
     }
@@ -4481,7 +4483,7 @@ SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
   if (!TopCand.isValid() || TopCand.SU->isScheduled ||
       TopCand.Policy != TopPolicy) {
     TopCand.reset(CandPolicy());
-    pickNodeFromQueue(Top, TopCand);
+    pickNodeFromQueue(Top, TopCand, IsPending);
     assert(TopCand.Reason != NoCand && "failed to find the first candidate");
   } else {
     LLVM_DEBUG(traceCandidate(TopCand));
@@ -4489,7 +4491,7 @@ SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
     if (VerifyScheduling) {
       SchedCandidate TCand;
       TCand.reset(CandPolicy());
-      pickNodeFromQueue(Top, TopCand);
+      pickNodeFromQueue(Top, TopCand, IsPending);
       assert(TCand.SU == TopCand.SU &&
              "Last pick result should correspond to re-picking right now");
     }
@@ -4513,6 +4515,7 @@ SUnit *PostGenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
 
 /// Pick the next node to schedule.
 SUnit *PostGenericScheduler::pickNode(bool &IsTopNode) {
+  bool IsPending = false;
   if (DAG->top() == DAG->bottom()) {
     assert(Top.Available.empty() && Top.Pending.empty() &&
            Bot.Available.empty() && Bot.Pending.empty() && "ReadyQ garbage");
@@ -4529,7 +4532,7 @@ SUnit *PostGenericScheduler::pickNode(bool &IsTopNode) {
       // Set the bottom-up policy based on the state of the current bottom
       // zone and the instructions outside the zone, including the top zone.
       setPolicy(BotCand.Policy, /*IsPostRA=*/true, Bot, nullptr);
-      pickNodeFromQueue(Bot, BotCand);
+      pickNodeFromQueue(Bot, BotCand, IsPending);
       assert(BotCand.Reason != NoCand && "failed to find a candidate");
       tracePick(BotCand, /*IsPostRA=*/true);
       SU = BotCand.SU;
@@ -4545,14 +4548,14 @@ SUnit *PostGenericScheduler::pickNode(bool &IsTopNode) {
       // Set the top-down policy based on the state of the current top zone
       // and the instructions outside the zone, including the bottom zone.
       setPolicy(TopCand.Policy, /*IsPostRA=*/true, Top, nullptr);
-      pickNodeFromQueue(Top, TopCand);
+      pickNodeFromQueue(Top, TopCand, IsPending);
       assert(TopCand.Reason != NoCand && "failed to find a candidate");
       tracePick(TopCand, /*IsPostRA=*/true);
       SU = TopCand.SU;
     }
     IsTopNode = true;
   } else {
-    SU = pickNodeBidirectional(IsTopNode);
+    SU = pickNodeBidirectional(IsTopNode, IsPending);
   }
   assert(!SU->isScheduled && "SUnit scheduled twice.");
 
