@@ -186,6 +186,10 @@ public:
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
 protected:
+  bool CollectedUse = false;
+
+  unsigned FencedDSRLatency = 0;
+
   bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone) override;
 
 
@@ -203,6 +207,34 @@ public:
   void schedNode(SUnit *SU, bool IsTopNode) override;
 
   unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
+
+  bool tryCandidate(SchedCandidate &Cand,
+                                        SchedCandidate &TryCand,
+                                        SchedBoundary *Zone) const;
+  
+  void collectUse();
+
+  void enterRegion(MachineBasicBlock *bb,
+                                    MachineBasicBlock::iterator begin,
+                                    MachineBasicBlock::iterator end,
+                                    unsigned regioninstrs);
+
+  bool tryCriticalResource(SchedCandidate &TryCand, SchedCandidate &Cand,
+                           SchedBoundary *Zone) const;
+
+  bool tryCriticalResourceDependency(SchedCandidate &TryCand,
+                                     SchedCandidate &Cand, SchedBoundary *Zone,
+                                     bool IsAsyncPipe = false) const;
+
+  bool tryVALUCoexecSlot(SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone) const;
+
+
+  unsigned getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle);
+
+  void initialize(ScheduleDAGMI *DAG) override;
+
+  SUnit *pickNode(bool &IsTopNode) override;
+
 };
 
 } // End namespace llvm

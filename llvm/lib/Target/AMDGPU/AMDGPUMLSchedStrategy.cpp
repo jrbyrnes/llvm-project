@@ -28,17 +28,17 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-latency", cl::Hidden,
     cl::desc("Latency of DS_LOAD for resource usage."),
-    cl::init(50));
+    cl::init(60));
 
 static cl::opt<unsigned> DSLatencySplit(
     "amdgpu-ds-latency-split", cl::Hidden,
     cl::desc("Latency between neighboring DS_LOAD."),
-    cl::init(2));
+    cl::init(8));
 
 static cl::opt<unsigned> DSLatencyFIFO(
     "amdgpu-ds-fifo-latency", cl::Hidden,
     cl::desc("Hazard latency DS_LOAD FIFO full."),
-    cl::init(50));
+    cl::init(60));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
@@ -48,12 +48,12 @@ static cl::opt<unsigned> LatencyForSignal(
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(50));
+    cl::init(60));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
     cl::desc("DS_LOAD FIFO size."),
-    cl::init(15));
+    cl::init(8));
 
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -736,32 +736,12 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
                   Cand, RegMax, TRI, DAG->MF))
     return TryCand.Reason != NoCand;
 
-  if (SameBoundary) {
-    // Avoid critical resource consumption and balance the schedule.
-    TryCand.initResourceDelta(DAG, SchedModel);
-    if (tryLess(TryCand.ResDelta.CritResources, Cand.ResDelta.CritResources,
-                TryCand, Cand, ResourceReduce)) {
-      return TryCand.Reason != NoCand;
-    }
-    if (tryGreater(TryCand.ResDelta.DemandedResources,
-                   Cand.ResDelta.DemandedResources, TryCand, Cand,
-                   ResourceDemand)) {
-      return TryCand.Reason != NoCand;
-    }
-
-    // Avoid serializing long latency dependence chains.
-    // For acyclic path limited loops, latency was already checked above.
-    if (!RegionPolicy.DisableLatencyHeuristic && TryCand.Policy.ReduceLatency &&
-        !Rem.IsAcyclicLatencyLimited && tryLatency(TryCand, Cand, *Zone))
-      return TryCand.Reason != NoCand;
-
     // Fall through to original instruction order.
     if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
         (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
       TryCand.Reason = NodeOrder;
       return true;
     }
-  }
 
   return false;
 }
@@ -934,19 +914,103 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
 
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
-    errs() << "PostRASChed same boundary\n";
+
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
                 getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
                 Cand, Stall))
       return TryCand.Reason != NoCand;
+
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    sortResources(HWUInfo);
+
+    if (tryCriticalResource(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    // For loops that are acyclic path limited, aggressively schedule for
+    // latency. Within an single cycle, whenever CurrMOps > 0, allow normal
+    // heuristics to take precedence.
+    if (Rem.IsAcyclicLatencyLimited && !Zone->getCurrMOps() &&
+        tryLatency(TryCand, Cand, *Zone))
+      return TryCand.Reason != NoCand;
+
   }
 
-  // Fall through to original instruction order.
-  if (TryCand.SU->NodeNum < Cand.SU->NodeNum) {
-    TryCand.Reason = NodeOrder;
-    return true;
+  // Keep clustered nodes together to encourage downstream peephole
+  // optimizations which may reduce resource requirements.
+  //
+  // This is a best effort to set things up for a post-RA pass. Optimizations
+  // like generating loads of multiple registers should ideally be done within
+  // the scheduler pass by combining the loads during DAG postprocessing.
+  /*
+  unsigned CandZoneCluster = getClusterID(Cand.AtTop);
+  unsigned TryCandZoneCluster = getClusterID(TryCand.AtTop);
+  bool CandIsClusterSucc =
+      isTheSameCluster(CandZoneCluster, Cand.SU->ParentClusterIdx);
+  bool TryCandIsClusterSucc =
+      isTheSameCluster(TryCandZoneCluster, TryCand.SU->ParentClusterIdx);
+
+  if (tryGreater(TryCandIsClusterSucc, CandIsClusterSucc, TryCand, Cand,
+                 Cluster))
+    return TryCand.Reason != NoCand;
+*/
+  if (SameBoundary) {
+    // Weak edges are for clustering and other constraints.
+    if (tryLess(getWeakLeft(TryCand.SU, TryCand.AtTop),
+                getWeakLeft(Cand.SU, Cand.AtTop), TryCand, Cand, Weak))
+      return TryCand.Reason != NoCand;
   }
+
+
+  if (SameBoundary) {
+    // Avoid critical resource consumption and balance the schedule.
+    TryCand.initResourceDelta(DAG, SchedModel);
+    if (tryLess(TryCand.ResDelta.CritResources, Cand.ResDelta.CritResources,
+                TryCand, Cand, ResourceReduce)) {
+      return TryCand.Reason != NoCand;
+    }
+    if (tryGreater(TryCand.ResDelta.DemandedResources,
+                   Cand.ResDelta.DemandedResources, TryCand, Cand,
+                   ResourceDemand)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    // Avoid serializing long latency dependence chains.
+    // For acyclic path limited loops, latency was already checked above.
+    if (!RegionPolicy.DisableLatencyHeuristic && TryCand.Policy.ReduceLatency &&
+        !Rem.IsAcyclicLatencyLimited && tryLatency(TryCand, Cand, *Zone))
+      return TryCand.Reason != NoCand;
+
+    // Fall through to original instruction order.
+    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
+        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+      TryCand.Reason = NodeOrder;
+      return true;
+    }
+  }
+
+  return false;
+
+
+
+
+
+
+
+
+
 
   return false;
 }
@@ -1040,3 +1104,317 @@ AMDGPUMLPostSchedStrategy::getLatencyStallCycles(SUnit *SU,
 
   return 0;
 }
+
+bool AMDGPUMLPostSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
+                                                SchedCandidate &Cand,
+                                                SchedBoundary *Zone) const {
+  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
+  if (!HazardRec->isVALUWMMACoexecSlot())
+    return false;
+
+  const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
+  bool TryIsVALUOnly = SII->isVALU(*TryCand.SU->getInstr()) && !SII->isTRANS(*TryCand.SU->getInstr());
+  bool CandIsVALUOnly = SII->isVALU(*Cand.SU->getInstr()) && !SII->isTRANS(*Cand.SU->getInstr());
+
+  if (!TryIsVALUOnly && !CandIsVALUOnly)
+    return false;
+  
+  if (TryIsVALUOnly && CandIsVALUOnly)
+    return true;
+  
+  if (TryIsVALUOnly) {
+    TryCand.Reason = RegCritical;
+    return true;
+  }
+
+  if (Cand.Reason > RegCritical)
+    Cand.Reason = RegCritical;
+  return true;
+}
+
+void AMDGPUMLPostSchedStrategy::collectUse() {
+  errs() << "PostRA collect use\n";
+  CollectedUse = true;
+  SchedDSR.clear();
+  SchedMFMA.clear();
+  SchedTDM.clear();
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+
+  for (auto &HWUI : HWUInfo) {
+    HWUI.reset();
+  }
+
+  if (!SchedModel || !SchedModel->hasInstrSchedModel())
+    return;
+
+  unsigned I = 0;
+  unsigned PrevDSR = 0;
+  unsigned PrevFence = 0;
+  unsigned FencedDSRCount = 0;
+  for (auto &SU : DAG->SUnits) {
+    const MCSchedClassDesc *SC = DAG->getSchedClass(&SU);
+    for (TargetSchedModel::ProcResIter
+             PI = SchedModel->getWriteProcResBegin(SC),
+             PE = SchedModel->getWriteProcResEnd(SC);
+         PI != PE; ++PI) {
+      unsigned Latency = getHWUICyclesForInst(&SU, SII, PI->ReleaseAtCycle);
+      HWUInfo[PI->ProcResourceIdx].insert(&SU, Latency);
+    }
+
+    auto MI = SU.getInstr();
+    if (SII->isDS(*MI) && MI->mayLoad()) {
+      PrevDSR = I;
+    }
+    if (MI->getOpcode() == AMDGPU::ATOMIC_FENCE) {
+      if (PrevFence < PrevDSR) {
+        ++FencedDSRCount;
+      }
+      PrevFence = I;
+    }
+    I++;
+  }
+
+
+  unsigned MaxCycles = 0;
+  if (FencedDSRCount) {
+    for (auto HWUI : HWUInfo) {
+      MaxCycles = std::max(MaxCycles, HWUI.getTotalCycles());
+    }
+
+    FencedDSRLatency = MaxCycles / FencedDSRCount;
+    FencedDSRLatency = std::max(DSLatency.getValue(), FencedDSRLatency);
+  }
+  
+
+  HWUInfo[4].reset();
+  if (IgnoreVALU)
+    HWUInfo[7].reset();
+
+}
+
+
+bool AMDGPUMLPostSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
+                                                SchedCandidate &Cand,
+                                                SchedBoundary *Zone) const {
+
+  unsigned CandOp = Cand.SU->getInstr()->getOpcode();
+  bool CandIsLoad = CandOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 || CandOp == AMDGPU::S_WAIT_TENSORCNT || CandOp == AMDGPU::S_BARRIER_WAIT || CandOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
+  if (CandIsLoad) {
+    if (Cand.Reason > RegCritical)
+      Cand.Reason = RegCritical;
+    return true;
+  }
+
+  unsigned TryOp = TryCand.SU->getInstr()->getOpcode();
+  bool TryIsLoad = TryOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 || TryOp == AMDGPU::S_WAIT_TENSORCNT || TryOp == AMDGPU::S_BARRIER_WAIT || TryOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
+  if (TryIsLoad) {
+    TryCand.Reason = RegCritical;
+    return true;
+  }
+
+  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
+  unsigned CheckedResources = 0;
+  for (unsigned I = 0; I < HWUInfo.size(); I++) {
+    HardwareUnitInfo HWUI = HWUInfo[I];
+    if (CheckedResources++ >= Cutoff)
+      return false;
+  
+    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
+    unsigned CriticalUsage = HWUI.getTotalCycles();
+
+    if (MaxAvailableLat > CriticalUsage)
+      return false;
+
+    bool CandUsesCrit = HWUI.contains(Cand.SU);
+    bool TryCandUsesCrit = HWUI.contains(TryCand.SU);
+
+    if (!CandUsesCrit && !TryCandUsesCrit)
+      continue;
+
+    if (CandUsesCrit && !TryCandUsesCrit) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+      return true;
+    }
+
+    if (!CandUsesCrit && TryCandUsesCrit) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+      return true;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+      return true;
+    }
+
+    if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+      return true;
+    }
+
+    TryCand.Reason = RegCritical;
+    return true;
+  }
+
+  return false;
+}
+
+bool AMDGPUMLPostSchedStrategy::tryCriticalResourceDependency(
+    SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone, 
+    bool IsAsync) const {
+
+  auto IsCandidateResource = [Zone, this](unsigned ResourceIdx) {
+    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    unsigned CriticalUsage = HWUI.getTotalCycles();
+
+    if (MaxAvailableLat > CriticalUsage)
+      return false;
+
+    auto *TargetSU = HWUI.getNextTargetSU();
+    if (!TargetSU)
+      return false;
+
+    return true;
+  };
+
+  auto TryEnablesResource = [&Cand, &TryCand, this](unsigned ResourceIdx) {
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    auto *TargetSU = HWUI.getNextTargetSU();
+
+    bool CandEnables =
+        TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
+    bool TryCandEnables =
+        TargetSU != TryCand.SU && DAG->IsReachable(TargetSU, TryCand.SU);
+
+    if (!CandEnables && !TryCandEnables)
+      return false;
+
+    if (CandEnables && !TryCandEnables) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+
+      return true;
+    }
+
+    if (!CandEnables && TryCandEnables) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
+
+    // Both enable, prefer the critical path.
+    bool CandHeight = Cand.SU->getHeight();
+    bool TryCandHeight = TryCand.SU->getHeight();
+
+    if (CandHeight > TryCandHeight) {
+      if (Cand.Reason > RegCritical)
+        Cand.Reason = RegCritical;
+
+      return true;
+    }
+
+    if (CandHeight < TryCandHeight) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
+
+    // Same critical path, just prefer original candidate.
+    if (Cand.Reason > RegCritical)
+      Cand.Reason = RegCritical;
+
+    return true;
+  };
+
+  if (IsAsync) {
+    for (unsigned I = 0; I < HWUInfo.size(); I++) {
+      if (!HWUInfo[I].IsAsync)
+        continue;
+
+      if (!IsCandidateResource(I))
+        return false;
+
+      return TryEnablesResource(I);
+    }
+    return false;
+  }
+   
+  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
+  unsigned CheckedResources = 0;
+
+
+  for (unsigned I = 0; I < HWUInfo.size(); I++) {
+    if (CheckedResources++ >= Cutoff)
+      return false;
+
+    // If we have encountered a resource that is not critical, then neither
+    // candidate enables a critical resource
+    if (!IsCandidateResource(I))
+      return false;
+    
+    bool Enabled = TryEnablesResource(I);
+    // If neither has enabled the resource, continue to the next resource
+    if (Enabled)
+      return true;
+  }
+  return false;
+}
+
+unsigned AMDGPUMLPostSchedStrategy::getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle) {
+  auto Opc = SU->getInstr()->getOpcode();
+  bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
+                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
+                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
+                   Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
+                   Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+  unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
+  if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
+        Latency = DSLatency;
+
+  return Latency;
+}
+
+void AMDGPUMLPostSchedStrategy::initialize(ScheduleDAGMI *DAG) {
+  // ML scheduling strategy is only done top-down to support new resource
+  // balancing heuristics.
+  RegionPolicy.OnlyTopDown = true;
+  RegionPolicy.OnlyBottomUp = false;
+
+  const MCSchedModel &SM = DAG->MF.getSubtarget().getSchedModel();
+  unsigned NumPR = SM.getNumProcResourceKinds();
+  HWUInfo.resize(NumPR);
+  for (unsigned I = 0; I < NumPR; I++) {
+    HWUInfo[I].setRes(SM.getProcResource(I));
+    HWUInfo[I].Idx = I;
+  }
+  if (NumPR > 8)
+    HWUInfo[8].IsAsync = true;
+  
+  CollectedUse = false;
+
+  SchedDSR.clear();
+  SchedMFMA.clear();
+  SchedTDM.clear();
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+
+  for (auto &HWUI : HWUInfo) {
+    HWUI.reset();
+  }
+
+  PostGenericScheduler::initialize(DAG);
+}
+
+/// Pick the next node to schedule.
+SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
+  if (!CollectedUse)
+    collectUse();
+  
+  return PostGenericScheduler::pickNode(IsTopNode);
+}
+
