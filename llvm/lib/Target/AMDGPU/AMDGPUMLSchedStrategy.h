@@ -186,10 +186,23 @@ public:
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
 protected:
-  bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand) override;
+  bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone) override;
+
+
+  SmallVector<SUnit *, 16> SchedDSR;
+
+  SmallVector<SUnit *, 16> SchedMFMA;
+
+  SmallVector<HardwareUnitInfo, 8> HWUInfo;
+
+  SmallVector<SUnit *, 16> SchedTDM;
 
 public:
   AMDGPUMLPostSchedStrategy(const MachineSchedContext *C);
+
+  void schedNode(SUnit *SU, bool IsTopNode) override;
+
+  unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
 };
 
 } // End namespace llvm
