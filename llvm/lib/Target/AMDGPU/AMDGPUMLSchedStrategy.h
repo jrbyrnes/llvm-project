@@ -190,7 +190,6 @@ protected:
 
   unsigned FencedDSRLatency = 0;
 
-  bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone) override;
 
 
   SmallVector<SUnit *, 16> SchedDSR;
@@ -210,8 +209,13 @@ public:
 
   bool tryCandidate(SchedCandidate &Cand,
                                         SchedCandidate &TryCand,
-                                        SchedBoundary *Zone) const;
+                                        SchedBoundary *Zone) override;
   
+
+  bool tryPendingCandidate(SchedCandidate &Cand,
+                                        SchedCandidate &TryCand,
+                                        SchedBoundary *Zone);
+
   void collectUse();
 
   void enterRegion(MachineBasicBlock *bb,
@@ -234,6 +238,9 @@ public:
   void initialize(ScheduleDAGMI *DAG) override;
 
   SUnit *pickNode(bool &IsTopNode) override;
+
+  void pickNodeFromQueue(SchedBoundary &Zone,
+                         SchedCandidate &Cand, bool &IsPending);
 
 };
 

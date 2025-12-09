@@ -28,17 +28,17 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-latency", cl::Hidden,
     cl::desc("Latency of DS_LOAD for resource usage."),
-    cl::init(60));
+    cl::init(50));
 
 static cl::opt<unsigned> DSLatencySplit(
     "amdgpu-ds-latency-split", cl::Hidden,
     cl::desc("Latency between neighboring DS_LOAD."),
-    cl::init(8));
+    cl::init(10));
 
 static cl::opt<unsigned> DSLatencyFIFO(
     "amdgpu-ds-fifo-latency", cl::Hidden,
     cl::desc("Hazard latency DS_LOAD FIFO full."),
-    cl::init(60));
+    cl::init(40));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
@@ -48,7 +48,7 @@ static cl::opt<unsigned> LatencyForSignal(
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(60));
+    cl::init(50));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
@@ -1002,18 +1002,65 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
 
   return false;
+}
 
 
+bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
+                                                SchedCandidate &TryCand,
+                                                SchedBoundary *Zone) {
+  // Initialize the candidate if needed.
+  if (!Cand.isValid()) {
+    TryCand.Reason = NodeOrder;
+    return true;
+  }
 
+  // Bias PhysReg Defs and copies to their uses and defined respectively.
+  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
+                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+    return TryCand.Reason != NoCand;
 
+  // Avoid exceeding the target's limit.
+  /*if (DAG->isTrackingPressure() &&
+      tryPressure(TryCand.RPDelta.Excess, Cand.RPDelta.Excess, TryCand, Cand,
+                  RegExcess, TRI, DAG->MF))
+    return TryCand.Reason != NoCand;
 
+  // Avoid increasing the max critical pressure in the scheduled region.
+  if (DAG->isTrackingPressure() &&
+      tryPressure(TryCand.RPDelta.CriticalMax, Cand.RPDelta.CriticalMax,
+                  TryCand, Cand, RegCritical, TRI, DAG->MF))
+    return TryCand.Reason != NoCand;*/
 
+  bool SameBoundary = Zone != nullptr;
+  if (SameBoundary) {
+    // Prioritize instructions that read unbuffered resources by stall cycles.
+    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
+                Cand, Stall))
+      return TryCand.Reason != NoCand;
 
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
 
+    sortResources(HWUInfo);
+    if (tryCriticalResource(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
 
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+      return TryCand.Reason != NoCand;
+    }
+
+    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+      return TryCand.Reason != NoCand;
+    }
+  }
 
   return false;
 }
+
+
 
 void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     auto MI = SU->getInstr();
@@ -1409,12 +1456,134 @@ void AMDGPUMLPostSchedStrategy::initialize(ScheduleDAGMI *DAG) {
 
   PostGenericScheduler::initialize(DAG);
 }
-
+/*
 /// Pick the next node to schedule.
 SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
   if (!CollectedUse)
     collectUse();
   
-  return PostGenericScheduler::pickNode(IsTopNode);
+  SUnit *Node = PostGenericScheduler::pickNode(IsTopNode);
+
+    if (PickedPending) {
+    unsigned ReadyCycle = IsTopNode ? SU->TopReadyCycle : SU->BotReadyCycle;
+    SchedBoundary &Zone = IsTopNode ? Top : Bot;
+    unsigned CurrentCycle = Zone.getCurrCycle();
+    if (ReadyCycle > CurrentCycle)
+      Zone.bumpCycle(ReadyCycle);
+
+    // FIXME: checkHazard() doesn't give information about which cycle the
+    // hazard will resolve so just keep bumping the cycle by 1. This could be
+    // made more efficient if checkHazard() returned more details.
+    while (Zone.checkHazard(SU))
+      Zone.bumpCycle(Zone.getCurrCycle() + 1);
+
+    Zone.releasePending();
+  }
+}*/
+
+void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
+                                             SchedCandidate &Cand,
+                                             bool &IsPending) {
+  ReadyQueue &Q = Zone.Available;
+  for (SUnit *SU : Q) {
+    SchedCandidate TryCand(Cand.Policy);
+    TryCand.SU = SU;
+    TryCand.AtTop = Zone.isTop();
+    TryCand.initResourceDelta(DAG, SchedModel);
+    if (AMDGPUMLPostSchedStrategy::tryCandidate(Cand, TryCand, &Zone)) {
+      IsPending = false;
+      Cand.setBest(TryCand);
+      LLVM_DEBUG(traceCandidate(Cand));
+    }
+  }
+
+  ReadyQueue &PQ = Zone.Pending;
+  for (SUnit *SU : PQ) {
+    SchedCandidate TryCand(Cand.Policy);
+    TryCand.SU = SU;
+    TryCand.AtTop = Zone.isTop();
+    TryCand.initResourceDelta(DAG, SchedModel);
+    // Pass SchedBoundary only when comparing nodes from the same boundary.
+    SchedBoundary *ZoneArg = Cand.AtTop == TryCand.AtTop ? &Zone : nullptr;
+    if (tryPendingCandidate(Cand, TryCand, ZoneArg)) {
+      IsPending = true;
+      Cand.setBest(TryCand);
+      LLVM_DEBUG(traceCandidate(Cand));
+    }
+  }
 }
 
+
+
+/// Pick the next node to schedule.
+SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
+  bool IsPending = false;
+  if (DAG->top() == DAG->bottom()) {
+    assert(Top.Available.empty() && Top.Pending.empty() &&
+           Bot.Available.empty() && Bot.Pending.empty() && "ReadyQ garbage");
+    return nullptr;
+  }
+  SUnit *SU;
+  if (RegionPolicy.OnlyBottomUp) {
+    SU = Bot.pickOnlyChoice();
+    if (SU) {
+      ;
+    } else {
+      CandPolicy NoPolicy;
+      BotCand.reset(NoPolicy);
+      // Set the bottom-up policy based on the state of the current bottom
+      // zone and the instructions outside the zone, including the top zone.
+      setPolicy(BotCand.Policy, /*IsPostRA=*/true, Bot, nullptr);
+      pickNodeFromQueue(Bot, BotCand, IsPending);
+      assert(BotCand.Reason != NoCand && "failed to find a candidate");
+      SU = BotCand.SU;
+    }
+    IsTopNode = false;
+  } else if (RegionPolicy.OnlyTopDown) {
+    SU = Top.pickOnlyChoice();
+    if (SU) {
+      ;
+    } else {
+      CandPolicy NoPolicy;
+      TopCand.reset(NoPolicy);
+      // Set the top-down policy based on the state of the current top zone
+      // and the instructions outside the zone, including the bottom zone.
+      setPolicy(TopCand.Policy, /*IsPostRA=*/true, Top, nullptr);
+      pickNodeFromQueue(Top, TopCand, IsPending);
+      assert(TopCand.Reason != NoCand && "failed to find a candidate");
+
+      SU = TopCand.SU;
+    }
+    IsTopNode = true;
+  } else {
+    SU = pickNodeBidirectional(IsTopNode, IsPending);
+  }
+  assert(!SU->isScheduled && "SUnit scheduled twice.");
+
+
+  if (IsPending) {
+    unsigned ReadyCycle = IsTopNode ? SU->TopReadyCycle : SU->BotReadyCycle;
+    SchedBoundary &Zone = IsTopNode ? Top : Bot;
+    unsigned CurrentCycle = Zone.getCurrCycle();
+    if (ReadyCycle > CurrentCycle)
+      Zone.bumpCycle(ReadyCycle);
+
+    // FIXME: checkHazard() doesn't give information about which cycle the
+    // hazard will resolve so just keep bumping the cycle by 1. This could be
+    // made more efficient if checkHazard() returned more details.
+    while (Zone.checkHazard(SU))
+      Zone.bumpCycle(Zone.getCurrCycle() + 1);
+
+    Zone.releasePending();
+  }
+
+  if (SU->isTopReady())
+    Top.removeReady(SU);
+  if (SU->isBottomReady())
+    Bot.removeReady(SU);
+
+  LLVM_DEBUG(dbgs() << "Scheduling SU(" << SU->NodeNum << ") "
+                    << *SU->getInstr());
+
+  return SU;
+}
