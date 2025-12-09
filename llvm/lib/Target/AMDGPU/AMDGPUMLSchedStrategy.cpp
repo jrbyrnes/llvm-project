@@ -910,7 +910,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
       return false;
     }
   }
-  # endif
+
 
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
@@ -992,7 +992,9 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     if (!RegionPolicy.DisableLatencyHeuristic && TryCand.Policy.ReduceLatency &&
         !Rem.IsAcyclicLatencyLimited && tryLatency(TryCand, Cand, *Zone))
       return TryCand.Reason != NoCand;
-
+  # endif
+  bool SameBoundary = Zone != nullptr;
+  if (SameBoundary) {
     // Fall through to original instruction order.
     if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
         (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
@@ -1497,6 +1499,7 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
     }
   }
 
+#if 0
   ReadyQueue &PQ = Zone.Pending;
   for (SUnit *SU : PQ) {
     SchedCandidate TryCand(Cand.Policy);
@@ -1511,6 +1514,7 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       LLVM_DEBUG(traceCandidate(Cand));
     }
   }
+#endif
 }
 
 

@@ -489,7 +489,7 @@ static cl::opt<bool> EnableMachineSched(
 static cl::opt<bool> EnablePostRAMachineSched(
     "enable-post-misched",
     cl::desc("Enable the post-ra machine instruction scheduling pass."),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 /// Decrement this iterator until reaching the top or a non-debug instr.
 static MachineBasicBlock::const_iterator

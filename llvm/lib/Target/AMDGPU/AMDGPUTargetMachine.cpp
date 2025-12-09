@@ -1189,7 +1189,7 @@ Error GCNTargetMachine::buildCodeGenPipeline(
 ScheduleDAGInstrs *
 GCNTargetMachine::createMachineScheduler(MachineSchedContext *C) const {
   const GCNSubtarget &ST = C->MF->getSubtarget<GCNSubtarget>();
-  const_cast<GCNSubtarget *>(&ST)->setDisablePostMISched(false);
+  const_cast<GCNSubtarget *>(&ST)->setDisablePostMISched(true);
   if (ST.enableSIScheduler())
     return createSIMachineScheduler(C);
 
