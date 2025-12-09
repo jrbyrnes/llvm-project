@@ -1400,7 +1400,7 @@ public:
   }
 
 protected:
-  virtual bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand);
+  virtual bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone = nullptr);
 
   void pickNodeFromQueue(SchedBoundary &Zone, SchedCandidate &Cand);
 };
