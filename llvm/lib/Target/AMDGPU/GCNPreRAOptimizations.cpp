@@ -258,7 +258,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   // Add RA anti-hints to reduce MFMA hazard NOPs
   if (EnableAntiHintsForMFMARegs) {
     // Max lookback window for RAW or WAW hazard
-    constexpr unsigned MaxLookbackWindow = 19;
+    constexpr unsigned MaxLookbackWindow = 2;
     for (const MachineBasicBlock &MBB : MF) {
       SmallVector<SmallVector<Register, 4>, 16> RecentMFMAs;
       SmallVector<SmallVector<Register, 4>, 16> RecentEXPs;
@@ -290,9 +290,11 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           };
 
           // Collect destination and source C registers
-          collectNamedOperand(AMDGPU::OpName::vdst, "vdst"); // Destination
-          collectNamedOperand(AMDGPU::OpName::src2,
-                              "src2"); // Matrix C (accumulator)
+          // collectNamedOperand(AMDGPU::OpName::vdst, "vdst"); // Destination
+          collectNamedOperand(AMDGPU::OpName::src0, "src0");
+          collectNamedOperand(AMDGPU::OpName::src1, "src1");
+          // collectNamedOperand(AMDGPU::OpName::src2,
+          //                     "src2"); // Matrix C (accumulator)
           if (!MFMARegisters.empty()) {
             RecentMFMAs.emplace_back(std::move(MFMARegisters));
             // Maintain window
@@ -358,6 +360,8 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           for (auto It = RecentMFMAs.rbegin(); It != RecentMFMAs.rend(); ++It) {
             const SmallVector<Register, 4> &MFMARegs = *It;
             for (Register MFMAReg : MFMARegs) {
+              if (MFMAReg == CandidateReg)
+                continue;
               // Check if MFMA register is dead at current instruction
               const LiveInterval &MFMAInterval = LIS->getInterval(MFMAReg);
               const SlotIndex CurrentSlot =
