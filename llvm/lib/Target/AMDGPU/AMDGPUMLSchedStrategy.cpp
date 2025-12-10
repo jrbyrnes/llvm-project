@@ -1182,7 +1182,6 @@ bool AMDGPUMLPostSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
 }
 
 void AMDGPUMLPostSchedStrategy::collectUse() {
-  errs() << "PostRA collect use\n";
   CollectedUse = true;
   SchedDSR.clear();
   SchedMFMA.clear();
@@ -1450,7 +1449,6 @@ void AMDGPUMLPostSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   SchedDSR.clear();
   SchedMFMA.clear();
   SchedTDM.clear();
-  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
     HWUI.reset();

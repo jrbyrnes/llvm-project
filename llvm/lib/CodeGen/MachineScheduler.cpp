@@ -855,7 +855,6 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
 
       // Notify the scheduler of the region, even if we may skip scheduling
       // it. Perhaps it still needs to be bundled.
-      errs() << "Calling enter region\n";
       Scheduler.enterRegion(&*MBB, I, RegionEnd, NumRegionInstrs);
 
       // Skip empty scheduling regions and, conditionally, regions with a single
@@ -4291,7 +4290,6 @@ GenericSchedRegistry("converge", "Standard converging scheduler.",
 //===----------------------------------------------------------------------===//
 
 void PostGenericScheduler::initialize(ScheduleDAGMI *Dag) {
-  errs() << "PostGeneric initialize\n";
   DAG = Dag;
   SchedModel = DAG->getSchedModel();
   TRI = DAG->TRI;
