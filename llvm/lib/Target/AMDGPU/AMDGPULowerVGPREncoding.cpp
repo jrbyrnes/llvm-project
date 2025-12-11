@@ -167,8 +167,8 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode, ModeTy Mask,
   int64_t OldModeBits = CurrentMode << ModeWidth;
 
   I = handleClause(I);
-  MostRecentModeSet = BuildMI(*MBB, I, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
-                          .addImm(NewMode | OldModeBits);
+  //MostRecentModeSet = BuildMI(*MBB, I, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
+  //                        .addImm(NewMode | OldModeBits);
 
   CurrentMode = NewMode;
   CurrentMask = Mask;
