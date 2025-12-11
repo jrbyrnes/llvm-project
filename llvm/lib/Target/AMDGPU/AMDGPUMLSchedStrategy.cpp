@@ -488,9 +488,14 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
   
   }
 
-  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT) && SchedTDM.size() && SchedDSR.size()) {
-    auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
-    ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+    if (SchedDSR.size()) {
+      auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
+      ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+    }
+    else {
+      ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
+    }
   }
 
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
