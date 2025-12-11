@@ -28,7 +28,7 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-latency", cl::Hidden,
     cl::desc("Latency of DS_LOAD for resource usage."),
-    cl::init(50));
+    cl::init(1));
 
 static cl::opt<unsigned> DSLatencySplit(
     "amdgpu-ds-latency-split", cl::Hidden,
@@ -48,7 +48,7 @@ static cl::opt<unsigned> LatencyForSignal(
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(50));
+    cl::init(70));
 
 static cl::opt<unsigned> DSFIFOSize(
     "amdgpu-ds-fifo-size", cl::Hidden,
