@@ -586,6 +586,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     return true;
   }
 
+/*
   auto Cycle = CI.getCycle(TryCand.SU->getInstr()->getParent());
   bool InCycle = true;
   if (!Cycle)
@@ -651,7 +652,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     }
     return false;
   }
-
+*/
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
   if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
