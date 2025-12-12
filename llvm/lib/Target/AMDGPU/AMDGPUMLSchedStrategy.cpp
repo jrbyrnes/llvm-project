@@ -960,24 +960,6 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   }
 
   if (SameBoundary) {
-    // Avoid critical resource consumption and balance the schedule.
-    TryCand.initResourceDelta(DAG, SchedModel);
-    if (tryLess(TryCand.ResDelta.CritResources, Cand.ResDelta.CritResources,
-                TryCand, Cand, ResourceReduce)) {
-      return TryCand.Reason != NoCand;
-    }
-    if (tryGreater(TryCand.ResDelta.DemandedResources,
-                   Cand.ResDelta.DemandedResources, TryCand, Cand,
-                   ResourceDemand)) {
-      return TryCand.Reason != NoCand;
-    }
-
-    // Avoid serializing long latency dependence chains.
-    // For acyclic path limited loops, latency was already checked above.
-    if (!RegionPolicy.DisableLatencyHeuristic && TryCand.Policy.ReduceLatency &&
-        !Rem.IsAcyclicLatencyLimited && tryLatency(TryCand, Cand, *Zone))
-      return TryCand.Reason != NoCand;
-
     // Fall through to original instruction order.
     if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
         (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
@@ -998,22 +980,6 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     return true;
   }
 
-  // Bias PhysReg Defs and copies to their uses and defined respectively.
-  if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
-                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
-    return TryCand.Reason != NoCand;
-
-  // Avoid exceeding the target's limit.
-  /*if (DAG->isTrackingPressure() &&
-      tryPressure(TryCand.RPDelta.Excess, Cand.RPDelta.Excess, TryCand, Cand,
-                  RegExcess, TRI, DAG->MF))
-    return TryCand.Reason != NoCand;
-
-  // Avoid increasing the max critical pressure in the scheduled region.
-  if (DAG->isTrackingPressure() &&
-      tryPressure(TryCand.RPDelta.CriticalMax, Cand.RPDelta.CriticalMax,
-                  TryCand, Cand, RegCritical, TRI, DAG->MF))
-    return TryCand.Reason != NoCand;*/
 
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
@@ -1107,12 +1073,18 @@ AMDGPUMLPostSchedStrategy::getLatencyStallCycles(SUnit *SU,
     if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
       ReadyCycle = std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
     }
-  
+
   }
 
-  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT) && SchedTDM.size() && SchedDSR.size()) {
-    auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
-    ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
+            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+    if (SchedDSR.size()) {
+      auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
+      ReadyCycle =
+          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+    } else {
+      ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
+    }
   }
 
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
@@ -1155,8 +1127,14 @@ bool AMDGPUMLPostSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
   if (!TryIsVALUOnly && !CandIsVALUOnly)
     return false;
 
-  if (TryIsVALUOnly && CandIsVALUOnly)
+  if (TryIsVALUOnly && CandIsVALUOnly) {
+    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
+        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
     return true;
+  }
 
   if (TryIsVALUOnly) {
     TryCand.Reason = RegCritical;
