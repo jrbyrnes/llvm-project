@@ -223,15 +223,12 @@ void AMDGPUMLSchedStrategy::collectUse() {
     FencedDSRLatency = std::max(DSLatency.getValue(), FencedDSRLatency);
   }
 
-  // errs() << "\n\nAfter Collect use:\n";
-  // for (auto &HWUI : HWUInfo) {
-  //   errs() << "HWUI " << HWUI.Idx << ", has: " << HWUI.getTotalCycles() <<
-  //   "\n";
-  // }
 
   HWUInfo[4].reset();
-  if (IgnoreVALU)
+  if (IgnoreVALU) {
     HWUInfo[7].reset();
+    HWUInfo[5].reset();
+  }
 
 }
 
