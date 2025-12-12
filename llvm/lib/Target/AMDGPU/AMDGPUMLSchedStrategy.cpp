@@ -501,9 +501,9 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
   if (HazardRec) {
     unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
-    if (HazardStates + CurrCycle >= ReadyCycle) {
-        //errs() << "Wait for: "; SU->getInstr()->dump();
-        //errs() << HazardStates << "\n";
+    if (HazardStates + CurrCycle > ReadyCycle) {
+      // errs() << "Wait for: "; SU->getInstr()->dump();
+      // errs() << HazardStates << "\n";
       return HazardStates;
     }
   }
