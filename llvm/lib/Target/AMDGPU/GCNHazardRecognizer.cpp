@@ -1070,6 +1070,10 @@ int GCNHazardRecognizer::checkSoftClauseHazards(MachineInstr *MEM) const {
   if (!ST.isXNACKEnabled())
     return 0;
 
+  // TODO: fix addClauseInst to work with virtregs
+  if (isPreRA() || isPostRA())
+    return 0;
+
   bool IsSMRD = TII.isSMRD(*MEM);
 
   resetClause();
