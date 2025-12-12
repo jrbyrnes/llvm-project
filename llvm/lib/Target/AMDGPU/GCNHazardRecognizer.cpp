@@ -110,6 +110,9 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
   if (WMMAPipelineState.empty())
     return 0;
 
+  if (MI.isPseudo())
+    return 0;
+
   // Check what the current slot allows.
   WMMASlotType CurrentSlot = WMMAPipelineState.front();
 
