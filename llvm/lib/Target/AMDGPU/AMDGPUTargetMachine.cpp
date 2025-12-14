@@ -555,6 +555,8 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUAsmPrinterPass(*PR);
   initializeAMDGPUDAGToDAGISelLegacyPass(*PR);
   initializeAMDGPUPrepareAGPRAllocLegacyPass(*PR);
+  initializeAMDGPUPreRAAllocPass(*PR);
+  initializeAMDGPUPostRARegRewriterPass(*PR);
   initializeGCNDPPCombineLegacyPass(*PR);
   initializeSILowerI1CopiesLegacyPass(*PR);
   initializeAMDGPUGlobalISelDivergenceLoweringPass(*PR);
@@ -1787,8 +1789,16 @@ bool GCNPassConfig::addRegAssignAndRewriteOptimized() {
   addPass(createVirtRegRewriter(false));
   addPass(&AMDGPUReserveWWMRegsLegacyID);
 
+  // Pre-compute VGPR allocation hints to avoid MSB exposure and bank conflicts.
+  addPass(createAMDGPUPreRAAllocPass());
+
   // For allocating per-thread VGPRs.
   addPass(createVGPRAllocPass(true));
+
+  // Post-RA rewriter: fix MSB exposures and bank conflicts by reassigning.
+  // Runs after Greedy but before VirtRegRewriter while VRM is still mutable.
+  // Enable with: -amdgpu-post-ra-rewriter=true
+  addPass(createAMDGPUPostRARegRewriterPass());
 
   addPreRewrite();
   addPass(&VirtRegRewriterID);

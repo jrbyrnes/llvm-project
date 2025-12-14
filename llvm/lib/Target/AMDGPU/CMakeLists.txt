@@ -90,6 +90,9 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPUMCInstLower.cpp
   AMDGPUMemoryUtils.cpp
   AMDGPUMLSchedStrategy.cpp
+  AMDGPUMSBAnalysis.cpp
+  AMDGPUPostRARegRewriter.cpp
+  AMDGPUPreRAAlloc.cpp
   AMDGPUStaticSimulator.cpp
   AMDGPUIGroupLP.cpp
   AMDGPULowerVGPREncoding.cpp

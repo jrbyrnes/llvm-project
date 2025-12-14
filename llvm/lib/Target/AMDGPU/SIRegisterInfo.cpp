@@ -12,19 +12,25 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
+#include "AMDGPUMSBAnalysis.h"
 #include "AMDGPURegisterBankInfo.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUInstPrinter.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIMachineFunctionInfo.h"
 #include "SIRegisterInfo.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
+#include "llvm/Support/Debug.h"
+#include <algorithm>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "amdgpu-reginfo"
 
 #define GET_REGINFO_TARGET_DESC
 #include "AMDGPUGenRegisterInfo.inc"
@@ -34,6 +40,24 @@ static cl::opt<bool> EnableSpillSGPRToVGPR(
   cl::desc("Enable spilling SGPRs to VGPRs"),
   cl::ReallyHidden,
   cl::init(true));
+
+static cl::opt<unsigned> ForceMaxVGPRs(
+  "amdgpu-force-max-vgprs",
+  cl::desc("Override maximum VGPRs for debugging (0 = use default)"),
+  cl::init(0),
+  cl::Hidden);
+
+static cl::opt<bool> EnableInlineHinting1250(
+  "amdgpu-enable-inline-hinting-1250",
+  cl::desc("Enable inline MSB/Bank hinting during getRegAllocationHints for gfx1250+."),
+  cl::init(false),
+  cl::Hidden);
+
+static cl::opt<bool> EnablePreRAHintExtension1250(
+  "amdgpu-enable-pre-ra-hint-extension-1250",
+  cl::desc("Extend PreRAAlloc physreg hints to full block preference for gfx1250+."),
+  cl::init(false),
+  cl::Hidden);
 
 std::array<std::vector<int16_t>, 32> SIRegisterInfo::RegSplitParts;
 std::array<std::array<uint16_t, 32>, 9> SIRegisterInfo::SubRegFromChannelTable;
@@ -689,6 +713,10 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Reserve VGPRs/AGPRs.
   //
   auto [MaxNumVGPRs, MaxNumAGPRs] = ST.getMaxNumVectorRegs(MF.getFunction());
+
+  // Override for debugging - allows testing with full VGPR allocation range
+  if (ForceMaxVGPRs > 0)
+    MaxNumVGPRs = ForceMaxVGPRs;
 
   for (const TargetRegisterClass *RC : regclasses()) {
     if (RC->isBaseClass() && isVGPRClass(RC)) {
@@ -3811,13 +3839,479 @@ const int *SIRegisterInfo::getRegUnitPressureSets(MCRegUnit RegUnit) const {
   return AMDGPUGenRegisterInfo::getRegUnitPressureSets(RegUnit);
 }
 
+/// Check if bank conflict avoidance is enabled via environment variable.
+/// Default is enabled for gfx1250.
+static bool isBankConflictHintsEnabled() {
+  if (const char *EnvVal = std::getenv("LLVM_AMDGPU_AVOID_REGBANK_CONFLICT")) {
+    StringRef Val(EnvVal);
+    return Val == "1" || Val.equals_insensitive("true");
+  }
+  return true;
+}
+
+bool SIRegisterInfo::getBankConflictAwareHints(
+    Register VirtReg, ArrayRef<MCPhysReg> Order,
+    SmallVectorImpl<MCPhysReg> &Hints, const MachineFunction &MF,
+    const VirtRegMap *VRM, bool FilterOnly) const {
+  // Only enable for gfx1250
+  if (!ST.hasGFX1250Insts())
+    return false;
+
+  // Check environment variable
+  if (!isBankConflictHintsEnabled())
+    return false;
+
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  const TargetRegisterClass *RC = MRI.getRegClass(VirtReg);
+
+  // Only apply to VGPR classes
+  if (!isVGPRClass(RC))
+    return false;
+
+  // Get tuple size (number of 32-bit components)
+  unsigned TupleSize = getRegSizeInBits(*RC) / 32;
+  if (TupleSize == 0)
+    TupleSize = 1;
+
+  // Only handle small tuples (<=4 dwords) where conflicts matter most
+  if (TupleSize > 4)
+    return false;
+
+  SmallSet<unsigned, 8> ConflictingBanks;
+
+  // Scan all VALU uses to find banks of already-assigned operands
+  for (const MachineInstr &UseMI : MRI.use_nodbg_instructions(VirtReg)) {
+    if (!SIInstrInfo::isVALU(UseMI))
+      continue;
+
+    // Check other source operands for assigned physical regs
+    for (const MachineOperand &MO : UseMI.uses()) {
+      if (!MO.isReg())
+        continue;
+
+      Register OtherReg = MO.getReg();
+      if (OtherReg == VirtReg)
+        continue;
+
+      MCPhysReg PhysReg = MCPhysReg();
+      if (OtherReg.isPhysical()) {
+        PhysReg = OtherReg;
+      } else if (VRM && VRM->hasPhys(OtherReg)) {
+        PhysReg = VRM->getPhys(OtherReg);
+      }
+
+      if (!PhysReg)
+        continue;
+
+      // Check if it's a VGPR
+      if (!AMDGPU::VGPR_32RegClass.contains(PhysReg)) {
+        // Try to find the base VGPR for tuple registers
+        MCPhysReg BaseReg = PhysReg;
+        for (MCPhysReg SubReg : subregs_inclusive(PhysReg)) {
+          if (AMDGPU::VGPR_32RegClass.contains(SubReg)) {
+            BaseReg = SubReg;
+            break;
+          }
+        }
+        if (!AMDGPU::VGPR_32RegClass.contains(BaseReg))
+          continue;
+        PhysReg = BaseReg;
+      }
+
+      // Get the hardware register index and compute conflicting banks
+      unsigned HWReg = getHWRegIndex(PhysReg);
+
+      // For the other operand, determine its tuple size from register class
+      const TargetRegisterClass *OtherRC = nullptr;
+      if (OtherReg.isVirtual())
+        OtherRC = MRI.getRegClass(OtherReg);
+      else
+        OtherRC = getPhysRegBaseClass(OtherReg);
+
+      unsigned OtherTupleSize = 1;
+      if (OtherRC) {
+        unsigned Size = getRegSizeInBits(*OtherRC) / 32;
+        OtherTupleSize = Size > 0 ? Size : 1;
+      }
+
+      // Add all banks this operand touches
+      for (unsigned i = 0; i < OtherTupleSize; ++i)
+        ConflictingBanks.insert((HWReg + i) % 8);
+    }
+  }
+
+  // If no conflicts found, let default allocation proceed
+  if (ConflictingBanks.empty())
+    return false;
+
+  // Partition Order into preferred (no conflict) and deferred (conflict)
+  SmallVector<MCPhysReg, 64> Preferred, Deferred;
+
+  for (MCPhysReg PhysReg : Order) {
+    if (MRI.isReserved(PhysReg))
+      continue;
+
+    unsigned HWReg = getHWRegIndex(PhysReg);
+    bool HasConflict = false;
+
+    // Check if any component of this tuple would conflict
+    for (unsigned i = 0; i < TupleSize && !HasConflict; ++i) {
+      if (ConflictingBanks.count((HWReg + i) % 8))
+        HasConflict = true;
+    }
+
+    if (HasConflict)
+      Deferred.push_back(PhysReg);
+    else
+      Preferred.push_back(PhysReg);
+  }
+
+  // Return hints: non-conflicting first
+  Hints.append(Preferred);
+
+  // If FilterOnly, only return optimal hints (for mini-allocator)
+  // Otherwise, add fallbacks to avoid spills (for Greedy)
+  if (!FilterOnly)
+    Hints.append(Deferred);
+
+  return true;
+}
+
+static bool isMSBHintsEnabled() {
+  if (const char *EnvVal = std::getenv("LLVM_AMDGPU_MSB_HINTS")) {
+    StringRef Val(EnvVal);
+    return Val == "1" || Val.equals_insensitive("true");
+  }
+  return true;
+}
+
+static bool isDefinedByMemory(Register VirtReg, const MachineRegisterInfo &MRI) {
+  for (const MachineInstr &DefMI : MRI.def_instructions(VirtReg))
+    if (SIInstrInfo::isDS(DefMI) || SIInstrInfo::isFLAT(DefMI) ||
+        SIInstrInfo::isMUBUF(DefMI) || SIInstrInfo::isMTBUF(DefMI) ||
+        SIInstrInfo::isImage(DefMI))
+      return true;
+  return false;
+}
+
+static bool immediatelyFollowsMemoryOp(const MachineInstr &MI) {
+  constexpr unsigned MaxScanDistance = 8;
+  const MachineInstr *Prev = MI.getPrevNode();
+  unsigned Count = 0;
+
+  while (Prev && Count < MaxScanDistance) {
+    if (Prev->isDebugInstr() || Prev->isMetaInstruction()) {
+      Prev = Prev->getPrevNode();
+      continue;
+    }
+    Count++;
+    if (SIInstrInfo::isDS(*Prev) || SIInstrInfo::isFLAT(*Prev) ||
+        SIInstrInfo::isMUBUF(*Prev) || SIInstrInfo::isMTBUF(*Prev))
+      return true;
+    if (SIInstrInfo::isVALU(*Prev))
+      return false;
+    Prev = Prev->getPrevNode();
+  }
+  return false;
+}
+
+static bool isInMemoryAdjacentPattern(Register VirtReg,
+                                       const MachineRegisterInfo &MRI) {
+  if (isDefinedByMemory(VirtReg, MRI))
+    return true;
+  for (const MachineInstr &DefMI : MRI.def_instructions(VirtReg))
+    if (immediatelyFollowsMemoryOp(DefMI))
+      return true;
+  for (const MachineInstr &UseMI : MRI.use_nodbg_instructions(VirtReg))
+    if (immediatelyFollowsMemoryOp(UseMI))
+      return true;
+  return false;
+}
+
+static bool isMemoryOp(const MachineInstr &MI) {
+  return SIInstrInfo::isDS(MI) || SIInstrInfo::isFLAT(MI) ||
+         SIInstrInfo::isMUBUF(MI) || SIInstrInfo::isMTBUF(MI);
+}
+
+static AMDGPU::MSBStateAnalyzer
+createMSBAnalyzer(const MachineInstr &MI, const VirtRegMap *VRM,
+                  const SIRegisterInfo *TRI) {
+  const MachineFunction *MF = MI.getMF();
+  const SIInstrInfo *TII =
+      static_cast<const SIInstrInfo *>(MF->getSubtarget().getInstrInfo());
+  return AMDGPU::MSBStateAnalyzer(TII, TRI, VRM, &MF->getRegInfo());
+}
+
+static void computeExpectedStateAfterDS(const MachineInstr &DSMI,
+                                        const VirtRegMap *VRM,
+                                        const SIRegisterInfo *TRI,
+                                        int ExpectedAfterDS[4]) {
+  AMDGPU::MSBStateAnalyzer Analyzer = createMSBAnalyzer(DSMI, VRM, TRI);
+  Analyzer.computeExpectedStateAfterDS(DSMI, ExpectedAfterDS);
+}
+
+static unsigned getVRegFieldMask(Register VirtReg, const MachineInstr &MI,
+                                 const VirtRegMap *VRM,
+                                 const SIRegisterInfo *TRI) {
+  AMDGPU::MSBStateAnalyzer Analyzer = createMSBAnalyzer(MI, VRM, TRI);
+  SmallVector<AMDGPU::MSBSlotOp, 8> Slots = Analyzer.collectSlots(MI);
+  unsigned Mask = 0;
+  for (const AMDGPU::MSBSlotOp &S : Slots)
+    if (S.Reg == VirtReg && S.FieldIdx < 4)
+      Mask |= (1u << S.FieldIdx);
+  return Mask;
+}
+
+static const MachineInstr *findPrecedingMemoryOp(const MachineInstr &MI) {
+  const MachineInstr *Prev = MI.getPrevNode();
+  while (Prev) {
+    if (Prev->isDebugInstr() || Prev->isMetaInstruction() ||
+        SIInstrInfo::isSALU(*Prev)) {
+      Prev = Prev->getPrevNode();
+      continue;
+    }
+    if (isMemoryOp(*Prev))
+      return Prev;
+    if (SIInstrInfo::isVALU(*Prev))
+      return nullptr;
+    Prev = Prev->getPrevNode();
+  }
+  return nullptr;
+}
+
+static const MachineInstr *findSuccessorInstruction(const MachineInstr &MemMI) {
+  const MachineInstr *Next = MemMI.getNextNode();
+  while (Next) {
+    if (Next->isDebugInstr() || Next->isMetaInstruction()) {
+      Next = Next->getNextNode();
+      continue;
+    }
+    if (SIInstrInfo::isVALU(*Next) || isMemoryOp(*Next))
+      return Next;
+    if (!SIInstrInfo::isSALU(*Next))
+      break;
+    Next = Next->getNextNode();
+  }
+  return nullptr;
+}
+
+/// Get preferred MSB block. Returns 0-3, or -1 if no preference.
+static int getPreferredMSBBlock(Register VirtReg, const MachineRegisterInfo &MRI,
+                                 const VirtRegMap *VRM,
+                                 const SIRegisterInfo *TRI) {
+  if (!VRM)
+    return -1;
+
+  LLVM_DEBUG(dbgs() << "  getPreferredMSBBlock(" << printReg(VirtReg, TRI) << "):\n");
+
+  // Priority 1: VirtReg defined by memory op - match NextMI's assigned operands
+  for (const MachineInstr &DefMI : MRI.def_instructions(VirtReg)) {
+    if (!isMemoryOp(DefMI))
+      continue;
+    const MachineInstr *NextMI = findSuccessorInstruction(DefMI);
+    if (!NextMI)
+      continue;
+
+    AMDGPU::MSBStateAnalyzer Analyzer = createMSBAnalyzer(*NextMI, VRM, TRI);
+    AMDGPU::MSBFieldState NextState = Analyzer.getFieldState(*NextMI);
+    unsigned BlockCounts[4] = {0, 0, 0, 0};
+    unsigned TotalAssigned = 0;
+
+    for (unsigned F = 0; F < 4; ++F) {
+      if (NextState.Present[F] && NextState.Block[F] >= 0) {
+        BlockCounts[NextState.Block[F]]++;
+        TotalAssigned++;
+      }
+    }
+
+    if (TotalAssigned > 0) {
+      int BestBlock = -1;
+      unsigned BestCount = 0;
+      for (int B = 0; B < 4; ++B)
+        if (BlockCounts[B] > BestCount) {
+          BestCount = BlockCounts[B];
+          BestBlock = B;
+        }
+      if (BestBlock >= 0) {
+        LLVM_DEBUG(dbgs() << "  Forward: block " << BestBlock << "\n");
+        return BestBlock;
+      }
+    }
+  }
+
+  // Priority 2: VirtReg used after memory op - match expected field state
+  for (const MachineInstr &UseMI : MRI.use_nodbg_instructions(VirtReg)) {
+    const MachineInstr *PrecedingMem = findPrecedingMemoryOp(UseMI);
+    if (!PrecedingMem)
+      continue;
+
+    int ExpectedAfterDS[4];
+    computeExpectedStateAfterDS(*PrecedingMem, VRM, TRI, ExpectedAfterDS);
+    unsigned FieldMask = getVRegFieldMask(VirtReg, UseMI, VRM, TRI);
+
+    for (unsigned F = 0; F < 4; ++F)
+      if ((FieldMask & (1u << F)) && ExpectedAfterDS[F] >= 0) {
+        LLVM_DEBUG(dbgs() << "  Backward use f" << F << ": block "
+                          << ExpectedAfterDS[F] << "\n");
+        return ExpectedAfterDS[F];
+      }
+  }
+
+  // Priority 3: VirtReg defined after memory op (only if has VGPR uses)
+  for (const MachineInstr &DefMI : MRI.def_instructions(VirtReg)) {
+    const MachineInstr *PrecedingMem = findPrecedingMemoryOp(DefMI);
+    if (!PrecedingMem)
+      continue;
+
+    bool HasVGPRUse = false;
+    for (const MachineOperand &MO : DefMI.uses())
+      if (MO.isReg() && MO.getReg() && TRI->isVGPR(MRI, MO.getReg())) {
+        HasVGPRUse = true;
+        break;
+      }
+    if (!HasVGPRUse)
+      continue;
+
+    int ExpectedAfterDS[4];
+    computeExpectedStateAfterDS(*PrecedingMem, VRM, TRI, ExpectedAfterDS);
+    unsigned FieldMask = getVRegFieldMask(VirtReg, DefMI, VRM, TRI);
+
+    for (unsigned F = 0; F < 4; ++F)
+      if ((FieldMask & (1u << F)) && ExpectedAfterDS[F] >= 0) {
+        LLVM_DEBUG(dbgs() << "  Backward def f" << F << ": block "
+                          << ExpectedAfterDS[F] << "\n");
+        return ExpectedAfterDS[F];
+      }
+  }
+
+  // Priority 4: General co-operand preference
+  unsigned BlockCounts[4] = {0, 0, 0, 0};
+
+  for (const MachineInstr &MI : MRI.use_nodbg_instructions(VirtReg)) {
+    AMDGPU::MSBStateAnalyzer Analyzer = createMSBAnalyzer(MI, VRM, TRI);
+    AMDGPU::MSBFieldState State = Analyzer.getFieldState(MI);
+    for (unsigned F = 0; F < 4; ++F)
+      if (State.Present[F] && State.Block[F] >= 0)
+        BlockCounts[State.Block[F]]++;
+  }
+
+  for (const MachineInstr &DefMI : MRI.def_instructions(VirtReg)) {
+    AMDGPU::MSBStateAnalyzer Analyzer = createMSBAnalyzer(DefMI, VRM, TRI);
+    AMDGPU::MSBFieldState State = Analyzer.getFieldState(DefMI);
+    for (unsigned F = 0; F < 4; ++F)
+      if (State.Present[F] && State.Block[F] >= 0)
+        BlockCounts[State.Block[F]]++;
+  }
+
+  int BestBlock = -1;
+  unsigned BestCount = 0;
+  for (int B = 0; B < 4; B++)
+    if (BlockCounts[B] > BestCount) {
+      BestCount = BlockCounts[B];
+      BestBlock = B;
+    }
+
+  if (BestBlock >= 0) {
+    LLVM_DEBUG(dbgs() << "  Co-operand: block " << BestBlock << "\n");
+    return BestBlock;
+  }
+
+  LLVM_DEBUG(dbgs() << "  No preference\n");
+  return -1;
+}
+
+bool SIRegisterInfo::getMSBAwareHints(
+    Register VirtReg, ArrayRef<MCPhysReg> Order,
+    SmallVectorImpl<MCPhysReg> &Hints, const MachineFunction &MF,
+    const VirtRegMap *VRM, bool FilterOnly, int PreferredBlockOverride,
+    int DefaultBlockFallback) const {
+  if (!ST.hasGFX1250Insts() || !isMSBHintsEnabled())
+    return false;
+
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  if (!isVGPRClass(MRI.getRegClass(VirtReg)))
+    return false;
+
+  int PreferredBlock;
+  if (PreferredBlockOverride >= 0) {
+    PreferredBlock = PreferredBlockOverride;
+  } else {
+    if (!isInMemoryAdjacentPattern(VirtReg, MRI))
+      return false;
+
+    PreferredBlock = getPreferredMSBBlock(VirtReg, MRI, VRM, this);
+
+    if (PreferredBlock < 0) {
+      if (DefaultBlockFallback >= 0)
+        PreferredBlock = DefaultBlockFallback;
+      else
+        return false;
+    } else if (PreferredBlock == 0 && DefaultBlockFallback != 0) {
+      PreferredBlock = DefaultBlockFallback;
+    }
+  }
+
+  LLVM_DEBUG(dbgs() << "MSB hints " << printReg(VirtReg, this)
+                    << ": block " << PreferredBlock << "\n");
+
+  SmallVector<MCPhysReg, 64> PreferredRegs, OtherRegs;
+  for (MCPhysReg PhysReg : Order) {
+    if (MRI.isReserved(PhysReg))
+      continue;
+    unsigned Block = getHWRegIndex(PhysReg) / 256;
+    if ((int)Block == PreferredBlock)
+      PreferredRegs.push_back(PhysReg);
+    else
+      OtherRegs.push_back(PhysReg);
+  }
+
+  Hints.append(PreferredRegs);
+  if (!FilterOnly)
+    Hints.append(OtherRegs);
+
+  return true;
+}
+
+void SIRegisterInfo::reorderForWARHazards(
+    Register VirtReg, SmallVectorImpl<MCPhysReg> &Hints,
+    const MachineFunction &MF, const VirtRegMap *VRM) const {
+  if (!ST.hasGFX1250Insts())
+    return;
+
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  ArrayRef<Register> AntiHintVRegs = MRI.getRegAllocationAntiHints(VirtReg);
+  if (AntiHintVRegs.empty())
+    return;
+
+  BitVector AvoidedUnits(getNumRegUnits());
+  unsigned NumAvoided = 0;
+
+  for (Register AntiVReg : AntiHintVRegs) {
+    if (VRM && VRM->hasPhys(AntiVReg)) {
+      MCPhysReg PhysReg = VRM->getPhys(AntiVReg);
+      for (MCRegUnit Unit : regunits(PhysReg))
+        AvoidedUnits.set(static_cast<unsigned>(Unit));
+      ++NumAvoided;
+    }
+  }
+
+  if (NumAvoided == 0)
+    return;
+
+  std::stable_partition(Hints.begin(), Hints.end(), [&, this](MCPhysReg R) {
+    for (MCRegUnit Unit : this->regunits(R))
+      if (AvoidedUnits.test(static_cast<unsigned>(Unit)))
+        return false;
+    return true;
+  });
+}
+
 bool SIRegisterInfo::getRegAllocationHints(Register VirtReg,
                                            ArrayRef<MCPhysReg> Order,
                                            SmallVectorImpl<MCPhysReg> &Hints,
                                            const MachineFunction &MF,
                                            const VirtRegMap *VRM,
                                            const LiveRegMatrix *Matrix) const {
-
   const MachineRegisterInfo &MRI = MF.getRegInfo();
   const SIRegisterInfo *TRI = ST.getRegisterInfo();
 
@@ -3873,9 +4367,73 @@ bool SIRegisterInfo::getRegAllocationHints(Register VirtReg,
     return false;
   }
   default:
-    return TargetRegisterInfo::getRegAllocationHints(VirtReg, Order, Hints, MF,
-                                                     VRM);
+    break;
   }
+
+  // Let base class add any hints set by PreRAAlloc
+  bool Result = TargetRegisterInfo::getRegAllocationHints(VirtReg, Order, Hints,
+                                                          MF, VRM);
+
+  // === gfx1250+ MSB/Bank hinting (opt-in via flags) ===
+  // With both flags disabled, behavior matches original upstream code.
+
+  // Extend PreRAAlloc hints to cover the entire preferred block
+  if (EnablePreRAHintExtension1250 && ST.hasGFX1250Insts()) {
+    const TargetRegisterClass *RC = MRI.getRegClass(VirtReg);
+    if (!Hints.empty() && hasVGPRs(RC)) {
+      MCPhysReg HintedPhys = Hints[0];
+      unsigned PreferredBlock = getHWRegIndex(HintedPhys) / 256;
+
+      SmallVector<MCPhysReg, 64> PreferredRegs, OtherRegs;
+      for (MCPhysReg PhysReg : Order) {
+        if (MRI.isReserved(PhysReg))
+          continue;
+        if (getHWRegIndex(PhysReg) / 256 == PreferredBlock)
+          PreferredRegs.push_back(PhysReg);
+        else
+          OtherRegs.push_back(PhysReg);
+      }
+
+      Hints.clear();
+      Hints.push_back(HintedPhys);
+      for (MCPhysReg PR : PreferredRegs)
+        if (PR != HintedPhys)
+          Hints.push_back(PR);
+      Hints.append(OtherRegs);
+      return Result;
+    }
+  }
+
+  if (!Hints.empty())
+    return Result;
+
+  // Inline MSB/Bank hinting
+  if (!EnableInlineHinting1250 || !ST.hasGFX1250Insts())
+    return Result;
+
+  SmallVector<MCPhysReg, 64> MSBHints;
+  getMSBAwareHints(VirtReg, Order, MSBHints, MF, VRM);
+
+  ArrayRef<MCPhysReg> HintBase = MSBHints.empty() ? Order : MSBHints;
+  SmallVector<MCPhysReg, 64> BankHints;
+  if (!getBankConflictAwareHints(VirtReg, HintBase, BankHints, MF, VRM))
+    BankHints.assign(HintBase.begin(), HintBase.end());
+
+  reorderForWARHazards(VirtReg, BankHints, MF, VRM);
+  Hints.append(BankHints);
+  return false;
+}
+
+void SIRegisterInfo::getFilteredHints(
+    Register VirtReg, ArrayRef<MCPhysReg> Order,
+    SmallVectorImpl<MCPhysReg> &Hints, const MachineFunction &MF,
+    const VirtRegMap *VRM, const LiveRegMatrix *Matrix) const {
+  if (!ST.hasGFX1250Insts())
+    return;
+
+  SmallVector<MCPhysReg, 64> MSBHints;
+  getMSBAwareHints(VirtReg, Order, MSBHints, MF, VRM, /*FilterOnly=*/true);
+  Hints.append(MSBHints);
 }
 
 MCRegister SIRegisterInfo::getReturnAddressReg(const MachineFunction &MF) const {

@@ -1,0 +1,84 @@
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 -amdgpu-force-max-vgprs=1024 -run-pass=greedy -amdgpu-post-ra-rewriter -run-pass=amdgpu-post-ra-rewriter -run-pass=virtregrewriter %s -o /dev/null
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 -amdgpu-force-max-vgprs=1024 -run-pass=greedy -amdgpu-post-ra-rewriter -run-pass=amdgpu-post-ra-rewriter -run-pass=virtregrewriter -debug-only=amdgpu-post-ra-rewriter %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DEBUG
+# REQUIRES: asserts
+
+# Post-RA MSB fixup strategies: A0 moves NextMI operand, A1 moves DS addr.
+
+---
+name: postra_addr_move_single_use
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr512, $vgpr513
+    %addr:vgpr_32 = COPY $vgpr0
+    $vgpr1 = DS_READ_B32_gfx9 %addr, 0, 0, implicit $exec
+    %use:vgpr_32 = V_ADD_U32_e32 $vgpr512, $vgpr513, implicit $exec
+    S_ENDPGM 0, implicit %use
+
+...
+
+---
+name: postra_addr_move_shared_addr_skips
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr2, $vgpr512, $vgpr513
+    %addr:vgpr_32 = COPY $vgpr0
+    $vgpr1 = DS_READ_B32_gfx9 %addr, 0, 0, implicit $exec
+    %use0:vgpr_32 = V_ADD_U32_e32 $vgpr512, $vgpr513, implicit $exec
+    $vgpr2 = DS_READ_B32_gfx9 %addr, 4, 0, implicit $exec
+    %use1:vgpr_32 = V_ADD_U32_e32 $vgpr512, $vgpr513, implicit $exec
+    S_ENDPGM 0, implicit %use1
+
+---
+name: postra_nextmi_tiny_operand_move
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+registers:
+  - { id: 1, class: vgpr_32, preferred-register: '$vgpr512' }
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr512
+    %addr:vgpr_32 = COPY $vgpr0
+    %tiny:vgpr_32 = COPY $vgpr512
+    $vgpr1 = DS_READ_B32_gfx9 %addr, 0, 0, implicit $exec
+    %use:vgpr_32 = V_ADD_U32_e32 $vgpr1, %tiny, implicit $exec
+    $vgpr1 = DS_READ_B32_gfx9 %addr, 4, 0, implicit $exec
+    S_ENDPGM 0, implicit %use
+
+---
+name: postra_nextmi_tiny_operand_move_matches_prev_field
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+registers:
+  - { id: 1, class: vgpr_32, preferred-register: '$vgpr512' }
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1, $vgpr256, $vgpr512
+    %addr:vgpr_32 = COPY $vgpr0
+    %tiny:vgpr_32 = COPY $vgpr512
+    %tmp:vgpr_32 = V_ADD_U32_e32 $vgpr0, $vgpr256, implicit $exec
+    $vgpr1 = DS_READ_B32_gfx9 %addr, 0, 0, implicit $exec
+    %use:vgpr_32 = V_ADD_U32_e32 $vgpr1, %tiny, implicit $exec
+    S_ENDPGM 0, implicit %use
+
+# DEBUG-LABEL: AMDGPUPostRARegRewriter: Processing postra_addr_move_single_use
+# DEBUG: Strategy A1: move DS addr %{{[0-9]+}} from block {{[0-3]}} -> block 2 (match NextMI f0)
+#
+# DEBUG-LABEL: AMDGPUPostRARegRewriter: Processing postra_addr_move_shared_addr_skips
+# DEBUG: Strategy A1 skip: addr %{{[0-9]+}} has 2 DS_READ uses (not local)
+#
+# DEBUG-LABEL: AMDGPUPostRARegRewriter: Processing postra_nextmi_tiny_operand_move
+# DEBUG: Strategy A0: move NextMI operand %{{[0-9]+}} from block 2 -> block {{[0-3]}} (match expected f{{[0-3]}})
+#
+# DEBUG-LABEL: AMDGPUPostRARegRewriter: Processing postra_nextmi_tiny_operand_move_matches_prev_field
+# DEBUG: Strategy A0: move NextMI operand %{{[0-9]+}} from block 2 -> block {{[0-3]}} (match expected f{{[0-3]}})
+
+...
+

@@ -365,6 +365,45 @@ public:
                              const MachineFunction &MF, const VirtRegMap *VRM,
                              const LiveRegMatrix *Matrix) const override;
 
+  /// Reorder allocation hints to minimize VGPR bank conflicts.
+  /// If FilterOnly is true, only returns non-conflicting hints (no fallbacks).
+  /// Returns true if hints were modified.
+  bool getBankConflictAwareHints(Register VirtReg, ArrayRef<MCPhysReg> Order,
+                                 SmallVectorImpl<MCPhysReg> &Hints,
+                                 const MachineFunction &MF,
+                                 const VirtRegMap *VRM,
+                                 bool FilterOnly = false) const;
+
+  /// Reorder allocation hints to keep VGPRs in the same MSB block (0-255, etc.)
+  /// to avoid s_set_vgpr_msb stalls after memory operations.
+  /// If FilterOnly is true, only returns optimal hints (no fallbacks).
+  /// If PreferredBlockOverride >= 0, use that block instead of auto-detecting.
+  /// DefaultBlockFallback is used when auto-detection finds no anchor (instead
+  /// of hardcoded block 0).
+  /// Returns true if hints were modified.
+  bool getMSBAwareHints(Register VirtReg, ArrayRef<MCPhysReg> Order,
+                        SmallVectorImpl<MCPhysReg> &Hints,
+                        const MachineFunction &MF, const VirtRegMap *VRM,
+                        bool FilterOnly = false,
+                        int PreferredBlockOverride = -1,
+                        int DefaultBlockFallback = 0) const;
+
+  /// Reorder allocation hints to move WAR-hazardous physical registers to the
+  /// back. This uses anti-hints set by AMDGPUPreRAAlloc to avoid WMMA source
+  /// registers for VALU dests in the WMMA window.
+  void reorderForWARHazards(Register VirtReg, SmallVectorImpl<MCPhysReg> &Hints,
+                            const MachineFunction &MF,
+                            const VirtRegMap *VRM) const;
+
+  /// Get filtered allocation hints for the mini-allocator.
+  /// Only returns "optimal" hints (correct MSB block, no bank conflicts).
+  /// Returns empty if no optimal allocation exists.
+  /// This is stricter than getRegAllocationHints which always includes fallbacks.
+  void getFilteredHints(Register VirtReg, ArrayRef<MCPhysReg> Order,
+                        SmallVectorImpl<MCPhysReg> &Hints,
+                        const MachineFunction &MF, const VirtRegMap *VRM,
+                        const LiveRegMatrix *Matrix) const;
+
   const int *getRegUnitPressureSets(MCRegUnit RegUnit) const override;
 
   MCRegister getReturnAddressReg(const MachineFunction &MF) const;

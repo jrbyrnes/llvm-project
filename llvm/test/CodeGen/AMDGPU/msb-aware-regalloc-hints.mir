@@ -1,0 +1,139 @@
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 -amdgpu-enable-inline-hinting-1250 -run-pass=greedy -run-pass=virtregrewriter %s -o - | FileCheck %s
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 -amdgpu-enable-inline-hinting-1250 -run-pass=greedy -run-pass=virtregrewriter %s -o /dev/null -debug 2>&1 | FileCheck %s --check-prefix=DEBUG
+
+# MSB-aware hinting: VGPRs prefer same block as DS_READ dest to avoid s_set_vgpr_msb stalls.
+
+---
+# DEBUG-LABEL: Function: ds_read_block0
+# DEBUG: MSB hints %0: block 0
+name: ds_read_block0
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: ds_read_block0
+    ; CHECK: DS_READ_B32_gfx9
+    ; CHECK: V_MOV_B32_e32
+    ; CHECK: V_ADD_F32_e32
+    %0:vgpr_32 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %1:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    %2:vgpr_32 = V_ADD_F32_e32 %0, %1, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %2
+...
+
+---
+# DEBUG-LABEL: Function: ds_read_block1
+# DEBUG: MSB hints %0: block 1
+name: ds_read_block1
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: ds_read_block1
+    ; CHECK: $vgpr256 = DS_READ_B32_gfx9
+    $vgpr256 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %0:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    %1:vgpr_32 = V_ADD_F32_e32 $vgpr256, %0, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1
+...
+
+---
+# DEBUG-LABEL: Function: ds_read_block2
+# DEBUG: MSB hints %0: block 2
+name: ds_read_block2
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: ds_read_block2
+    ; CHECK: $vgpr512 = DS_READ_B32_gfx9
+    $vgpr512 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %0:vgpr_32 = V_MOV_B32_e32 99, implicit $exec
+    %1:vgpr_32 = V_ADD_F32_e32 $vgpr512, %0, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1
+...
+
+---
+# DEBUG-LABEL: Function: ds_read_block3
+# DEBUG: MSB hints %0: block 3
+name: ds_read_block3
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: ds_read_block3
+    ; CHECK: $vgpr768 = DS_READ_B32_gfx9
+    $vgpr768 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %0:vgpr_32 = V_MOV_B32_e32 77, implicit $exec
+    %1:vgpr_32 = V_ADD_F32_e32 $vgpr768, %0, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1
+...
+
+---
+# DEBUG-LABEL: Function: ds_read_multiple_operands
+# DEBUG: MSB hints %0: block 1
+name: ds_read_multiple_operands
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: ds_read_multiple_operands
+    ; CHECK: $vgpr256 = DS_READ_B32_gfx9
+    $vgpr256 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %0:vgpr_32 = V_MOV_B32_e32 10, implicit $exec
+    %1:vgpr_32 = V_MOV_B32_e32 20, implicit $exec
+    %2:vgpr_32 = V_FMA_F32_e64 0, $vgpr256, 0, %0, 0, %1, 0, 0, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %2
+...
+
+---
+# DEBUG-LABEL: Function: ds_read_chain
+# DEBUG: MSB hints %0: block 0
+name: ds_read_chain
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: ds_read_chain
+    ; CHECK: DS_READ_B32_gfx9
+    ; CHECK: V_MOV_B32_e32
+    ; CHECK: V_ADD_F32_e32
+    ; CHECK: V_MUL_F32_e32
+    %0:vgpr_32 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %1:vgpr_32 = V_MOV_B32_e32 10, implicit $exec
+    %2:vgpr_32 = V_ADD_F32_e32 %0, %1, implicit $exec, implicit $mode
+    %3:vgpr_32 = V_MUL_F32_e32 %2, %1, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %3
+...
+
+---
+# Forward: DS_READ dest prefers block of NextMI's assigned operands
+# DEBUG-LABEL: Function: ds_read_forward_lookup
+# DEBUG: Forward: block 1
+# DEBUG: MSB hints %0: block 1
+name: ds_read_forward_lookup
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr256
+    ; CHECK-LABEL: name: ds_read_forward_lookup
+    ; CHECK: DS_READ_B32_gfx9
+    ; CHECK: V_ADD_F32_e32
+    %0:vgpr_32 = DS_READ_B32_gfx9 $vgpr0, 0, 0, implicit $exec
+    %1:vgpr_32 = V_ADD_F32_e32 %0, $vgpr256, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1
+...

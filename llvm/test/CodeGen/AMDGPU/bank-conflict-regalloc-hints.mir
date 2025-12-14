@@ -1,0 +1,127 @@
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 -amdgpu-enable-inline-hinting-1250 -run-pass=greedy -run-pass=virtregrewriter %s -o - | FileCheck %s
+
+# Test VGPR bank conflict avoidance via register allocation hints.
+# VGPRs have 8 banks (reg % 8). Operands in same bank cause stalls.
+
+---
+# %0 used with $vgpr0 (bank 0) → should avoid bank 0
+name: simple_bank_conflict_avoidance
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: simple_bank_conflict_avoidance
+    ; CHECK: renamable $vgpr1 = V_MOV_B32_e32 42
+    ; CHECK: renamable $vgpr0 = V_ADD_F32_e32 killed $vgpr1, $vgpr0
+    %0:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    %1:vgpr_32 = V_ADD_F32_e32 %0, $vgpr0, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1
+...
+
+---
+# %0 used with $vgpr0 (bank 0) and $vgpr1 (bank 1) → prefer banks 2-7
+name: multiple_operand_bank_conflict
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr1
+    ; CHECK-LABEL: name: multiple_operand_bank_conflict
+    ; CHECK: renamable $vgpr2 = V_MOV_B32_e32 100
+    ; CHECK: renamable $vgpr0 = V_ADD_F32_e32 $vgpr2, $vgpr0
+    %0:vgpr_32 = V_MOV_B32_e32 100, implicit $exec
+    %1:vgpr_32 = V_ADD_F32_e32 %0, $vgpr0, implicit $exec, implicit $mode
+    %2:vgpr_32 = V_ADD_F32_e32 %0, $vgpr1, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1, implicit %2
+...
+
+---
+# vreg_64 with $vgpr0_vgpr1 (banks 0,1) → avoid banks 0,1
+name: tuple_bank_conflict_avoidance
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0_vgpr1
+    ; CHECK-LABEL: name: tuple_bank_conflict_avoidance
+    ; CHECK: renamable $vgpr2_vgpr3 = IMPLICIT_DEF
+    ; CHECK: renamable $vgpr0_vgpr1 = V_PK_ADD_F32 8, killed $vgpr2_vgpr3, 8, $vgpr0_vgpr1
+    %0:vreg_64_align2 = IMPLICIT_DEF
+    %1:vreg_64_align2 = V_PK_ADD_F32 8, %0, 8, $vgpr0_vgpr1, 0, 0, 0, 0, 0, implicit $mode, implicit $exec
+    S_ENDPGM 0, implicit %1
+...
+
+---
+# Chained allocation: %0 and %1 used together → different banks
+name: chain_allocation_conflict
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: chain_allocation_conflict
+    ; CHECK: renamable $vgpr0 = V_MOV_B32_e32 1
+    ; CHECK: renamable $vgpr1 = V_MOV_B32_e32 2
+    ; CHECK: renamable $vgpr0 = V_ADD_F32_e32 killed $vgpr0, killed $vgpr1
+    %0:vgpr_32 = V_MOV_B32_e32 1, implicit $exec
+    %1:vgpr_32 = V_MOV_B32_e32 2, implicit $exec
+    %2:vgpr_32 = V_ADD_F32_e32 %0, %1, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %2
+...
+
+---
+# FMA: %0 with $vgpr0 and $vgpr8 (both bank 0) → avoid bank 0
+name: fma_three_operand_conflict
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr8
+    ; CHECK-LABEL: name: fma_three_operand_conflict
+    ; CHECK: renamable $vgpr1 = V_MOV_B32_e32 3
+    ; CHECK: renamable $vgpr0 = V_FMA_F32_e64 0, killed $vgpr1, 0, $vgpr0, 0, $vgpr8
+    %0:vgpr_32 = V_MOV_B32_e32 3, implicit $exec
+    %1:vgpr_32 = V_FMA_F32_e64 0, %0, 0, $vgpr0, 0, $vgpr8, 0, 0, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %1
+...
+
+---
+# COPY coalescing preserved: %0 coalesces with $vgpr0, %1 avoids bank 0
+name: copy_coalescing_preserved
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0, $vgpr8
+    ; CHECK-LABEL: name: copy_coalescing_preserved
+    ; CHECK: renamable $vgpr1 = V_MOV_B32_e32 5
+    ; CHECK: renamable $vgpr0 = V_ADD_F32_e32 killed $vgpr0, killed $vgpr1
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = V_MOV_B32_e32 5, implicit $exec
+    %2:vgpr_32 = V_ADD_F32_e32 %0, %1, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %2
+...
+
+---
+# COPY chain: %0 coalesces with $vgpr0, %1 avoids bank 0
+name: copy_chain_with_bank_conflict
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+body: |
+  bb.0:
+    liveins: $vgpr0
+    ; CHECK-LABEL: name: copy_chain_with_bank_conflict
+    ; CHECK: renamable $vgpr1 = V_MOV_B32_e32 10
+    ; CHECK: renamable $vgpr0 = V_ADD_F32_e32 killed $vgpr0, killed $vgpr1
+    %0:vgpr_32 = COPY $vgpr0
+    %1:vgpr_32 = V_MOV_B32_e32 10, implicit $exec
+    %2:vgpr_32 = V_ADD_F32_e32 %0, %1, implicit $exec, implicit $mode
+    S_ENDPGM 0, implicit %2
+...

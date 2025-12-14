@@ -65,6 +65,10 @@ ModulePass *createAMDGPULowerBufferFatPointersPass();
 ModulePass *createAMDGPULowerIntrinsicsLegacyPass();
 FunctionPass *createSIModeRegisterPass();
 FunctionPass *createGCNPreRAOptimizationsLegacyPass();
+FunctionPass *createAMDGPUPreRAAllocPass();
+void initializeAMDGPUPreRAAllocPass(PassRegistry &);
+FunctionPass *createAMDGPUPostRARegRewriterPass();
+void initializeAMDGPUPostRARegRewriterPass(PassRegistry &);
 FunctionPass *createAMDGPUPreloadKernArgPrologLegacyPass();
 ModulePass *createAMDGPUPreloadKernelArgumentsLegacyPass(const TargetMachine *);
 
