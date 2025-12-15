@@ -157,6 +157,8 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
 
   case WMMASlotType::MemCoExec0:
   case WMMASlotType::MemCoExec1:
+  case WMMASlotType::MemCoExec2:
+  case WMMASlotType::MemCoExec3:
     // MemCoExec slots: can co-issue mem or salu.
     if (IsMem || IsSALU)
       return 0;
@@ -195,6 +197,8 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
       break;
     case WMMASlotType::MemCoExec0:
     case WMMASlotType::MemCoExec1:
+    case WMMASlotType::MemCoExec2:
+    case WMMASlotType::MemCoExec3:
       if (IsMem || IsSALU)
         return StallCycles;
       break;
@@ -272,8 +276,8 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
   WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
   WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
-  WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-  WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+  WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
+  WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
   WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
   WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
   WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
