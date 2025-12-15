@@ -134,6 +134,9 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   auto MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
+  // errs() << "SchedNode: "; SU->getInstr()->dump();
+  // errs() << "\n\n";
+
   if (SchedModel && SchedModel->hasInstrSchedModel()) {
     const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
     for (TargetSchedModel::ProcResIter
@@ -265,6 +268,41 @@ bool AMDGPUMLSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
   MachineInstr *TryMI = TryCand.SU->getInstr();
   MachineInstr *CandMI = Cand.SU->getInstr();
 
+  auto PreferNonTransVALU = [SII](SchedCandidate &TryCand,
+                                  SchedCandidate &Cand) {
+    MachineInstr *TryMI = TryCand.SU->getInstr();
+    MachineInstr *CandMI = Cand.SU->getInstr();
+    // We don't want to issue TRANS or CVT here as they (along with WMMA) will
+    // clog the whole VALU unit for multiple cycles
+    unsigned TryOp = TryMI->getOpcode();
+    unsigned CandOp = CandMI->getOpcode();
+    bool TryIsSingleCycleVALU =
+        SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) &&
+        !SII->isTRANS(*TryMI) &&
+        TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
+        TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
+    bool CandIsSingleCycleVALU =
+        SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) &&
+        !SII->isTRANS(*CandMI) &&
+        CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
+        CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
+
+    if (!TryIsSingleCycleVALU && !CandIsSingleCycleVALU) {
+      return false;
+    }
+
+    if (CandIsSingleCycleVALU)
+      if (Cand.Reason > RegCritical) {
+        Cand.Reason = RegCritical;
+      }
+
+    if (TryIsSingleCycleVALU) {
+      TryCand.Reason = RegCritical;
+    }
+
+    return true;
+  };
+
   switch (CurrentSlot) {
     default:
       return false;
@@ -286,6 +324,25 @@ bool AMDGPUMLSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
       if (TryIsMem)
         TryCand.Reason = RegCritical;
       
+      return true;
+    }
+
+    case GCNHazardRecognizer::WMMASlotType::MemCoExec2:
+    case GCNHazardRecognizer::WMMASlotType::MemCoExec3: {
+
+      bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
+      bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
+
+      if (!TryIsMem && !CandIsMem)
+        return PreferNonTransVALU(TryCand, Cand);
+
+      if (CandIsMem)
+        if (Cand.Reason > RegCritical)
+          Cand.Reason = RegCritical;
+
+      if (TryIsMem)
+        TryCand.Reason = RegCritical;
+
       return true;
     }
     case GCNHazardRecognizer::WMMASlotType::ValuBlocked0: {
@@ -323,23 +380,7 @@ bool AMDGPUMLSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec1: {
-      // We don't want to issue TRANS or CVT here as they (along with WMMA) will clog the whole VALU unit for multiple cycles
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALU = SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) && !SII->isTRANS(*TryMI) && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandIsSingleCycleVALU = SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) && !SII->isTRANS(*CandMI) && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-      if (!TryIsSingleCycleVALU && !CandIsSingleCycleVALU)
-        return false;
-      
-      if (CandIsSingleCycleVALU)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsSingleCycleVALU)
-        TryCand.Reason = RegCritical;
-      
-      return true;
+      return PreferNonTransVALU(TryCand, Cand);
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec0: {
@@ -388,7 +429,6 @@ bool AMDGPUMLSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
 
       bool TryLongLat = TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
                         TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      ;
       bool CandLongLat =
           CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
           CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
@@ -697,11 +737,13 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
 
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
+
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
-                Cand, Stall))
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone),
+                TryCand, Cand, Stall)) {
       return TryCand.Reason != NoCand;
+    }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
       return TryCand.Reason != NoCand;
