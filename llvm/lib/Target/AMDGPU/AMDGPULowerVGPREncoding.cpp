@@ -305,7 +305,7 @@ AMDGPULowerVGPREncoding::handleClause(MachineBasicBlock::instr_iterator I) {
 
   // Otherwise adjust a number of instructions in the clause if it fits.
   // If it does not clause will just become shorter. Since the length
-  // recorded in the clause is one less, increment the length after the
+  // recorded in the clause is one less, increment the length after thed
   // update. Note that SIMM16[5:0] must be 1-62, not 0 or 63.
   if (ClauseLen < 63)
     Clause->getOperand(0).setImm(ClauseLen | (ClauseBreaks << 8));
