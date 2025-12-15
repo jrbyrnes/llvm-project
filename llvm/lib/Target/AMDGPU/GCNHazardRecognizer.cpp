@@ -78,6 +78,7 @@ GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF)
 void GCNHazardRecognizer::preRAReset() {
   WMMAPipelineState.clear();
   CyclesUntilTRANS32 = 0;
+  CyclesUntilVALU = 0;
   PendingWMMAScaleValuTailStall = 0;
 }
 
@@ -96,13 +97,18 @@ void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
 void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
   updateWMMAPipelineState(*MI);
   updateTRANS32State(*MI);
+  updateCVTState(*MI);
 }
 
-bool GCNHazardRecognizer::isVALUWMMACoexecSlot() {
+int GCNHazardRecognizer::getWMMACoexecSlot() {
   if (WMMAPipelineState.empty())
-    return false;
-  WMMASlotType CurrentSlot = WMMAPipelineState.front();
-  return CurrentSlot == WMMASlotType::ValuCoExec || CurrentSlot == WMMASlotType::ValuCoExecNoTrans;
+    return -1;
+  
+  return (int)(WMMAPipelineState.front());
+}
+
+bool GCNHazardRecognizer::isWMMAPipelineHazard() {
+  return WMMAPipelineState.size() == 3;
 }
 
 unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const {
@@ -149,24 +155,23 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
       return 0;
     break;
 
-  case WMMASlotType::MemCoExec:
+  case WMMASlotType::MemCoExec0:
+  case WMMASlotType::MemCoExec1:
     // MemCoExec slots: can co-issue mem or salu.
     if (IsMem || IsSALU)
       return 0;
     break;
 
-  case WMMASlotType::ValuCoExec:
+  case WMMASlotType::ValuCoExec0:
+  case WMMASlotType::ValuCoExec1:
+  case WMMASlotType::ValuCoExec2:
     // ValuCoExec slots: can co-issue mem, salu, valu, or wmma.
     if (IsMem || IsSALU || IsVALU || IsWMMA)
       return 0;
     break;
 
-  case WMMASlotType::ValuCoExecNoTrans:
-    if ((IsMem || IsSALU || IsVALU || IsWMMA) && !IsTrans)
-      return 0;
-    break;
-
-  case WMMASlotType::ValuBlocked:
+  case WMMASlotType::ValuBlocked0:
+  case WMMASlotType::ValuBlocked1:
     // ValuBlocked slots: VALU blocked, can only issue wmma/mem/salu.
     if (IsMem || IsSALU || IsWMMA)
       return 0;
@@ -188,15 +193,19 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
       if (IsSALU)
         return StallCycles;
       break;
-    case WMMASlotType::MemCoExec:
+    case WMMASlotType::MemCoExec0:
+    case WMMASlotType::MemCoExec1:
       if (IsMem || IsSALU)
         return StallCycles;
       break;
-    case WMMASlotType::ValuCoExec:
+    case WMMASlotType::ValuCoExec0:
+    case WMMASlotType::ValuCoExec1:
+    case WMMASlotType::ValuCoExec2:
       if (IsMem || IsSALU || IsVALU || IsWMMA)
         return StallCycles;
       break;
-    case WMMASlotType::ValuBlocked:
+    case WMMASlotType::ValuBlocked0:
+    case WMMASlotType::ValuBlocked1:
       if (IsMem || IsSALU || IsWMMA)
         return StallCycles;
       break;
@@ -204,10 +213,6 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
       if (IsMem || IsSALU || IsVALU)
         return StallCycles;
       break;
-    case WMMASlotType::ValuCoExecNoTrans:
-    if ((IsMem || IsSALU || IsVALU || IsWMMA) && !IsTrans)
-      return StallCycles;
-    break;
     }
     ++StallCycles;
   }
@@ -235,6 +240,28 @@ void GCNHazardRecognizer::updateTRANS32State(const MachineInstr &MI) {
     CyclesUntilTRANS32 = 2;
 }
 
+unsigned GCNHazardRecognizer::checkCVTHazard(const MachineInstr &MI) const {
+  if (!CyclesUntilVALU) {
+    return 0;
+  }
+
+  // TRANS32 can be followed by VALU or control instructions without stall
+  if (!SIInstrInfo::isVALU(MI) || SIInstrInfo::isTRANS(MI) || SIInstrInfo::isMFMAorWMMA(MI))
+    return 0;
+
+  // Any other instruction requires a 1-cycle stall
+  LLVM_DEBUG(dbgs() << "checkTRANS32Hazard: stall after TRANS32 for: " << MI);
+  return CyclesUntilVALU;
+}
+
+void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
+  unsigned Opc = MI.getOpcode();
+  bool IsCVT = (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64) || (Opc == AMDGPU::V_CVT_SCALEF32_SR_PK8_FP8_F32_e64_gfx1250);
+
+  if (IsCVT)
+    CyclesUntilVALU = 4;
+}
+
 void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
     return;
@@ -242,12 +269,15 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
   WMMAPipelineState.clear();
   WMMAPipelineState.append(1, WMMASlotType::Execute);
-  WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
-  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec);
-  WMMAPipelineState.append(2, WMMASlotType::MemCoExec);
-  WMMAPipelineState.append(1, WMMASlotType::ValuCoExecNoTrans);
-  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec);
-  WMMAPipelineState.append(2, WMMASlotType::ValuBlocked);
+  WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+  WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
+  WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+  WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+  WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+  WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
 }
 
 void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
@@ -525,6 +555,7 @@ unsigned GCNHazardRecognizer::PreEmitNoops(MachineInstr *MI) {
 unsigned GCNHazardRecognizer::preRAGetHazardWaitStates(MachineInstr *MI) const {
   unsigned WaitStates = checkWMMACoexecSlot(*MI);
   WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
+  WaitStates = std::max(WaitStates, checkCVTHazard(*MI));
   return WaitStates;
 }
 
@@ -532,6 +563,7 @@ unsigned
 GCNHazardRecognizer::postRAGetHazardWaitStates(MachineInstr *MI) const {
   unsigned WaitStates = checkWMMACoexecSlot(*MI);
   WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
+  WaitStates = std::max(WaitStates, checkCVTHazard(*MI));
   return WaitStates;
 }
 
@@ -659,7 +691,7 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
              << ": " << *CurrCycleInstr;
     }
   });
-  if (!WMMAPipelineState.empty() && WMMAPipelineState.front() == WMMASlotType::ValuCoExec &&
+  if (!WMMAPipelineState.empty() && WMMAPipelineState.front() == WMMASlotType::ValuCoExec2 &&
       WMMAPipelineState.size() == 3 && CurrCycleInstr &&
       SIInstrInfo::isVALU(*CurrCycleInstr) && !SIInstrInfo::isWMMA(*CurrCycleInstr) &&
       !SIInstrInfo::isSWMMAC(*CurrCycleInstr) && !SIInstrInfo::isVMEM(*CurrCycleInstr) &&
@@ -675,6 +707,8 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
   // immediately following cycle.
   if (CyclesUntilTRANS32)
     --CyclesUntilTRANS32;
+  if (CyclesUntilVALU)
+    --CyclesUntilVALU;
 }
 
 void GCNHazardRecognizer::AdvanceCycle() {
