@@ -491,6 +491,7 @@ def : HWWriteRes<Write4PassWMMA,  [HWVALU], 8>;
 def : HWWriteRes<Write8PassWMMA,  [HWVALU], 16>;
 def : HWWriteRes<Write16PassWMMA, [HWVALU], 32>;
 
+
 def : HWWriteRes<Write32Bit,             [HWVALU, HWRC],   5>;
 def : HWWriteRes<WriteFloatCvt,          [HWVALU, HWRC],   5>;
 def : HWWriteRes<WriteTrans32,           [HWTransVALU, HWRC],   7>;
