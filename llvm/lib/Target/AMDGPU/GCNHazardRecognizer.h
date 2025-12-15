@@ -48,7 +48,19 @@ public:
   /// - ValuCoExec: Can co-issue mem, salu, or valu
   /// - ValuBlocked: VALU blocked after WMMA completes, can only issue wmma/mem/salu
   /// - WMMABlocked: WMMA blocked, can issue mem/salu/valu
-  enum class WMMASlotType { Execute, MemCoExec0, MemCoExec1, ValuCoExec0, ValuCoExec1, ValuCoExec2, ValuBlocked0, ValuBlocked1, WMMABlocked };
+  enum class WMMASlotType {
+    Execute,
+    MemCoExec0,
+    MemCoExec1,
+    MemCoExec2,
+    MemCoExec3,
+    ValuCoExec0,
+    ValuCoExec1,
+    ValuCoExec2,
+    ValuBlocked0,
+    ValuBlocked1,
+    WMMABlocked
+  };
 
   int getWMMACoexecSlot();
 
