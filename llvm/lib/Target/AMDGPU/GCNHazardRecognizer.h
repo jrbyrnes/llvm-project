@@ -48,9 +48,11 @@ public:
   /// - ValuCoExec: Can co-issue mem, salu, or valu
   /// - ValuBlocked: VALU blocked after WMMA completes, can only issue wmma/mem/salu
   /// - WMMABlocked: WMMA blocked, can issue mem/salu/valu
-  enum class WMMASlotType { Execute, MemCoExec, ValuCoExec, ValuBlocked, WMMABlocked, ValuCoExecNoTrans };
+  enum class WMMASlotType { Execute, MemCoExec0, MemCoExec1, ValuCoExec0, ValuCoExec1, ValuCoExec2, ValuBlocked0, ValuBlocked1, WMMABlocked };
 
-  bool isVALUWMMACoexecSlot();
+  int getWMMACoexecSlot();
+
+  bool isWMMAPipelineHazard();
 
 private:
   // Operating mode determines which hazards are checked and whether fixes are applied.
@@ -94,6 +96,8 @@ private:
   /// Track if the last instruction emitted was a TRANS32 instruction.
   unsigned CyclesUntilTRANS32 = 0;
 
+  unsigned CyclesUntilVALU = 0;
+
   /// Tracks whether the last WMMA scale pipeline ended with its final
   /// VALU co-exec slot being consumed by a VALU. When set, issuing another
   /// WMMA immediately should incur a one cycle stall.
@@ -103,17 +107,19 @@ private:
   /// Returns the number of stall cycles needed before MI can be issued.
   unsigned checkWMMACoexecSlot(const MachineInstr &MI) const;
 
-
-
   /// Check for TRANS32 hazards.
   /// Returns the number of stall cycles needed before MI can be issued.
   unsigned checkTRANS32Hazard(const MachineInstr &MI) const;
+
+  unsigned checkCVTHazard(const MachineInstr &MI) const;
 
   /// Update WMMA pipeline state when a WMMA instruction is emitted.
   void updateWMMAPipelineState(const MachineInstr &MI);
 
   /// Update TRANS32 state when an instruction is emitted.
   void updateTRANS32State(const MachineInstr &MI);
+
+  void updateCVTState(const MachineInstr &MI);
 
   //===--------------------------------------------------------------------===//
   // Pre-RA scheduling mode wrappers.
