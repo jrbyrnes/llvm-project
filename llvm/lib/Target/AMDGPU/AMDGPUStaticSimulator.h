@@ -133,7 +133,6 @@ struct InstrSimInfo {
   bool CoExecuted = false;
   bool WasFused = false;
   bool WasExposed = false;
-  bool WasMasked = false;
   bool IsWMMA = false;
   bool LDScaleBlocked = false;
   StringRef WMMAPattern;
@@ -502,7 +501,6 @@ struct BlockMetrics {
   unsigned NumDelayAlu = 0;
   unsigned NumMSBSet = 0;
   unsigned NumMSBSetExposed = 0;
-  unsigned NumMSBSetMasked = 0; // Exposed but masked by co-exec stall
   unsigned NumSpill = 0;
   unsigned NumReload = 0;
   unsigned NumSGPRToVGPR = 0;
@@ -592,7 +590,6 @@ struct BlockMetrics {
     Result.NumNop = scale(NumNop);
     Result.NumDelayAlu = scale(NumDelayAlu);
     Result.NumMSBSet = scale(NumMSBSet);
-    Result.NumMSBSetMasked = scale(NumMSBSetMasked);
     Result.NumSpill = scale(NumSpill);
     Result.NumReload = scale(NumReload);
     Result.NumSGPRToVGPR = scale(NumSGPRToVGPR);
@@ -664,7 +661,6 @@ struct BlockMetrics {
     Result.NumNop = NumNop + O.NumNop;
     Result.NumDelayAlu = NumDelayAlu + O.NumDelayAlu;
     Result.NumMSBSet = NumMSBSet + O.NumMSBSet;
-    Result.NumMSBSetMasked = NumMSBSetMasked + O.NumMSBSetMasked;
     Result.NumSpill = NumSpill + O.NumSpill;
     Result.NumReload = NumReload + O.NumReload;
     Result.NumSGPRToVGPR = NumSGPRToVGPR + O.NumSGPRToVGPR;
@@ -801,13 +797,7 @@ struct BlockMetrics {
     Emit("MemFIFO", StallMemFIFO);
     Emit("Wait", StallWaitCnt);
     Emit("RegBank", StallRegBankConflict);
-    if (NumMSBSetExposed || NumMSBSetMasked) {
-      if (!First) OS << " | ";
-      OS << "MSBExposed:" << NumMSBSetExposed;
-      if (NumMSBSetMasked)
-        OS << " (+" << NumMSBSetMasked << " masked)";
-      First = false;
-    }
+    Emit("MSBExposed", NumMSBSetExposed);
     // I-slot utilization
     if (ISlotTotal) {
       if (!First) OS << " | ";

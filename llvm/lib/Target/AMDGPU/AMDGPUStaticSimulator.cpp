@@ -635,6 +635,8 @@ bool canMSBSetFuse(InstClass PrevIC) {
   case InstClass::BARRIER:
   case InstClass::WAITCNT:
     return false;
+  case InstClass::BARRIER:
+  case InstClass::WAITCNT:
   case InstClass::VALU:
   case InstClass::TRANS:
   case InstClass::SALU:
@@ -654,12 +656,30 @@ MSBSetOutcome classifyMSBSet(const GPUSimState &State) {
          ? MSBSetOutcome::Fused : MSBSetOutcome::Exposed;
 }
 
-void populateMSBSetInfo(MSBSetOutcome Outcome, bool IsMasked, InstrSimInfo &Info) {
+void applyMSBSetOutcome(MSBSetOutcome Outcome, GPUSimState &State,
+                        BlockMetrics &Metrics) {
+  Metrics.NumInstructions++;
+  Metrics.NumMSBSet++;
+
+  if (Outcome == MSBSetOutcome::Exposed) {
+    Metrics.NumMSBSetExposed++;
+    State.advanceCycle(1);
+    if (State.inWMMAWindow()) {
+      Metrics.StallCoExec++;
+      Metrics.CoExecMissOther++;
+    }
+  }
+  State.PreviousInstClass = InstClass::SALU;
+}
+
+void logMSBSetOutcome(MSBSetOutcome Outcome) {
+  dbgs() << (Outcome == MSBSetOutcome::Fused ? "  → Fused (free)\n"
+                                              : "  → Exposed (1 cycle)\n");
+}
+
+void populateMSBSetInfo(MSBSetOutcome Outcome, InstrSimInfo &Info) {
   if (Outcome == MSBSetOutcome::Fused) {
     Info.WasFused = true;
-  } else if (IsMasked) {
-    Info.WasExposed = true;
-    Info.WasMasked = true;
   } else {
     Info.WasExposed = true;
     Info.StallCycles = 1;
@@ -669,38 +689,11 @@ void populateMSBSetInfo(MSBSetOutcome Outcome, bool IsMasked, InstrSimInfo &Info
 
 bool handleMSBSet(InstClass IC, GPUSimState &State, BlockMetrics &Metrics,
                   KernelPerfReport *Report, const MachineInstr &MI,
-                  const SIInstrInfo &TII, unsigned EntryCycle) {
+                  unsigned EntryCycle) {
   if (IC != InstClass::MSB_SET)
     return false;
 
   MSBSetOutcome Outcome = classifyMSBSet(State);
-  bool IsMasked = false;
-
-  // Check if exposure is masked by next instruction's co-exec stall
-  if (Outcome == MSBSetOutcome::Exposed && State.inWMMAWindow()) {
-    if (MachineInstr *NextMI = SIInstrInfo::getNextRealInstr(const_cast<MachineInstr *>(&MI))) {
-      InstClass NextIC = classifyInst(*NextMI, TII);
-      unsigned NextCoExecStall = State.getCoExecStall(NextIC);
-      IsMasked = (NextCoExecStall >= 1);
-    }
-  }
-
-  // Apply outcome
-  Metrics.NumInstructions++;
-  Metrics.NumMSBSet++;
-  if (Outcome == MSBSetOutcome::Exposed) {
-    if (IsMasked) {
-      Metrics.NumMSBSetMasked++;
-    } else {
-      Metrics.NumMSBSetExposed++;
-      State.advanceCycle(1);
-      if (State.inWMMAWindow()) {
-        Metrics.StallCoExec++;
-        Metrics.CoExecMissOther++;
-      }
-    }
-  }
-  State.PreviousInstClass = InstClass::SALU;
 
   if (VerboseSimulation) {
     unsigned DisplayCycle = (Outcome == MSBSetOutcome::Fused)
@@ -709,22 +702,18 @@ bool handleMSBSet(InstClass IC, GPUSimState &State, BlockMetrics &Metrics,
     dbgs() << "\n[Cycle " << DisplayCycle << "] ";
     MI.print(dbgs(), /*IsStandalone=*/true, /*SkipOpers=*/false,
              /*SkipDebugLoc=*/true, /*AddNewLine=*/false);
-    dbgs() << "\n  → MSB_SET ";
-    if (Outcome == MSBSetOutcome::Fused) {
-      dbgs() << "fused with prev (free)";
-    } else if (IsMasked) {
-      dbgs() << "exposed but MASKED (next instr stalls anyway)";
-    } else {
-      dbgs() << "EXPOSED (+1 cycle)";
-      if (State.inWMMAWindow())
-        dbgs() << " [in WMMA window]";
-    }
     dbgs() << "\n";
+    dbgs() << "  Class: MSB_SET | Unit: SALU | Latency: 1 | ResourceCycles: 1\n";
   }
+
+  applyMSBSetOutcome(Outcome, State, Metrics);
+
+  if (VerboseSimulation)
+    logMSBSetOutcome(Outcome);
 
   if (Report) {
     InstrSimInfo Info;
-    populateMSBSetInfo(Outcome, IsMasked, Info);
+    populateMSBSetInfo(Outcome, Info);
     Report->PerInstr[&MI] = Info;
   }
 
@@ -1246,7 +1235,7 @@ void simulateInst(const MachineInstr &MI, const SIInstrInfo &TII,
   unsigned EntryCycle = State.CurrentCycle;
   InstTiming T = getInstTiming(MI, TII);
 
-  if (handleMSBSet(T.IC, State, Metrics, Report, MI, TII, EntryCycle))
+  if (handleMSBSet(T.IC, State, Metrics, Report, MI, EntryCycle))
     return;
 
   if (VerboseSimulation)
