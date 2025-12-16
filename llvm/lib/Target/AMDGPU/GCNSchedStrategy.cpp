@@ -1170,9 +1170,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
     if (!Stage->initGCNSchedStage())
       continue;
 
-    unsigned R = 0;
     for (auto Region : Regions) {
-      errs() << "\n\n\nREgion: " << R++ << "\n";
       // TODO -- do we really need this
       S.CollectedUse = false;
       RegionBegin = Region.first;
