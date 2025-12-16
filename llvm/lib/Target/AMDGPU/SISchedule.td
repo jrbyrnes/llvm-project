@@ -502,7 +502,7 @@ def : HWWriteRes<WritePseudoScalarTrans, [HWVALU, HWRC],   8>;
 def : HWWriteRes<WriteBranch,            [HWBranch],       32>;
 def : HWWriteRes<WriteExport,            [HWExport, HWRC], 16>;
 let ReleaseAtCycles = [20,0] in
-def : HWWriteRes<WriteLDS,               [HWLGKM,   HWRC], 60>;
+def : HWWriteRes<WriteLDS,               [HWLGKM,   HWRC], 55>;
 def : HWWriteRes<WriteSALU,              [HWSALU,   HWRC], 2>;
 def : HWWriteRes<WriteSFPU,              [HWSALU,   HWRC], 4>;
 def : HWWriteRes<WriteSMEM,              [HWLGKM,   HWRC], 20>;
