@@ -939,7 +939,9 @@ struct RegisterFile {
       } else if (TRI->isSGPRReg(MRI, Reg)) {
         for (unsigned i = 0; i < NumComponents; ++i)
           SGPRHWRegs.push_back(BaseHWReg + i);
-        // No pattern for SGPR (no cache)
+        Pattern += 's';
+      } else {
+        Pattern += '.';
       }
       PortIdx++;
     }
@@ -1016,8 +1018,6 @@ struct GPUSimState {
   unsigned LastVALUCycle = ~0u;
   unsigned LastTRANSCycle = ~0u;
 
-  unsigned VALUResourceBusyUntil = 0; // TRANS holds VALU in WMMA I-slots
-
   InstClass PreviousInstClass = InstClass::OTHER;
 
   std::deque<PendingMemOp> PendingDS;
@@ -1044,10 +1044,8 @@ struct GPUSimState {
       return 0;
     unsigned Delta = TargetCycle - CurrentCycle;
     CurrentCycle = TargetCycle;
-    if (ActiveWMMA.Active && CurrentCycle >= ActiveWMMA.EndCycle) {
+    if (ActiveWMMA.Active && CurrentCycle >= ActiveWMMA.EndCycle)
       ActiveWMMA.Active = false;
-      VALUResourceBusyUntil = 0;
-    }
     retireCompletedMemOps();
     return Delta;
   }
@@ -1097,18 +1095,6 @@ struct GPUSimState {
       LastVALUCycle = CurrentCycle;
     else if (IC == InstClass::TRANS)
       LastTRANSCycle = CurrentCycle;
-  }
-
-  void holdVALUResourceInWindow(unsigned Cycles) {
-    if (inWMMAWindow())
-      VALUResourceBusyUntil = std::max(VALUResourceBusyUntil, CurrentCycle + Cycles);
-  }
-
-  unsigned getVALUResourceStallInWindow() const {
-    if (!inWMMAWindow())
-      return 0;
-    return (VALUResourceBusyUntil > CurrentCycle)
-               ? (VALUResourceBusyUntil - CurrentCycle) : 0;
   }
 
   unsigned getWMMATRANSStall() const {
