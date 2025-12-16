@@ -13,7 +13,6 @@
 
 #include "GCNSchedStrategy.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/Analysis/CycleAnalysis.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -163,8 +162,6 @@ protected:
 
   SUnit *pickNode(bool &IsTopNode) override;
 
-  MachineCycleInfo CI;
-
 public:
   AMDGPUMLSchedStrategy(const MachineSchedContext *C);
 
@@ -172,16 +169,8 @@ public:
 
   void schedNode(SUnit *SU, bool IsTopNode) override;
 
-  bool tryCriticalResource(SchedCandidate &TryCand, SchedCandidate &Cand,
-                           SchedBoundary *Zone) const;
-
-  bool tryCriticalResourceDependency(SchedCandidate &TryCand,
-                                     SchedCandidate &Cand, SchedBoundary *Zone,
-                                     bool IsAsyncPipe = false) const;
-
   unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
 
-  bool tryVALUCoexecSlot(SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone) const;
 };
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
@@ -215,16 +204,6 @@ public:
 
   void enterRegion(MachineBasicBlock *bb, MachineBasicBlock::iterator begin,
                    MachineBasicBlock::iterator end, unsigned regioninstrs);
-
-  bool tryCriticalResource(SchedCandidate &TryCand, SchedCandidate &Cand,
-                           SchedBoundary *Zone) const;
-
-  bool tryCriticalResourceDependency(SchedCandidate &TryCand,
-                                     SchedCandidate &Cand, SchedBoundary *Zone,
-                                     bool IsAsyncPipe = false) const;
-
-  bool tryVALUCoexecSlot(SchedCandidate &TryCand, SchedCandidate &Cand,
-                         SchedBoundary *Zone) const;
 
   unsigned getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII,
                                 unsigned ReleaseAtCycle);

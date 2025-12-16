@@ -83,7 +83,6 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   if (NumPR > 8)
     HWUInfo[8].IsAsync = true;
   
-  CI.compute(*MF);
   if (Top.HazardRec) {
     delete Top.HazardRec;
     Top.HazardRec = nullptr;
@@ -251,10 +250,10 @@ static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
   });
 }
 
-static bool tryValueCoexecSlot2(GenericSchedulerBase::SchedCandidate &TryCand,
-                              GenericSchedulerBase::SchedCandidate &Cand,
-                              SchedBoundary *Zone,
-                              ScheduleDAG *DAG, bool IsPostRA) {
+static bool tryVALUCoexecSlot2(GenericSchedulerBase::SchedCandidate &TryCand,
+                               GenericSchedulerBase::SchedCandidate &Cand,
+                               SchedBoundary *Zone, ScheduleDAGInstrs *DAG,
+                               bool IsPostRA) {
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
   int CoexecSlot = HazardRec->getWMMACoexecSlot();
 
@@ -459,230 +458,128 @@ static bool tryValueCoexecSlot2(GenericSchedulerBase::SchedCandidate &TryCand,
   }
 
   return false;
+}
 
-                              }
+static bool
+tryCriticalResourceDependency2(GenericSchedulerBase::SchedCandidate &TryCand,
+                               GenericSchedulerBase::SchedCandidate &Cand,
+                               SchedBoundary *Zone, bool IsAsync,
+                               const SmallVectorImpl<HardwareUnitInfo> &HWUInfo,
+                               ScheduleDAGInstrs *DAG, bool IsPostRA) {
 
-bool AMDGPUMLSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
-                                                SchedCandidate &Cand,
-                                                SchedBoundary *Zone) const {
-  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
-  int CoexecSlot = HazardRec->getWMMACoexecSlot();
+  auto IsCandidateResource = [Zone, &HWUInfo](unsigned ResourceIdx) {
+    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    unsigned CriticalUsage = HWUI.getTotalCycles();
 
-  if (CoexecSlot == -1)
-    return false;
-  
-
-  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
-  GCNHazardRecognizer::WMMASlotType CurrentSlot = (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
-  MachineInstr *TryMI = TryCand.SU->getInstr();
-  MachineInstr *CandMI = Cand.SU->getInstr();
-
-  auto PreferNonTransVALU = [SII](SchedCandidate &TryCand,
-                                  SchedCandidate &Cand) {
-    MachineInstr *TryMI = TryCand.SU->getInstr();
-    MachineInstr *CandMI = Cand.SU->getInstr();
-    // We don't want to issue TRANS or CVT here as they (along with WMMA) will
-    // clog the whole VALU unit for multiple cycles
-    unsigned TryOp = TryMI->getOpcode();
-    unsigned CandOp = CandMI->getOpcode();
-    bool TryIsSingleCycleVALU =
-        SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) &&
-        !SII->isTRANS(*TryMI) &&
-        TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
-        TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-    bool CandIsSingleCycleVALU =
-        SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) &&
-        !SII->isTRANS(*CandMI) &&
-        CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
-        CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-    if (!TryIsSingleCycleVALU && !CandIsSingleCycleVALU) {
+    if (MaxAvailableLat > CriticalUsage)
       return false;
-    }
 
-    if (CandIsSingleCycleVALU)
-      if (Cand.Reason > RegCritical) {
-        Cand.Reason = RegCritical;
-      }
-
-    if (TryIsSingleCycleVALU) {
-      TryCand.Reason = RegCritical;
-    }
+    auto *TargetSU = HWUI.getNextTargetSU();
+    if (!TargetSU)
+      return false;
 
     return true;
   };
 
-  switch (CurrentSlot) {
-    default:
+  auto TryEnablesResource = [&Cand, &TryCand, &HWUInfo,
+                             DAG](unsigned ResourceIdx) {
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    auto *TargetSU = HWUI.getNextTargetSU();
+
+    bool CandEnables =
+        TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
+    bool TryCandEnables =
+        TargetSU != TryCand.SU && DAG->IsReachable(TargetSU, TryCand.SU);
+
+    if (!CandEnables && !TryCandEnables)
       return false;
-    
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec0:
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec1:
- {
-      return false;
-      bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
-      bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
 
-      if (!TryIsMem && !CandIsMem)
-        return false;
-      
-      if (CandIsMem)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsMem)
-        TryCand.Reason = RegCritical;
-      
-      return true;
-    }
-
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec2:
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec3: {
-
-      bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
-      bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
-
-      if (!TryIsMem && !CandIsMem)
-        return PreferNonTransVALU(TryCand, Cand);
-
-      if (CandIsMem)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-
-      if (TryIsMem)
-        TryCand.Reason = RegCritical;
+    if (CandEnables && !TryCandEnables) {
+      if (Cand.Reason > GenericSchedulerBase::RegCritical)
+        Cand.Reason = GenericSchedulerBase::RegCritical;
 
       return true;
     }
-    case GCNHazardRecognizer::WMMASlotType::ValuBlocked0: {
-      bool TryIsSALU = SII->isMFMAorWMMA(*TryMI);
-      bool CandIsSALU = SII->isMFMAorWMMA(*CandMI);
 
-      if (!TryIsSALU && !CandIsSALU)
+    if (!CandEnables && TryCandEnables) {
+      TryCand.Reason = GenericSchedulerBase::RegCritical;
+      return true;
+    }
+
+    // Both enable, prefer the critical path.
+    bool CandHeight = Cand.SU->getHeight();
+    bool TryCandHeight = TryCand.SU->getHeight();
+
+    if (CandHeight > TryCandHeight) {
+      if (Cand.Reason > GenericSchedulerBase::RegCritical)
+        Cand.Reason = GenericSchedulerBase::RegCritical;
+
+      return true;
+    }
+
+    if (CandHeight < TryCandHeight) {
+      TryCand.Reason = GenericSchedulerBase::RegCritical;
+      return true;
+    }
+
+    // Same critical path, just prefer original candidate.
+    if (Cand.Reason > GenericSchedulerBase::RegCritical)
+      Cand.Reason = GenericSchedulerBase::RegCritical;
+
+    return true;
+  };
+
+  if (IsAsync) {
+    for (unsigned I = 0; I < HWUInfo.size(); I++) {
+      if (!HWUInfo[I].IsAsync)
+        continue;
+
+      if (!IsCandidateResource(I))
         return false;
 
-      if (CandIsSALU)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-
-      if (TryIsSALU)
-        TryCand.Reason = RegCritical;
-
-      return true;
+      return TryEnablesResource(I);
     }
-
-    case GCNHazardRecognizer::WMMASlotType::ValuBlocked1: {
-      bool TryIsWMMA = SII->isMFMAorWMMA(*TryMI);
-      bool CandIsWMMA = SII->isMFMAorWMMA(*CandMI);
-      
-      if (!TryIsWMMA && !CandIsWMMA)
-        return false;
-      
-      if (CandIsWMMA)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsWMMA)
-        TryCand.Reason = RegCritical;
-      
-      return true;
-    }
-
-    case GCNHazardRecognizer::WMMASlotType::ValuCoExec1: {
-      return PreferNonTransVALU(TryCand, Cand);
-    }
-
-    case GCNHazardRecognizer::WMMASlotType::ValuCoExec0: {
-      // We prefer 2 cycle TRANS here
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALUOrTrans = SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandIsSingleCycleVALUOrTrans = SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-      bool TryTRANS = SII->isTRANS(*TryMI);
-      bool CandTRANS = SII->isTRANS(*CandMI);
-
-
-      if (!TryTRANS && !CandTRANS) {
-        if (!TryIsSingleCycleVALUOrTrans && !CandIsSingleCycleVALUOrTrans)
-          return false;
-      
-        if (CandIsSingleCycleVALUOrTrans)
-          if (Cand.Reason > RegCritical)
-            Cand.Reason = RegCritical;
-      
-        if (TryIsSingleCycleVALUOrTrans)
-          TryCand.Reason = RegCritical;
-      
-        return true;
-      }
-      if (CandTRANS)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryTRANS)
-        TryCand.Reason = RegCritical;
-    }
-
-    case GCNHazardRecognizer::WMMASlotType::ValuCoExec2: {
-      // We don't want to issue TRANS or CVT here as they (along with WMMA) will
-      // clog the whole VALU unit for multiple cycles
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALUOrTrans = SII->isVALU(*TryMI) &&
-                                         !SII->isMFMAorWMMA(*TryMI) &&
-                                         !SII->isTRANS(*TryMI);
-      bool CandIsSingleCycleVALUOrTrans = SII->isVALU(*CandMI) &&
-                                          !SII->isMFMAorWMMA(*CandMI) &&
-                                          !SII->isTRANS(*CandMI);
-
-      bool TryLongLat = TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
-                        TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandLongLat =
-          CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
-          CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-      if (!TryLongLat && !CandLongLat) {
-        if (!TryIsSingleCycleVALUOrTrans && !CandIsSingleCycleVALUOrTrans)
-          return false;
-
-        if (CandIsSingleCycleVALUOrTrans)
-          if (Cand.Reason > RegCritical)
-            Cand.Reason = RegCritical;
-
-        if (TryIsSingleCycleVALUOrTrans)
-          TryCand.Reason = RegCritical;
-
-        return true;
-      }
-      if (CandLongLat)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-
-      if (TryLongLat)
-        TryCand.Reason = RegCritical;
-    }
+    return false;
   }
 
+  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
+  unsigned CheckedResources = 0;
+
+  for (unsigned I = 0; I < HWUInfo.size(); I++) {
+    if (CheckedResources++ >= Cutoff)
+      return false;
+
+    // If we have encountered a resource that is not critical, then neither
+    // candidate enables a critical resource
+    if (!IsCandidateResource(I))
+      return false;
+
+    bool Enabled = TryEnablesResource(I);
+    // If neither has enabled the resource, continue to the next resource
+    if (Enabled)
+      return true;
+  }
   return false;
 }
 
-bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
-                                                SchedCandidate &Cand,
-                                                SchedBoundary *Zone) const {
-
+static bool tryCriticalResource2(GenericSchedulerBase::SchedCandidate &TryCand,
+                                 GenericSchedulerBase::SchedCandidate &Cand,
+                                 SchedBoundary *Zone,
+                                 SmallVectorImpl<HardwareUnitInfo> &HWUInfo,
+                                 ScheduleDAGInstrs *DAG, bool IsPostRA) {
   unsigned CandOp = Cand.SU->getInstr()->getOpcode();
   bool CandIsLoad = CandOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 || CandOp == AMDGPU::S_WAIT_TENSORCNT || CandOp == AMDGPU::S_BARRIER_WAIT || CandOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
   if (CandIsLoad) {
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
+    if (Cand.Reason > GenericSchedulerBase::RegCritical)
+      Cand.Reason = GenericSchedulerBase::RegCritical;
     return true;
   }
 
   unsigned TryOp = TryCand.SU->getInstr()->getOpcode();
   bool TryIsLoad = TryOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 || TryOp == AMDGPU::S_WAIT_TENSORCNT || TryOp == AMDGPU::S_BARRIER_WAIT || TryOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
   if (TryIsLoad) {
-    TryCand.Reason = RegCritical;
+    TryCand.Reason = GenericSchedulerBase::RegCritical;
     return true;
   }
 
@@ -706,141 +603,44 @@ bool AMDGPUMLSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
       continue;
 
     if (CandUsesCrit && !TryCandUsesCrit) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
+      if (Cand.Reason > GenericSchedulerBase::RegCritical)
+        Cand.Reason = GenericSchedulerBase::RegCritical;
       return true;
     }
 
     if (!CandUsesCrit && TryCandUsesCrit) {
-      TryCand.Reason = RegCritical;
+      TryCand.Reason = GenericSchedulerBase::RegCritical;
       return true;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, false, HWUInfo, DAG,
+                                       IsPostRA)) {
       return true;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, true, HWUInfo, DAG,
+                                       IsPostRA)) {
       return true;
     }
 
     if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
+      if (Cand.Reason > GenericSchedulerBase::RegCritical)
+        Cand.Reason = GenericSchedulerBase::RegCritical;
       return true;
     }
 
-    TryCand.Reason = RegCritical;
+    TryCand.Reason = GenericSchedulerBase::RegCritical;
     return true;
   }
 
   return false;
 }
 
-bool AMDGPUMLSchedStrategy::tryCriticalResourceDependency(
-    SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone, 
-    bool IsAsync) const {
-
-  auto IsCandidateResource = [Zone, this](unsigned ResourceIdx) {
-    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
-    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
-    unsigned CriticalUsage = HWUI.getTotalCycles();
-
-    if (MaxAvailableLat > CriticalUsage)
-      return false;
-
-    auto *TargetSU = HWUI.getNextTargetSU();
-    if (!TargetSU)
-      return false;
-
-    return true;
-  };
-
-  auto TryEnablesResource = [&Cand, &TryCand, this](unsigned ResourceIdx) {
-    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
-    auto *TargetSU = HWUI.getNextTargetSU();
-
-    bool CandEnables =
-        TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
-    bool TryCandEnables =
-        TargetSU != TryCand.SU && DAG->IsReachable(TargetSU, TryCand.SU);
-
-    if (!CandEnables && !TryCandEnables)
-      return false;
-
-    if (CandEnables && !TryCandEnables) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
-
-      return true;
-    }
-
-    if (!CandEnables && TryCandEnables) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-    // Both enable, prefer the critical path.
-    bool CandHeight = Cand.SU->getHeight();
-    bool TryCandHeight = TryCand.SU->getHeight();
-
-    if (CandHeight > TryCandHeight) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
-
-      return true;
-    }
-
-    if (CandHeight < TryCandHeight) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-    // Same critical path, just prefer original candidate.
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
-
-    return true;
-  };
-
-  if (IsAsync) {
-    for (unsigned I = 0; I < HWUInfo.size(); I++) {
-      if (!HWUInfo[I].IsAsync)
-        continue;
-
-      if (!IsCandidateResource(I))
-        return false;
-
-      return TryEnablesResource(I);
-    }
-    return false;
-  }
-   
-  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
-  unsigned CheckedResources = 0;
-
-
-  for (unsigned I = 0; I < HWUInfo.size(); I++) {
-    if (CheckedResources++ >= Cutoff)
-      return false;
-
-    // If we have encountered a resource that is not critical, then neither
-    // candidate enables a critical resource
-    if (!IsCandidateResource(I))
-      return false;
-    
-    bool Enabled = TryEnablesResource(I);
-    // If neither has enabled the resource, continue to the next resource
-    if (Enabled)
-      return true;
-  }
-  return false;
-}
-
-unsigned
-AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
-                                             unsigned CurrCycle,
-                                             SchedBoundary *Zone) const {
+static unsigned getLatencyStallCycles2(
+    SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone, ScheduleDAGInstrs *DAG,
+    const SmallVectorImpl<SUnit *> &SchedMFMA,
+    const SmallVectorImpl<SUnit *> &SchedDSR,
+    const SmallVectorImpl<SUnit *> &SchedTDM, bool IsPostRA) {
   unsigned ReadyCycle = SU->TopReadyCycle;
   auto *MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
@@ -853,7 +653,7 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
       ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
     }
     if (SchedDSR.size()) {
-      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() -1]->TopReadyCycle;
+      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() - 1]->TopReadyCycle;
       // TODO -- should be release at cycle.
       ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
     }
@@ -873,29 +673,22 @@ AMDGPUMLSchedStrategy::getLatencyStallCycles(SUnit *SU,
     auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
     if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
-      ReadyCycle = std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
+      ReadyCycle =
+          std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
     }
-  
+
   }
 
-  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE || MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
+            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
     if (SchedDSR.size()) {
       auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
-      ReadyCycle = std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
-    }
-    else {
+      ReadyCycle =
+          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+    } else {
       ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
     }
   }
-
-  /*else if (SchedMFMA.size()) {
-    auto CandOp = SU->getInstr()->getOpcode();
-    bool IsProbCVT = (CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64) || (CandOp == AMDGPU::V_CVT_SCALEF32_SR_PK8_FP8_F32_e64_gfx1250);
-    if (IsProbCVT) {
-      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-      ReadyCycle = std::max(ReadyCycle, PrevMFMA->TopReadyCycle + 10);
-    }
-  }*/
 
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
   if (HazardRec) {
@@ -948,26 +741,31 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   if (SameBoundary) {
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
-    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone),
+    if (tryLess(getLatencyStallCycles2(TryCand.SU, Zone->getCurrCycle(), Zone,
+                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       false),
+                getLatencyStallCycles2(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                       SchedMFMA, SchedDSR, SchedTDM, false),
                 TryCand, Cand, Stall)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryValueCoexecSlot2(TryCand, Cand, Zone, DAG, false)) {
+    if (tryVALUCoexecSlot2(TryCand, Cand, Zone, DAG, false)) {
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
-    if (tryCriticalResource(TryCand, Cand, Zone)) {
+    if (tryCriticalResource2(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, false, HWUInfo, DAG,
+                                       false)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, true, HWUInfo, DAG,
+                                       false)) {
       return TryCand.Reason != NoCand;
     }
   }
@@ -984,73 +782,6 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     return true;
   }
 
-/*
-  auto Cycle = CI.getCycle(TryCand.SU->getInstr()->getParent());
-  bool InCycle = true;
-  if (!Cycle)
-    InCycle = false;
-
-  if (!InCycle) {
-    // Fall through to original instruction order.
-    bool CandIsBArrierSignal = Cand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
-    if (CandIsBArrierSignal) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-
-    
-    bool TryCandIsBArrierSignal = TryCand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
-    if (TryCandIsBArrierSignal) {
-      Cand.Reason = RegCritical;
-      return true;
-    }
-
-
-    if ((CandIsBArrierSignal || TryCandIsBArrierSignal) && SchedTDM.size()) {
-      auto Prev = SchedTDM[SchedTDM.size() - 1];
-      auto PrevOp = Prev->getInstr()->getOpcode();
-      if (PrevOp == AMDGPU::ATOMIC_FENCE || PrevOp == AMDGPU::S_BARRIER_SIGNAL_IMM || PrevOp == AMDGPU::S_BARRIER_WAIT) {
-        if (CandIsBArrierSignal) {
-          Cand.Reason = RegCritical;
-          return true;
-        }
-        TryCand.Reason = RegCritical;
-        return true;
-      }
-
-      unsigned CurrCycle = Zone->getCurrCycle();
-      if (CandIsBArrierSignal) {
-        unsigned ReadyCycle = Cand.SU->TopReadyCycle;
-        if (CurrCycle - ReadyCycle >= 100) {
-          Cand.Reason = RegCritical;
-          return true;
-        }
-        TryCand.Reason = RegCritical;
-        return true;
-      }
-      if (TryCandIsBArrierSignal) {
-        unsigned ReadyCycle = TryCand.SU->TopReadyCycle;
-        if (CurrCycle -  ReadyCycle >= 100) {
-          TryCand.Reason = RegCritical;
-          return true;
-        }
-        Cand.Reason = RegCritical;
-        return true;
-      }
-
-
-    }
-
-
-    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
-        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
-      TryCand.Reason = NodeOrder;
-      return true;
-    }
-    return false;
-  }
-*/
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
   if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
@@ -1081,26 +812,31 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   if (SameBoundary) {
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
-    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
-                Cand, Stall))
+    if (tryLess(getLatencyStallCycles2(TryCand.SU, Zone->getCurrCycle(), Zone,
+                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       false),
+                getLatencyStallCycles2(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                       SchedMFMA, SchedDSR, SchedTDM, false),
+                TryCand, Cand, Stall))
       return TryCand.Reason != NoCand;
 
-    if (tryValueCoexecSlot2(TryCand, Cand, Zone, DAG, false)) {
+    if (tryVALUCoexecSlot2(TryCand, Cand, Zone, DAG, false)) {
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
 
-    if (tryCriticalResource(TryCand, Cand, Zone)) {
+    if (tryCriticalResource2(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, false, HWUInfo, DAG,
+                                       false)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, true, HWUInfo, DAG,
+                                       false)) {
       return TryCand.Reason != NoCand;
     }
 
@@ -1302,26 +1038,31 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
   if (SameBoundary) {
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
-    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone),
+    if (tryLess(getLatencyStallCycles2(TryCand.SU, Zone->getCurrCycle(), Zone,
+                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       true),
+                getLatencyStallCycles2(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                       SchedMFMA, SchedDSR, SchedTDM, true),
                 TryCand, Cand, Stall))
       return TryCand.Reason != NoCand;
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
+    if (tryVALUCoexecSlot2(TryCand, Cand, Zone, DAG, true)) {
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
 
-    if (tryCriticalResource(TryCand, Cand, Zone)) {
+    if (tryCriticalResource2(TryCand, Cand, Zone, HWUInfo, DAG, true)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, false, HWUInfo, DAG,
+                                       true)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, true, HWUInfo, DAG,
+                                       true)) {
       return TryCand.Reason != NoCand;
     }
 
@@ -1383,25 +1124,30 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
     // Prioritize instructions that read unbuffered resources by stall cycles.
-    if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone), TryCand,
-                Cand, Stall))
+    if (tryLess(getLatencyStallCycles2(TryCand.SU, Zone->getCurrCycle(), Zone,
+                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       true),
+                getLatencyStallCycles2(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                       SchedMFMA, SchedDSR, SchedTDM, true),
+                TryCand, Cand, Stall))
       return TryCand.Reason != NoCand;
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone)) {
+    if (tryVALUCoexecSlot2(TryCand, Cand, Zone, DAG, true)) {
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
-    if (tryCriticalResource(TryCand, Cand, Zone)) {
+    if (tryCriticalResource2(TryCand, Cand, Zone, HWUInfo, DAG, true)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, false, HWUInfo, DAG,
+                                       true)) {
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
+    if (tryCriticalResourceDependency2(TryCand, Cand, Zone, true, HWUInfo, DAG,
+                                       true)) {
       return TryCand.Reason != NoCand;
     }
   }
@@ -1432,183 +1178,6 @@ void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   PostGenericScheduler::schedNode(SU, IsTopNode);
 }
 
-
-unsigned
-AMDGPUMLPostSchedStrategy::getLatencyStallCycles(SUnit *SU,
-                                             unsigned CurrCycle,
-                                             SchedBoundary *Zone) const {
-  // errs() << "CurrCycle: " << CurrCycle << "\n";
-  unsigned ReadyCycle = SU->TopReadyCycle;
-  auto *MI = SU->getInstr();
-  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
-
-  if (SII->isDS(*MI) && MI->mayLoad()) {
-    if (SchedDSR.size() >= DSFIFOSize) {
-      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
-      unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
-      // TODO -- should be release at cycle.
-      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
-    }
-    if (SchedDSR.size()) {
-      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() -1]->TopReadyCycle;
-      // TODO -- should be release at cycle.
-      ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
-    }
-  }
-
-  else if (SII->isMFMAorWMMA(*MI) && SchedMFMA.size()) {
-    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-  }
-
-  else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
-    return 0;
-  }
-
-  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
-    auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
-
-    if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
-      ReadyCycle = std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
-    }
-
-  }
-
-  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
-            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
-    if (SchedDSR.size()) {
-      auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
-      ReadyCycle =
-          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
-    } else {
-      ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
-    }
-  }
-
-  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
-  if (HazardRec) {
-    // errs() << "Checking hazard states\n";
-    unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
-    if (HazardStates + CurrCycle > ReadyCycle) {
-      // errs() << "HR Wait for: "; SU->getInstr()->dump();
-      // errs() << HazardStates << "\n";
-      return HazardStates;
-    }
-  }
-
-
-  if (ReadyCycle > CurrCycle) {
-    SU->TopReadyCycle = ReadyCycle;
-    auto Wait = ReadyCycle - CurrCycle;
-    //errs() << "Wait for: "; SU->getInstr()->dump();
-    //errs() << Wait << "\n";
-    return Wait;
-  }
-
-  return 0;
-}
-
-bool AMDGPUMLPostSchedStrategy::tryVALUCoexecSlot(SchedCandidate &TryCand,
-                                                  SchedCandidate &Cand,
-                                                  SchedBoundary *Zone) const {
- GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
-  int CoexecSlot = HazardRec->getWMMACoexecSlot();
-
-  if (CoexecSlot == -1)
-    return false;
-  
-
-  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
-  GCNHazardRecognizer::WMMASlotType CurrentSlot = (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
-  MachineInstr *TryMI = TryCand.SU->getInstr();
-  MachineInstr *CandMI = Cand.SU->getInstr();
-
-  switch (CurrentSlot) {
-    default:
-      return false;
-    
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec0:
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec1: {
-      return false;
-      bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
-      bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
-
-      if (!TryIsMem && !CandIsMem)
-        return false;
-      
-      if (CandIsMem)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsMem)
-        TryCand.Reason = RegCritical;
-      
-      return true;
-    }
-    case GCNHazardRecognizer::WMMASlotType::ValuBlocked0:
-    case GCNHazardRecognizer::WMMASlotType::ValuBlocked1: {
-      bool TryIsWMMA = SII->isMFMAorWMMA(*TryMI);
-      bool CandIsWMMA = SII->isMFMAorWMMA(*CandMI);
-      
-      if (!TryIsWMMA && !CandIsWMMA)
-        return false;
-      
-      if (CandIsWMMA)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsWMMA)
-        TryCand.Reason = RegCritical;
-      
-      return true;
-    }
-
-    case GCNHazardRecognizer::WMMASlotType::ValuCoExec0: {
-      // We don't want to issue TRANS or CVT here as they (along with WMMA) will clog the whole VALU unit for multiple cycles
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALU = SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) && !SII->isTRANS(*TryMI) && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandIsSingleCycleVALU = SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) && !SII->isTRANS(*CandMI) && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-      if (!TryIsSingleCycleVALU && !CandIsSingleCycleVALU)
-        return false;
-      
-      if (CandIsSingleCycleVALU)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsSingleCycleVALU)
-        TryCand.Reason = RegCritical;
-      
-      return true;
-    }
-
-    case GCNHazardRecognizer::WMMASlotType::ValuCoExec1:
-    case GCNHazardRecognizer::WMMASlotType::ValuCoExec2: {
-      // We don't want to issue TRANS or CVT here as they (along with WMMA) will clog the whole VALU unit for multiple cycles
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALUOrTrans = SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandIsSingleCycleVALUOrTrans = SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-      if (!TryIsSingleCycleVALUOrTrans && !CandIsSingleCycleVALUOrTrans)
-        return false;
-      
-      if (CandIsSingleCycleVALUOrTrans)
-        if (Cand.Reason > RegCritical)
-          Cand.Reason = RegCritical;
-      
-      if (TryIsSingleCycleVALUOrTrans)
-        TryCand.Reason = RegCritical;
-      
-      return true;
-    }
-
-  }
-
-  return false;
-}
 
 void AMDGPUMLPostSchedStrategy::collectUse() {
   // errs() << "PostRA collect use\n";
@@ -1671,181 +1240,6 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
   HWUInfo[4].reset();
   if (IgnoreVALU)
     HWUInfo[7].reset();
-}
-
-bool AMDGPUMLPostSchedStrategy::tryCriticalResource(SchedCandidate &TryCand,
-                                                    SchedCandidate &Cand,
-                                                    SchedBoundary *Zone) const {
-
-  unsigned CandOp = Cand.SU->getInstr()->getOpcode();
-  bool CandIsLoad = CandOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-                    CandOp == AMDGPU::S_WAIT_TENSORCNT ||
-                    CandOp == AMDGPU::S_BARRIER_WAIT ||
-                    CandOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
-  if (CandIsLoad) {
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
-    return true;
-  }
-
-  unsigned TryOp = TryCand.SU->getInstr()->getOpcode();
-  bool TryIsLoad = TryOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-                   TryOp == AMDGPU::S_WAIT_TENSORCNT ||
-                   TryOp == AMDGPU::S_BARRIER_WAIT ||
-                   TryOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
-  if (TryIsLoad) {
-    TryCand.Reason = RegCritical;
-    return true;
-  }
-
-  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
-  unsigned CheckedResources = 0;
-  for (unsigned I = 0; I < HWUInfo.size(); I++) {
-    HardwareUnitInfo HWUI = HWUInfo[I];
-    if (CheckedResources++ >= Cutoff)
-      return false;
-
-    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
-    unsigned CriticalUsage = HWUI.getTotalCycles();
-
-    if (MaxAvailableLat > CriticalUsage)
-      return false;
-
-    bool CandUsesCrit = HWUI.contains(Cand.SU);
-    bool TryCandUsesCrit = HWUI.contains(TryCand.SU);
-
-    if (!CandUsesCrit && !TryCandUsesCrit)
-      continue;
-
-    if (CandUsesCrit && !TryCandUsesCrit) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
-      return true;
-    }
-
-    if (!CandUsesCrit && TryCandUsesCrit) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone)) {
-      return true;
-    }
-
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
-      return true;
-    }
-
-    if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
-      return true;
-    }
-
-    TryCand.Reason = RegCritical;
-    return true;
-  }
-
-  return false;
-}
-
-bool AMDGPUMLPostSchedStrategy::tryCriticalResourceDependency(
-    SchedCandidate &TryCand, SchedCandidate &Cand, SchedBoundary *Zone,
-    bool IsAsync) const {
-
-  auto IsCandidateResource = [Zone, this](unsigned ResourceIdx) {
-    unsigned MaxAvailableLat = Zone->findMaxLatency(Zone->Available.elements());
-    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
-    unsigned CriticalUsage = HWUI.getTotalCycles();
-
-    if (MaxAvailableLat > CriticalUsage)
-      return false;
-
-    auto *TargetSU = HWUI.getNextTargetSU();
-    if (!TargetSU)
-      return false;
-
-    return true;
-  };
-
-  auto TryEnablesResource = [&Cand, &TryCand, this](unsigned ResourceIdx) {
-    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
-    auto *TargetSU = HWUI.getNextTargetSU();
-
-    bool CandEnables =
-        TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
-    bool TryCandEnables =
-        TargetSU != TryCand.SU && DAG->IsReachable(TargetSU, TryCand.SU);
-
-    if (!CandEnables && !TryCandEnables)
-      return false;
-
-    if (CandEnables && !TryCandEnables) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
-
-      return true;
-    }
-
-    if (!CandEnables && TryCandEnables) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-    // Both enable, prefer the critical path.
-    bool CandHeight = Cand.SU->getHeight();
-    bool TryCandHeight = TryCand.SU->getHeight();
-
-    if (CandHeight > TryCandHeight) {
-      if (Cand.Reason > RegCritical)
-        Cand.Reason = RegCritical;
-
-      return true;
-    }
-
-    if (CandHeight < TryCandHeight) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-    // Same critical path, just prefer original candidate.
-    if (Cand.Reason > RegCritical)
-      Cand.Reason = RegCritical;
-
-    return true;
-  };
-
-  if (IsAsync) {
-    for (unsigned I = 0; I < HWUInfo.size(); I++) {
-      if (!HWUInfo[I].IsAsync)
-        continue;
-
-      if (!IsCandidateResource(I))
-        return false;
-
-      return TryEnablesResource(I);
-    }
-    return false;
-  }
-
-  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
-  unsigned CheckedResources = 0;
-
-  for (unsigned I = 0; I < HWUInfo.size(); I++) {
-    if (CheckedResources++ >= Cutoff)
-      return false;
-
-    // If we have encountered a resource that is not critical, then neither
-    // candidate enables a critical resource
-    if (!IsCandidateResource(I))
-      return false;
-
-    bool Enabled = TryEnablesResource(I);
-    // If neither has enabled the resource, continue to the next resource
-    if (Enabled)
-      return true;
-  }
-  return false;
 }
 
 unsigned AMDGPUMLPostSchedStrategy::getHWUICyclesForInst(
