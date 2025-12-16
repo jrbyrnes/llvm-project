@@ -168,9 +168,6 @@ public:
   void initialize(ScheduleDAGMI *DAG) override;
 
   void schedNode(SUnit *SU, bool IsTopNode) override;
-
-  unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
-
 };
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
@@ -191,8 +188,6 @@ public:
   AMDGPUMLPostSchedStrategy(const MachineSchedContext *C);
 
   void schedNode(SUnit *SU, bool IsTopNode) override;
-
-  unsigned getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone) const;
 
   bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
                     SchedBoundary *Zone) override;
