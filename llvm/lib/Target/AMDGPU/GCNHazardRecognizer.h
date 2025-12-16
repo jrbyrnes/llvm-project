@@ -110,6 +110,8 @@ private:
 
   unsigned CyclesUntilVALU = 0;
 
+  unsigned CyclesUntilSALU = 0;
+
   /// Tracks whether the last WMMA scale pipeline ended with its final
   /// VALU co-exec slot being consumed by a VALU. When set, issuing another
   /// WMMA immediately should incur a one cycle stall.
@@ -125,6 +127,8 @@ private:
 
   unsigned checkCVTHazard(const MachineInstr &MI) const;
 
+  unsigned checkSSrcHazard(const MachineInstr &MI) const;
+
   /// Update WMMA pipeline state when a WMMA instruction is emitted.
   void updateWMMAPipelineState(const MachineInstr &MI);
 
@@ -132,6 +136,8 @@ private:
   void updateTRANS32State(const MachineInstr &MI);
 
   void updateCVTState(const MachineInstr &MI);
+
+  void updateSSrcState(const MachineInstr &MI);
 
   //===--------------------------------------------------------------------===//
   // Pre-RA scheduling mode wrappers.

@@ -80,6 +80,7 @@ void GCNHazardRecognizer::preRAReset() {
   WMMAPipelineState.clear();
   CyclesUntilTRANS32 = 0;
   CyclesUntilVALU = 0;
+  CyclesUntilSALU = 0;
   PendingWMMAScaleValuTailStall = 0;
 }
 
@@ -99,6 +100,7 @@ void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
   updateWMMAPipelineState(*MI);
   updateTRANS32State(*MI);
   updateCVTState(*MI);
+  updateSSrcState(*MI);
 }
 
 int GCNHazardRecognizer::getWMMACoexecSlot() {
@@ -259,6 +261,35 @@ unsigned GCNHazardRecognizer::checkCVTHazard(const MachineInstr &MI) const {
   return CyclesUntilVALU;
 }
 
+unsigned GCNHazardRecognizer::checkSSrcHazard(const MachineInstr &MI) const {
+  if (!CyclesUntilSALU) {
+    return 0;
+  }
+
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  
+  bool IsBadCopy = false;
+  if (MI.isCopy()) {
+    Register Dest = MI.getOperand(0).getReg();
+    if (Dest.isVirtual()) {
+      auto RC = MRI.getRegClass(Dest);
+      if (TRI->isSGPRClass(RC)) {
+        IsBadCopy = true;
+      }
+    }
+  }
+
+
+  if (!SIInstrInfo::isSALU(MI) && !IsBadCopy)
+    return 0;
+
+  // Any other instruction requires a 1-cycle stall
+  LLVM_DEBUG(dbgs() << "checkTRANS32Hazard: stall after TRANS32 for: " << MI);
+  return CyclesUntilSALU;
+}
+
+
 void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
   unsigned Opc = MI.getOpcode();
   bool IsCVT = (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64) || (Opc == AMDGPU::V_CVT_SCALEF32_SR_PK8_FP8_F32_e64_gfx1250);
@@ -266,6 +297,39 @@ void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
   if (IsCVT) {
     CyclesUntilVALU = 4;
   }
+}
+
+
+void GCNHazardRecognizer::updateSSrcState(const MachineInstr &MI) {
+  if (!SIInstrInfo::isVALU(MI) || SIInstrInfo::isMFMAorWMMA(MI))
+    return;
+  
+  if (MI.getOpcode() == AMDGPU::V_READFIRSTLANE_B32)
+    CyclesUntilSALU = 16;
+
+  bool UsesSGPR = false;
+  bool IsDef = false;
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  
+  for (auto &Op : MI.operands()) {
+    if (!Op.isReg())
+      continue;
+    
+    Register Reg = Op.getReg();
+    if (Reg.isPhysical())
+      continue;
+    
+    auto RC = MRI.getRegClass(Reg);
+    if (TRI->isSGPRClass(RC)) {
+      UsesSGPR = true;
+      break;
+    }
+  }
+
+
+  if (UsesSGPR)
+    CyclesUntilSALU = 8;
 }
 
 void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
@@ -562,6 +626,7 @@ unsigned GCNHazardRecognizer::preRAGetHazardWaitStates(MachineInstr *MI) const {
   unsigned WaitStates = checkWMMACoexecSlot(*MI);
   WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
   WaitStates = std::max(WaitStates, checkCVTHazard(*MI));
+  WaitStates = std::max(WaitStates, checkSSrcHazard(*MI));
   return WaitStates;
 }
 
@@ -570,6 +635,7 @@ GCNHazardRecognizer::postRAGetHazardWaitStates(MachineInstr *MI) const {
   unsigned WaitStates = checkWMMACoexecSlot(*MI);
   WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
   WaitStates = std::max(WaitStates, checkCVTHazard(*MI));
+  WaitStates = std::max(WaitStates, checkSSrcHazard(*MI));
   return WaitStates;
 }
 
@@ -715,6 +781,8 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
     --CyclesUntilTRANS32;
   if (CyclesUntilVALU)
     --CyclesUntilVALU;
+  if (CyclesUntilSALU)
+    --CyclesUntilSALU;
 }
 
 void GCNHazardRecognizer::AdvanceCycle() {
