@@ -25,7 +25,6 @@
 #include "llvm/CodeGen/MIRYamlMapping.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/Support/raw_ostream.h"
-#include <memory>
 #include <optional>
 
 namespace llvm {
@@ -35,10 +34,6 @@ class MachineFunction;
 class SIMachineFunctionInfo;
 class SIRegisterInfo;
 class TargetRegisterClass;
-
-namespace AMDGPU {
-struct KernelPerfReport;
-} // namespace AMDGPU
 
 class AMDGPUPseudoSourceValue : public PseudoSourceValue {
 public:
@@ -1227,17 +1222,6 @@ public:
   unsigned getMaxNumWorkGroupsZ() const { return MaxNumWorkGroups[2]; }
 
   AMDGPU::ClusterDimsAttr getClusterDims() const { return ClusterDims; }
-
-  // Static simulator report (shared to allow MFI copy)
-  std::shared_ptr<AMDGPU::KernelPerfReport> StaticSimReport;
-
-  bool hasStaticSimReport() const { return StaticSimReport != nullptr; }
-  const AMDGPU::KernelPerfReport *getStaticSimReport() const {
-    return StaticSimReport.get();
-  }
-  void setStaticSimReport(std::shared_ptr<AMDGPU::KernelPerfReport> Report) {
-    StaticSimReport = std::move(Report);
-  }
 };
 
 } // end namespace llvm
