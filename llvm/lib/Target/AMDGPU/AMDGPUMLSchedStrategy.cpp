@@ -53,6 +53,9 @@ static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
                                     cl::init(8));
 
+bool PreRALog = false;
+bool PostRALog = false;
+
 static cl::opt<bool> IgnoreVALU(
   "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
   cl::desc("Whether or not to ignore VALU unit when balancing HW resoiurces."),
@@ -135,7 +138,8 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
 
   // errs() << "SchedNode: "; SU->getInstr()->dump();
   // errs() << "\n\n";
-
+   if (PreRALog) { errs() << "Scheduling: "; MI->dump();}
+   if (PreRALog) { errs() << "\n\n";}
   if (SchedModel && SchedModel->hasInstrSchedModel()) {
     const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
     for (TargetSchedModel::ProcResIter
@@ -290,15 +294,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     if (CandIsSingleCycleVALU && TryIsSingleCycleVALU) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
-
+      return false;
     }
     if (CandIsSingleCycleVALU)
       if (Cand.Reason > GenericSchedulerBase::RegCritical) {
@@ -346,14 +342,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
         return PreferNonTransVALU(TryCand, Cand);
 
     if (CandIsMem && TryIsMem) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
+      return false;
 
     }
 
@@ -374,14 +363,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
         return false;
 
     if (CandIsSALU && TryIsSALU) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
+      return false;
 
     }
 
@@ -403,14 +385,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
         return false;
   
       if (CandIsWMMA && TryIsWMMA) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
+        return false;
 
     }
       if (CandIsWMMA)
@@ -443,16 +418,9 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
           return false;
       
       if (TryIsSingleCycleVALUOrTrans && CandIsSingleCycleVALUOrTrans) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
+        return false;
 
-    }
+      }
 
         if (CandIsSingleCycleVALUOrTrans)
           if (Cand.Reason > GenericSchedulerBase::RegCritical)
@@ -465,15 +433,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       }
 
       if (CandTRANS && TryTRANS) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
-
+        return false;
     }
 
 
@@ -510,14 +470,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
           return false;
 
       if (CandIsSingleCycleVALUOrTrans && TryIsSingleCycleVALUOrTrans) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
+        return false;
 
     }
 
@@ -532,15 +485,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       }
 
       if (CandLongLat && TryLongLat) {
-      if (Cand.SU->NodeNum < TryCand.SU->NodeNum) {
-        if (Cand.Reason > GenericSchedulerBase::RegCritical) {
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-        }
-        return true;
-      }
-      TryCand.Reason = GenericSchedulerBase::RegCritical;
-      return true;
-
+        return false;
     }
 
       if (CandLongLat)
@@ -734,10 +679,11 @@ static bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
 }
 
 static unsigned getLatencyStallCycles(
-    SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone, ScheduleDAGInstrs *DAG,
+    SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone, ScheduleDAGInstrs *DAG, const TargetRegisterInfo *TRI, 
     const SmallVectorImpl<SUnit *> &SchedMFMA,
     const SmallVectorImpl<SUnit *> &SchedDSR,
     const SmallVectorImpl<SUnit *> &SchedTDM, bool IsPostRA) {
+                const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   unsigned ReadyCycle = SU->TopReadyCycle;
   auto *MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
@@ -787,6 +733,44 @@ static unsigned getLatencyStallCycles(
     }
   }
 
+
+  if (IsPostRA) {
+    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) && (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
+      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+
+      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
+        for (auto &MO : MI->operands()) {
+          if (!MO.isReg())
+            continue;
+          if (!MO.getReg().isPhysical())
+            continue;
+          
+
+          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
+            continue;
+
+          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
+            if (!OtherMO.isReg())
+              continue;
+            if (!OtherMO.getReg().isPhysical())
+              continue;
+            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
+            continue;
+            
+            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
+              ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+              break;
+            }
+            
+          }
+        }
+
+      }
+
+    }
+  }
+
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
   if (HazardRec) {
     unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
@@ -819,8 +803,10 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
   if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
-                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg)) {
+                  if (PreRALog) { errs() << "PhysReg\n"; }
     return TryCand.Reason != NoCand;
+                 }
 
   // Avoid exceeding the target's limit.
   /*if (DAG->isTrackingPressure() &&
@@ -836,33 +822,37 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
 
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
-
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                        false),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
                                        SchedMFMA, SchedDSR, SchedTDM, false),
                 TryCand, Cand, Stall)) {
+                  if (PreRALog) { errs() << "Stall\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, false)) {
+      if (PreRALog) { errs() << "ValuCoexec\n";}
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
+      if (PreRALog) { errs() << "CritResource\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        false)) {
+                                        if (PreRALog) { errs() << "CritResourceDep\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        false)) {
+                                       if (PreRALog) {errs() << "CritResourceDep Async\n";}
       return TryCand.Reason != NoCand;
     }
   }
@@ -882,8 +872,10 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
   if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
-                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg))
+                 biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg)) {
+                  if (PreRALog) { errs() << "PhysReg\n";}
     return TryCand.Reason != NoCand;
+                 }
 
   // Avoid exceeding the target's limit.
   /*
@@ -910,30 +902,36 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                        false),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
                                        SchedMFMA, SchedDSR, SchedTDM, false),
-                TryCand, Cand, Stall))
+                TryCand, Cand, Stall)) {
+               if (PreRALog) {   errs() << "Stall\n";}
       return TryCand.Reason != NoCand;
+                }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, false)) {
+      if (PreRALog) { errs() << "VALUCoexec\n";}
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
 
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
+      if (PreRALog) { errs() << "CritResource\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        false)) {
+                                      if (PreRALog) {  errs() << "CritResourceDep\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        false)) {
+                                        if (PreRALog) { errs() << "CritResourceDep Async\n";}
       return TryCand.Reason != NoCand;
     }
 
@@ -960,25 +958,32 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
       isTheSameCluster(TryCandZoneCluster, TryCand.SU->ParentClusterIdx);
 
   if (tryGreater(TryCandIsClusterSucc, CandIsClusterSucc, TryCand, Cand,
-                 Cluster))
+                 Cluster)) {
+                 if (PreRALog) {  errs() << "Cluster\n";}
     return TryCand.Reason != NoCand;
+                 }
 
   if (SameBoundary) {
     // Weak edges are for clustering and other constraints.
     if (tryLess(getWeakLeft(TryCand.SU, TryCand.AtTop),
-                getWeakLeft(Cand.SU, Cand.AtTop), TryCand, Cand, Weak))
+                getWeakLeft(Cand.SU, Cand.AtTop), TryCand, Cand, Weak)) {
+                  if (PreRALog) { errs() << "Weak\n";}
       return TryCand.Reason != NoCand;
+                }
   }
 
   // Avoid increasing the max pressure of the entire region.
   if (DAG->isTrackingPressure() &&
       tryPressure(TryCand.RPDelta.CurrentMax, Cand.RPDelta.CurrentMax, TryCand,
-                  Cand, RegMax, TRI, DAG->MF))
+                  Cand, RegMax, TRI, DAG->MF)) {
+                   if (PreRALog) {  errs() << "RP\n";}
     return TryCand.Reason != NoCand;
+                  }
 
   // Fall through to original instruction order.
   if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
       (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+       if (PreRALog) { errs() << "NID\n"; }
     TryCand.Reason = NodeOrder;
     return true;
   }
@@ -1008,8 +1013,10 @@ void AMDGPUMLSchedStrategy::pickNodeFromQueue(
     }
   }
   LLVM_DEBUG(dbgs() << "Available Q:\n");
+  if (PreRALog) { errs() << "Checking Available: \n";}
   ReadyQueue &AQ = Zone.Available;
   for (SUnit *SU : AQ) {
+    if (PreRALog) { SU->getInstr()->dump();} 
     SchedCandidate TryCand(ZonePolicy);
     initCandidate(TryCand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
                   VGPRPressure, IsBottomUp);
@@ -1017,6 +1024,7 @@ void AMDGPUMLSchedStrategy::pickNodeFromQueue(
     SchedBoundary *ZoneArg = Cand.AtTop == TryCand.AtTop ? &Zone : nullptr;
     tryCandidateBalanced(Cand, TryCand, ZoneArg);
     if (TryCand.Reason != NoCand) {
+      if (PreRALog) { errs() << "NewBest!\n"; }
       // Initialize resource delta if needed in case future heuristics query it.
       if (TryCand.ResDelta == SchedResourceDelta())
         TryCand.initResourceDelta(Zone.DAG, SchedModel);
@@ -1031,8 +1039,10 @@ void AMDGPUMLSchedStrategy::pickNodeFromQueue(
     return;
 
   LLVM_DEBUG(dbgs() << "Pending Q:\n");
+  if (PreRALog) { errs() << "Checking Pending:\n";}
   ReadyQueue &PQ = Zone.Pending;
   for (SUnit *SU : PQ) {
+    if (PreRALog) { SU->getInstr()->dump();}
     SchedCandidate TryCand(ZonePolicy);
     initCandidate(TryCand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
                   VGPRPressure, IsBottomUp);
@@ -1040,6 +1050,7 @@ void AMDGPUMLSchedStrategy::pickNodeFromQueue(
     SchedBoundary *ZoneArg = Cand.AtTop == TryCand.AtTop ? &Zone : nullptr;
     AMDGPUMLSchedStrategy::tryPendingCandidate(Cand, TryCand, ZoneArg);
     if (TryCand.Reason != NoCand) {
+      if (PreRALog) { errs() << "NewBest!\n";}
       // Initialize resource delta if needed in case future heuristics query it.
       if (TryCand.ResDelta == SchedResourceDelta())
         TryCand.initResourceDelta(Zone.DAG, SchedModel);
@@ -1136,36 +1147,36 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                        true),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
                                        SchedMFMA, SchedDSR, SchedTDM, true),
                 TryCand, Cand, Stall)) {
-                  errs() << "Stall\n";
+                 if (PostRALog) { errs() << "Stall\n";}
       return TryCand.Reason != NoCand;
                 }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, true)) {
-      errs() << "VALUCoexec\n";
+      if (PostRALog) {errs() << "VALUCoexec\n";}
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
 
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true)) {
-      errs() << "CritResource\n";
+      if (PostRALog) { errs() << "CritResource\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        true)) {
-                                        errs() << "CritResourceDep\n";
+                                        if (PostRALog) { errs() << "CritResourceDep\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        true)) {
-                                        errs() << "CritResourceDepAsync\n";
+                                        if (PostRALog) { errs() << "CritResourceDepAsync\n";}
       return TryCand.Reason != NoCand;
     }
 
@@ -1174,7 +1185,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     // heuristics to take precedence.
     if (Rem.IsAcyclicLatencyLimited && !Zone->getCurrMOps() &&
         tryLatency(TryCand, Cand, *Zone)) {
-          errs() << "Latency\n";
+          if (PostRALog) {errs() << "Latency\n";}
       return TryCand.Reason != NoCand;
         }
   }
@@ -1201,7 +1212,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     // Weak edges are for clustering and other constraints.
     if (tryLess(getWeakLeft(TryCand.SU, TryCand.AtTop),
                 getWeakLeft(Cand.SU, Cand.AtTop), TryCand, Cand, Weak)) {
-                  errs() << "Cluster\n";
+                  if (PostRALog) {errs() << "Cluster\n";}
       return TryCand.Reason != NoCand;
                 }
   }
@@ -1210,7 +1221,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     // Fall through to original instruction order.
     if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
         (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
-          errs() << "NID\n";
+          if (PostRALog) {errs() << "NID\n";}
       TryCand.Reason = NodeOrder;
       return true;
     }
@@ -1233,35 +1244,35 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   if (SameBoundary) {
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, SchedMFMA, SchedDSR, SchedTDM,
+                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                        true),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
                                        SchedMFMA, SchedDSR, SchedTDM, true),
                 TryCand, Cand, Stall)) {
-                  errs() << "Stall\n";
+                  if (PostRALog) {errs() << "Stall\n";}
       return TryCand.Reason != NoCand;
                 }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, true)) {
-      errs() << "Coexec\n";
+      if (PostRALog) {errs() << "Coexec\n";}
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true)) {
-      errs() << "CritResource\n";
+      if (PostRALog) {errs() << "CritResource\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        true)) {
-                                        errs() << "CritResourceDep\n";
+                                        if (PostRALog) {errs() << "CritResourceDep\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        true)) {
-                                        errs() << "CritResourceDep Async\n";
+                                       if (PostRALog) { errs() << "CritResourceDep Async\n";}
       return TryCand.Reason != NoCand;
     }
   }
@@ -1270,7 +1281,7 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     // Fall through to original instruction order.
     if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
         (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
-          errs() << "NID\n";
+          if (PostRALog) {errs() << "NID\n";}
       TryCand.Reason = NodeOrder;
       return true;
     }
@@ -1280,8 +1291,8 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
 }
 
 void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
-   errs() << "Scheduling: "; DAG->dumpNode(*SU);
-   errs() << "\n\n";
+   if (PostRALog) {errs() << "Scheduling: "; DAG->dumpNode(*SU);}
+   if (PostRALog) {errs() << "\n\n";}
   auto MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
@@ -1387,7 +1398,7 @@ unsigned AMDGPUMLPostSchedStrategy::getHWUICyclesForInst(
 void AMDGPUMLPostSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   // ML scheduling strategy is only done top-down to support new resource
   // balancing heuristics.
-  errs() << "New region\n";
+  if (PostRALog) { errs() << "New region\n";}
   RegionPolicy.OnlyTopDown = true;
   RegionPolicy.OnlyBottomUp = false;
   PostGenericScheduler::initialize(DAG);
@@ -1424,9 +1435,9 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
                                                   SchedCandidate &Cand,
                                                   bool &IsPending) {
   ReadyQueue &Q = Zone.Available;
-  errs() << "Checking Available\n";
+  if (PostRALog) { errs() << "Checking Available\n";}
   for (SUnit *SU : Q) {
-    DAG->dumpNode(*SU);
+    if (PostRALog) { DAG->dumpNode(*SU);}
     SchedCandidate TryCand(Cand.Policy);
     TryCand.SU = SU;
     TryCand.AtTop = Zone.isTop();
@@ -1435,15 +1446,15 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
     if (AMDGPUMLPostSchedStrategy::tryCandidate(Cand, TryCand, &Zone)) {
       IsPending = false;
       Cand.setBest(TryCand);
-       errs() << "NewBest\n";
+       if (PostRALog) { errs() << "NewBest\n";}
       LLVM_DEBUG(traceCandidate(Cand));
     }
   }
 
   ReadyQueue &PQ = Zone.Pending;
-  errs() << "Checking Pending\n";
+  if (PostRALog) { errs() << "Checking Pending\n";}
   for (SUnit *SU : PQ) {
-    DAG->dumpNode(*SU);
+    if (PostRALog) { DAG->dumpNode(*SU);}
     SchedCandidate TryCand(Cand.Policy);
     TryCand.SU = SU;
     TryCand.AtTop = Zone.isTop();
@@ -1452,7 +1463,7 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
     // errs() << "Trying pending SU: "; SU->getInstr()->dump();
     SchedBoundary *ZoneArg = Cand.AtTop == TryCand.AtTop ? &Zone : nullptr;
     if (tryPendingCandidate(Cand, TryCand, ZoneArg)) {
-      errs() << "NewBest\n";
+      if (PostRALog) { errs() << "NewBest\n";}
       IsPending = true;
       Cand.setBest(TryCand);
       LLVM_DEBUG(traceCandidate(Cand));

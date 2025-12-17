@@ -263,8 +263,9 @@ void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
   unsigned Opc = MI.getOpcode();
   bool IsCVT = (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64) || (Opc == AMDGPU::V_CVT_SCALEF32_SR_PK8_FP8_F32_e64_gfx1250);
 
-  if (IsCVT)
+  if (IsCVT) {
     CyclesUntilVALU = 4;
+  }
 }
 
 void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
