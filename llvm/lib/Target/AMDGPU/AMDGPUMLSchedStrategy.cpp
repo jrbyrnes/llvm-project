@@ -320,6 +320,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     case GCNHazardRecognizer::WMMASlotType::MemCoExec0:
     case GCNHazardRecognizer::WMMASlotType::MemCoExec1:
  {
+        //errs() << "Mem0/1\n";
       return false;
       bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
       bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
@@ -339,6 +340,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
 
     case GCNHazardRecognizer::WMMASlotType::MemCoExec2:
     case GCNHazardRecognizer::WMMASlotType::MemCoExec3: {
+     // errs() << "Mem2/3\n";
 
       bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
       bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
@@ -361,6 +363,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       return true;
     }
     case GCNHazardRecognizer::WMMASlotType::ValuBlocked0: {
+      //errs() << "ValuBlocked0\n";
       bool TryIsSALU = SII->isMFMAorWMMA(*TryMI);
       bool CandIsSALU = SII->isMFMAorWMMA(*CandMI);
 
@@ -383,6 +386,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuBlocked1: {
+      //errs() << "Valublocked1\n";
       bool TryIsWMMA = SII->isMFMAorWMMA(*TryMI);
       bool CandIsWMMA = SII->isMFMAorWMMA(*CandMI);
       
@@ -404,10 +408,12 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec1: {
+      //errs() << "Valucoexec1\n";
       return PreferNonTransVALU(TryCand, Cand);
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec0: {
+      //errs() << "Valucoexec0\n";
       // We prefer 2 cycle TRANS here
       unsigned TryOp = TryMI->getOpcode();
       unsigned CandOp = CandMI->getOpcode();
@@ -453,6 +459,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec2: {
+      //errs() << "Valucoexec2\n";
       // We don't want to issue TRANS or CVT here as they (along with WMMA) will
       // clog the whole VALU unit for multiple cycles
       unsigned TryOp = TryMI->getOpcode();

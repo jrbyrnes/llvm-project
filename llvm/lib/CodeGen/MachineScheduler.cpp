@@ -1181,8 +1181,9 @@ void ScheduleDAGMI::initQueues(ArrayRef<SUnit *> TopRoots,
 /// Update scheduler queues after scheduling an instruction.
 void ScheduleDAGMI::updateQueues(SUnit *SU, bool IsTopNode) {
   // Release dependent instructions for scheduling.
-  if (IsTopNode)
+  if (IsTopNode) {
     releaseSuccessors(SU);
+}
   else
     releasePredecessors(SU);
 
@@ -3181,6 +3182,20 @@ SUnit *SchedBoundary::pickOnlyChoice() {
   return nullptr;
 }
 
+
+void SchedBoundary::checkAvailable() {
+  // Defer any ready instrs that now have a hazard.
+  for (ReadyQueue::iterator I = Available.begin(); I != Available.end();) {
+    if (checkHazard(*I)) {
+      Pending.push(*I);
+      I = Available.remove(I);
+      continue;
+    }
+    ++I;
+  }
+
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 
 /// Dump the content of the \ref ReservedCycles vector for the
@@ -4585,10 +4600,12 @@ void PostGenericScheduler::schedNode(SUnit *SU, bool IsTopNode) {
     SU->TopReadyCycle = std::max(SU->TopReadyCycle, Top.getCurrCycle());
     TopClusterID = SU->ParentClusterIdx;
     Top.bumpNode(SU);
+    Top.checkAvailable();
   } else {
     SU->BotReadyCycle = std::max(SU->BotReadyCycle, Bot.getCurrCycle());
     BotClusterID = SU->ParentClusterIdx;
     Bot.bumpNode(SU);
+    Bot.checkAvailable();
   }
 }
 
