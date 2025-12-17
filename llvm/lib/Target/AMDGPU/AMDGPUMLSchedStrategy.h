@@ -146,6 +146,8 @@ protected:
 
   SmallVector<SUnit *, 16> SchedTDM;
 
+  SmallVector<SUnit *, 16> SchedEXP;
+
   unsigned FencedDSRLatency = 0;
 
   void collectUse();
@@ -183,6 +185,8 @@ protected:
   SmallVector<HardwareUnitInfo, 8> HWUInfo;
 
   SmallVector<SUnit *, 16> SchedTDM;
+
+  SmallVector<SUnit *, 16> SchedEXP;
 
 public:
   AMDGPUMLPostSchedStrategy(const MachineSchedContext *C);
