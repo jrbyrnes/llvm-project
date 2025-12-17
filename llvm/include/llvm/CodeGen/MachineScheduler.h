@@ -1083,6 +1083,8 @@ public:
   /// available instruction, or NULL if there are multiple candidates.
   LLVM_ABI SUnit *pickOnlyChoice();
 
+  void checkAvailable();
+
   /// Dump the state of the information that tracks resource usage.
   LLVM_ABI void dumpReservedCycles() const;
   LLVM_ABI void dumpScheduledState() const;

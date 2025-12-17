@@ -773,8 +773,9 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
     PendingWMMAScaleValuTailStall = 1;
   }
 
-  if (!WMMAPipelineState.empty())
+  if (!WMMAPipelineState.empty()) {
     WMMAPipelineState.erase(WMMAPipelineState.begin());
+  }
   // Clear TRANS32 state on cycle advance - the hazard only applies to the
   // immediately following cycle.
   if (CyclesUntilTRANS32)
