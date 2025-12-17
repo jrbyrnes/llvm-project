@@ -172,6 +172,10 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_BARRIER_WAIT || Opc == AMDGPU::S_BARRIER_SIGNAL_IMM) {
       SchedTDM.push_back(SU);
     }
+
+    if (SII->isTRANS(*MI)) {
+      SchedEXP.push_back(SU);
+    }
   }
 
   GCNSchedStrategy::schedNode(SU, IsTopNode);
@@ -182,6 +186,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
   SchedDSR.clear();
   SchedMFMA.clear();
   SchedTDM.clear();
+  SchedEXP.clear();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
@@ -678,12 +683,14 @@ static bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
   return false;
 }
 
-static unsigned getLatencyStallCycles(
-    SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone, ScheduleDAGInstrs *DAG, const TargetRegisterInfo *TRI, 
-    const SmallVectorImpl<SUnit *> &SchedMFMA,
-    const SmallVectorImpl<SUnit *> &SchedDSR,
-    const SmallVectorImpl<SUnit *> &SchedTDM, bool IsPostRA) {
-                const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+static unsigned
+getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
+                      ScheduleDAGInstrs *DAG, const TargetRegisterInfo *TRI,
+                      const SmallVectorImpl<SUnit *> &SchedMFMA,
+                      const SmallVectorImpl<SUnit *> &SchedDSR,
+                      const SmallVectorImpl<SUnit *> &SchedTDM,
+                      const SmallVectorImpl<SUnit *> &SchedEXP, bool IsPostRA) {
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   unsigned ReadyCycle = SU->TopReadyCycle;
   auto *MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
@@ -769,6 +776,70 @@ static unsigned getLatencyStallCycles(
       }
 
     }
+
+    if (SchedEXP.size() && SII->isVALU(*MI) && !SII->isTRANS(*MI)) {
+      auto PrevEXP = SchedEXP[SchedEXP.size() - 1];
+      unsigned PrevEXPIssue = PrevEXP->TopReadyCycle;
+
+      if (PrevEXPIssue + 2 > ReadyCycle) {
+        for (auto &MO : MI->operands()) {
+          if (!MO.isReg())
+            continue;
+          if (!MO.getReg().isPhysical())
+            continue;
+
+          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
+            continue;
+
+          for (auto &OtherMO : PrevEXP->getInstr()->operands()) {
+            if (!OtherMO.isReg())
+              continue;
+            if (!OtherMO.getReg().isPhysical())
+              continue;
+            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
+              continue;
+
+            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
+              ReadyCycle = std::max(PrevEXPIssue + 2, ReadyCycle);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) &&
+        (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
+      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+
+      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
+        for (auto &MO : MI->operands()) {
+          if (!MO.isReg())
+            continue;
+          if (!MO.getReg().isPhysical())
+            continue;
+
+          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
+            continue;
+
+          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
+            if (!OtherMO.isReg())
+              continue;
+            if (!OtherMO.getReg().isPhysical())
+              continue;
+            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
+              continue;
+
+            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
+              ReadyCycle =
+                  std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+              break;
+            }
+          }
+        }
+      }
+    }
   }
 
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
@@ -824,12 +895,15 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   if (SameBoundary) {
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                       false),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
-                                       SchedMFMA, SchedDSR, SchedTDM, false),
+                                      DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, false),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                      TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, false),
                 TryCand, Cand, Stall)) {
-                  if (PreRALog) { errs() << "Stall\n";}
+      if (PreRALog) {
+        errs() << "Stall\n";
+      }
       return TryCand.Reason != NoCand;
     }
 
@@ -902,14 +976,17 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                       false),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
-                                       SchedMFMA, SchedDSR, SchedTDM, false),
+                                      DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, false),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                      TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, false),
                 TryCand, Cand, Stall)) {
-               if (PreRALog) {   errs() << "Stall\n";}
+      if (PreRALog) {
+        errs() << "Stall\n";
+      }
       return TryCand.Reason != NoCand;
-                }
+    }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, false)) {
       if (PreRALog) { errs() << "VALUCoexec\n";}
@@ -1147,14 +1224,17 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                       true),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
-                                       SchedMFMA, SchedDSR, SchedTDM, true),
+                                      DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, true),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                      TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, true),
                 TryCand, Cand, Stall)) {
-                 if (PostRALog) { errs() << "Stall\n";}
+      if (PostRALog) {
+        errs() << "Stall\n";
+      }
       return TryCand.Reason != NoCand;
-                }
+    }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, true)) {
       if (PostRALog) {errs() << "VALUCoexec\n";}
@@ -1244,14 +1324,17 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   if (SameBoundary) {
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
-                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                       true),
-                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI,
-                                       SchedMFMA, SchedDSR, SchedTDM, true),
+                                      DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, true),
+                getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
+                                      TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, true),
                 TryCand, Cand, Stall)) {
-                  if (PostRALog) {errs() << "Stall\n";}
+      if (PostRALog) {
+        errs() << "Stall\n";
+      }
       return TryCand.Reason != NoCand;
-                }
+    }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, true)) {
       if (PostRALog) {errs() << "Coexec\n";}
@@ -1304,6 +1387,9 @@ void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     if (SII->isDS(*MI) && MI->mayLoad()) {
       SchedDSR.push_back(SU);
     }
+    if (SII->isTRANS(*MI)) {
+      SchedEXP.push_back(SU);
+    }
 
     auto Opc = MI->getOpcode();
     if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_BARRIER_WAIT || Opc == AMDGPU::S_BARRIER_SIGNAL_IMM) {
@@ -1320,6 +1406,7 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
   SchedDSR.clear();
   SchedMFMA.clear();
   SchedTDM.clear();
+  SchedEXP.clear();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
