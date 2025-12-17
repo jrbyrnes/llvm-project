@@ -1007,18 +1007,35 @@ int GCNHazardRecognizer::getWaitStatesSince(
 }
 
 int GCNHazardRecognizer::getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) {
+  auto GetXDLWaitStates = [this](const MachineInstr *MI) -> unsigned {
+    assert(MI);
+
+    if (TII.isXDLWMMA(*MI))  {
+      unsigned Cycles =  TSchedModel.computeInstrLatency(MI);
+      // No hazard if intervening WMMA has more than 5 cycles.
+      return (Cycles >= 5) ? Cycles : 0;
+    }
+
+    return 0;
+  };
+
   // In hazard recognizer mode, fall back to the regular method since we don't
   // track EmittedVALUInstrs there (it walks the CFG instead).
   if (IsHazardRecognizerMode) {
     // Use a VALU-only counting callback
-    auto GetVALUWaitStates = [](const MachineInstr *MI) -> unsigned {
-      return (MI && SIInstrInfo::isVALU(*MI)) ? 1 : 0;
+    auto GetVALUWaitStates = [GetXDLWaitStates](const MachineInstr *MI) -> unsigned {
+      if (!MI)
+        return 0;
+
+      if (unsigned XDLWaitStates = GetXDLWaitStates(MI))
+        return XDLWaitStates;
+
+      return SIInstrInfo::isVALU(*MI) ? 1 : 0;
     };
     return getWaitStatesSince(IsHazard, Limit, GetVALUWaitStates);
   }
 
   // In scheduler mode, use the dedicated VALU instruction list.
-  // This list only contains VALU/WMMA instructions, so every entry counts as 1.
   int WaitStates = 0;
   for (MachineInstr *MI : EmittedVALUInstrs) {
     if (MI) {
@@ -1028,9 +1045,13 @@ int GCNHazardRecognizer::getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) 
         return WaitStates;
       }
     }
-    // Every entry in EmittedVALUInstrs is a VALU/WMMA, so count it.
-    // nullptr entries would be V_NOPs inserted for WMMA hazards (not yet implemented).
-    ++WaitStates;
+
+    // This list only contains VALU/WMMA instructions, so every entry counts as
+    // at least one. Nulltptr will correspond to v_nop in HazardRec.
+    if (MI && TII.isXDLWMMA(*MI))
+      WaitStates += TSchedModel.computeInstrLatency(MI);
+    else
+      ++WaitStates;
 
     if (WaitStates >= Limit)
       break;
