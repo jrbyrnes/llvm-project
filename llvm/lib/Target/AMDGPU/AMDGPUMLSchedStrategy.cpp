@@ -28,26 +28,26 @@ static cl::opt<unsigned> ResourcesToBalance(
 static cl::opt<unsigned> DSLatency(
     "amdgpu-ds-latency", cl::Hidden,
     cl::desc("Latency of DS_LOAD for resource usage."),
-    cl::init(50));
+    cl::init(55));
 
 static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(10));
+                   cl::init(8));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
-                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(40));
+                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(55));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(10));
+    cl::init(35));
 
 static cl::opt<unsigned> DSLatencyForFence(
     "amdgpu-ds-fence-latency", cl::Hidden,
     cl::desc("Hazard latency between DS_LOAD and FENCE."),
-    cl::init(70));
+    cl::init(55));
 
 static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
@@ -1628,28 +1628,34 @@ SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
   }
   SUnit *SU;
   if (RegionPolicy.OnlyBottomUp) {
-    CandPolicy NoPolicy;
-    BotCand.reset(NoPolicy);
-    // Set the bottom-up policy based on the state of the current bottom
-    // zone and the instructions outside the zone, including the top zone.
-    setPolicy(BotCand.Policy, /*IsPostRA=*/true, Bot, nullptr);
-    pickNodeFromQueue(Bot, BotCand, IsPending);
-    assert(BotCand.Reason != NoCand && "failed to find a candidate");
-    SU = BotCand.SU;
-
+    SU = pickOnlyChoice(Top, SchedModel);
+    if (!SU) {
+      CandPolicy NoPolicy;
+      BotCand.reset(NoPolicy);
+      // Set the bottom-up policy based on the state of the current bottom
+      // zone and the instructions outside the zone, including the top zone.
+      setPolicy(BotCand.Policy, /*IsPostRA=*/true, Bot, nullptr);
+      pickNodeFromQueue(Bot, BotCand, IsPending);
+      assert(BotCand.Reason != NoCand && "failed to find a candidate");
+      SU = BotCand.SU;
+    }
     IsTopNode = false;
   } else if (RegionPolicy.OnlyTopDown) {
-    // errs() << "PostRA TOpdown\n";
-    CandPolicy NoPolicy;
-    TopCand.reset(NoPolicy);
-    // Set the top-down policy based on the state of the current top zone
-    // and the instructions outside the zone, including the bottom zone.
-    setPolicy(TopCand.Policy, /*IsPostRA=*/true, Top, nullptr);
-    pickNodeFromQueue(Top, TopCand, IsPending);
-    assert(TopCand.Reason != NoCand && "failed to find a candidate");
+    SU = pickOnlyChoice(Top, SchedModel);
+    if (!SU) {
+      // errs() << "PostRA TOpdown\n";
+      CandPolicy NoPolicy;
+      TopCand.reset(NoPolicy);
+      // Set the top-down policy based on the state of the current top zone
+      // and the instructions outside the zone, including the bottom zone.
+      setPolicy(TopCand.Policy, /*IsPostRA=*/true, Top, nullptr);
+      pickNodeFromQueue(Top, TopCand, IsPending);
+      assert(TopCand.Reason != NoCand && "failed to find a candidate");
 
-    SU = TopCand.SU;
+      SU = TopCand.SU;
+    }
     IsTopNode = true;
+
   } else {
     SU = pickNodeBidirectional(IsTopNode, IsPending);
   }
