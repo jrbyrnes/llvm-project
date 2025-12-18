@@ -204,7 +204,7 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
   for (WMMASlotType Slot : WMMAPipelineState) {
     switch (Slot) {
     case WMMASlotType::Execute:
-      if (IsSALU)
+      if (IsControl)
         return StallCycles;
       break;
     case WMMASlotType::MemCoExec0:
