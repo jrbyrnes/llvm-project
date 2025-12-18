@@ -169,7 +169,6 @@ InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
   return InstClass::OTHER;
 }
 
-#ifndef NDEBUG
 static const char *getInstClassName(InstClass IC) {
   switch (IC) {
   case InstClass::VALU:       return "VALU";
@@ -208,7 +207,6 @@ static const char *getUnitName(FunctionalUnit Unit) {
   }
   return "UNKNOWN";
 }
-#endif // NDEBUG
 
 //===----------------------------------------------------------------------===//
 // s_delay_alu Parsing (gfx1250)
