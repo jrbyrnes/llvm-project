@@ -139,7 +139,7 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
   bool IsWMMA = SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI);
   bool IsMem = SIInstrInfo::isVMEM(MI) || SIInstrInfo::isDS(MI) || SIInstrInfo::isLDSDMA(MI);
   bool IsVALU = SIInstrInfo::isVALU(MI) && !IsWMMA && !IsMem;
-  bool IsControl = SIInstrInfo::isProgramStateSALU(MI);
+  bool IsControl = SIInstrInfo::isControlInstr(MI);
   bool IsSALU = SIInstrInfo::isSALU(MI) && !IsControl;
   bool IsTrans = SIInstrInfo::isTRANS(MI);
 
@@ -753,7 +753,7 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
 
   // Don't advance pipeline state with meta instructions.
   if (CurrCycleInstr)  {
-    if (SIInstrInfo::isProgramStateSALU(*CurrCycleInstr))
+    if (SIInstrInfo::isControlInstr(*CurrCycleInstr))
       return;
 
     if (!SIInstrInfo::isVALU(*CurrCycleInstr) && !SIInstrInfo::isSALU(*CurrCycleInstr) &&
