@@ -259,6 +259,20 @@ static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
   });
 }
 
+static std::optional<unsigned> getMSBs(const MachineOperand &MO,
+                                       const SIRegisterInfo *TRI) {
+  if (!MO.isReg())
+    return std::nullopt;
+
+  MCRegister Reg = MO.getReg();
+  const TargetRegisterClass *RC = TRI->getPhysRegBaseClass(Reg);
+  if (!RC || !TRI->isVGPRClass(RC))
+    return std::nullopt;
+
+  unsigned Idx = TRI->getHWRegIndex(Reg);
+  return Idx >> 8;
+}
+
 static unsigned
 getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
                       ScheduleDAGInstrs *DAG, const TargetRegisterInfo *TRI,
@@ -413,6 +427,30 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
               break;
             }
           }
+        }
+      }
+    }
+
+    if (SchedDSR.size()) {
+      const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+      auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
+      unsigned PrevDSRIssue = PrevDSR->TopReadyCycle;
+      if (PrevDSRIssue + 2 > ReadyCycle) {
+        std::optional<unsigned> DSRMSB;
+        for (auto &MO : PrevDSR->getInstr()->operands()) {
+          DSRMSB = getMSBs(MO, SRI);
+          if (DSRMSB)
+            break;
+        }
+        std::optional<unsigned> ThisMSB;
+        for (auto &MO : MI->operands()) {
+          ThisMSB = getMSBs(MO, SRI);
+          if (ThisMSB)
+            break;
+        }
+
+        if (ThisMSB && DSRMSB && ThisMSB.value() != DSRMSB.value()) {
+          ReadyCycle = std::max(PrevDSRIssue + 2, ReadyCycle);
         }
       }
     }
