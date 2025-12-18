@@ -110,6 +110,16 @@ int GCNHazardRecognizer::getWMMACoexecSlot() {
   return (int)(WMMAPipelineState.front());
 }
 
+int GCNHazardRecognizer::getWMMACoexecSlot(unsigned LookAhead) {
+  if (WMMAPipelineState.empty())
+    return -1;
+  
+  if (WMMAPipelineState.size() <= LookAhead)
+    return -1;
+  
+  return (int)WMMAPipelineState[LookAhead];
+
+}
 bool GCNHazardRecognizer::isWMMAPipelineHazard() {
   return WMMAPipelineState.size() == 3;
 }
