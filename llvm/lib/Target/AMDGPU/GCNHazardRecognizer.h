@@ -64,6 +64,7 @@ public:
   };
 
   int getWMMACoexecSlot();
+  int getWMMACoexecSlot(unsigned LookAhead);
 
   bool isWMMAPipelineHazard();
 
