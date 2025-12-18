@@ -138,11 +138,6 @@ private:
   MachineBasicBlock::instr_iterator
   handleClause(MachineBasicBlock::instr_iterator I);
 
-  /// Check if an instruction \p I is immediately after another program state
-  /// instruction which it cannot coissue with. If so, insert before that
-  /// instruction to encourage more coissuing.
-  MachineBasicBlock::instr_iterator
-  handleCoissue(MachineBasicBlock::instr_iterator I);
 };
 
 bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode, ModeTy Mask,
@@ -173,7 +168,6 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode, ModeTy Mask,
   int64_t OldModeBits = CurrentMode << ModeWidth;
 
   I = handleClause(I);
-  I = handleCoissue(I);
   MostRecentModeSet = BuildMI(*MBB, I, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
                           .addImm(NewMode | OldModeBits);
 
@@ -288,31 +282,6 @@ AMDGPULowerVGPREncoding::handleClause(MachineBasicBlock::instr_iterator I) {
   ++ClauseLen;
 
   return I;
-}
-
-MachineBasicBlock::instr_iterator
-AMDGPULowerVGPREncoding::handleCoissue(MachineBasicBlock::instr_iterator I) {
-  if (I.isEnd())
-    return I;
-
-  if (I == I->getParent()->begin())
-    return I;
-
-  MachineBasicBlock::instr_iterator Prev = std::prev(I);
-  auto isProgramStateSALU = [this](MachineInstr *MI) {
-    return TII->isBarrier(MI->getOpcode()) ||
-           TII->isWaitcnt(MI || (SIInstrInfo::isProgramStateSALU(*MI) &&
-                                 MI->getOpcode() != AMDGPU::S_SET_VGPR_MSB));
-  };
-
-  if (!isProgramStateSALU(&*Prev))
-    return I;
-
-  while (!Prev.isEnd() && (Prev != Prev->getParent()->begin()) &&
-         isProgramStateSALU(&*Prev)) {
-    --Prev;
-  }
-  return Prev;
 }
 
 bool AMDGPULowerVGPREncoding::run(MachineFunction &MF) {
