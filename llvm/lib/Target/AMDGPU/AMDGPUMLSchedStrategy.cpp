@@ -259,12 +259,199 @@ static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
   });
 }
 
+static unsigned
+getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
+                      ScheduleDAGInstrs *DAG, const TargetRegisterInfo *TRI,
+                      const SmallVectorImpl<SUnit *> &SchedMFMA,
+                      const SmallVectorImpl<SUnit *> &SchedDSR,
+                      const SmallVectorImpl<SUnit *> &SchedTDM,
+                      const SmallVectorImpl<SUnit *> &SchedEXP, bool IsPostRA) {
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+  unsigned ReadyCycle = SU->TopReadyCycle;
+  auto *MI = SU->getInstr();
+  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
+
+  if (SII->isDS(*MI) && MI->mayLoad()) {
+    if (SchedDSR.size() >= DSFIFOSize) {
+      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
+      unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
+    }
+    if (SchedDSR.size()) {
+      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() - 1]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
+    }
+  }
+
+  else if (SII->isMFMAorWMMA(*MI) && SchedMFMA.size()) {
+    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+  }
+
+  else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
+    return 0;
+  }
+
+  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
+    auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
+
+    if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+      ReadyCycle =
+          std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
+    }
+
+  }
+
+  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
+            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+    if (SchedDSR.size()) {
+      auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
+      ReadyCycle =
+          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+    } else {
+      ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
+    }
+  }
+
+
+  if (IsPostRA) {
+    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) && (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
+      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+
+      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
+        for (auto &MO : MI->operands()) {
+          if (!MO.isReg())
+            continue;
+          if (!MO.getReg().isPhysical())
+            continue;
+          
+
+          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
+            continue;
+
+          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
+            if (!OtherMO.isReg())
+              continue;
+            if (!OtherMO.getReg().isPhysical())
+              continue;
+            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
+            continue;
+            
+            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
+              ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+              break;
+            }
+            
+          }
+        }
+
+      }
+
+    }
+
+    if (SchedEXP.size() && SII->isVALU(*MI) && !SII->isTRANS(*MI)) {
+      auto PrevEXP = SchedEXP[SchedEXP.size() - 1];
+      unsigned PrevEXPIssue = PrevEXP->TopReadyCycle;
+
+      if (PrevEXPIssue + 2 > ReadyCycle) {
+        for (auto &MO : MI->operands()) {
+          if (!MO.isReg())
+            continue;
+          if (!MO.getReg().isPhysical())
+            continue;
+
+          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
+            continue;
+
+          for (auto &OtherMO : PrevEXP->getInstr()->operands()) {
+            if (!OtherMO.isReg())
+              continue;
+            if (!OtherMO.getReg().isPhysical())
+              continue;
+            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
+              continue;
+
+            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
+              ReadyCycle = std::max(PrevEXPIssue + 2, ReadyCycle);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) &&
+        (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
+      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+
+      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
+        for (auto &MO : MI->operands()) {
+          if (!MO.isReg())
+            continue;
+          if (!MO.getReg().isPhysical())
+            continue;
+
+          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
+            continue;
+
+          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
+            if (!OtherMO.isReg())
+              continue;
+            if (!OtherMO.getReg().isPhysical())
+              continue;
+            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
+              continue;
+
+            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
+              ReadyCycle =
+                  std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
+  if (HazardRec) {
+    unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
+    if (HazardStates + CurrCycle > ReadyCycle) {
+      // errs() << "Wait for: "; SU->getInstr()->dump();
+      // errs() << HazardStates << "\n";
+      return HazardStates;
+    }
+  }
+
+  if (ReadyCycle > CurrCycle) {
+    SU->TopReadyCycle = ReadyCycle;
+    auto Wait = ReadyCycle - CurrCycle;
+    //errs() << "Wait for: "; SU->getInstr()->dump();
+    //errs() << Wait << "\n";
+    return Wait;
+  }
+
+  return 0;
+}
+
+
+
 static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
                                GenericSchedulerBase::SchedCandidate &Cand,
                                SchedBoundary *Zone, ScheduleDAGInstrs *DAG,
+                               const TargetRegisterInfo *TRI,
+                               const SmallVectorImpl<SUnit *> &SchedMFMA,
+                               const SmallVectorImpl<SUnit *> &SchedDSR,
+                               const SmallVectorImpl<SUnit *> &SchedTDM,
+                               const SmallVectorImpl<SUnit *> &SchedEXP,
                                bool IsPostRA) {
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
-  int CoexecSlot = HazardRec->getWMMACoexecSlot();
+  int CoexecSlot = HazardRec->getWMMACoexecSlot(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, IsPostRA));
 
   if (CoexecSlot == -1)
     return false;
@@ -690,185 +877,6 @@ static bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
   return false;
 }
 
-static unsigned
-getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
-                      ScheduleDAGInstrs *DAG, const TargetRegisterInfo *TRI,
-                      const SmallVectorImpl<SUnit *> &SchedMFMA,
-                      const SmallVectorImpl<SUnit *> &SchedDSR,
-                      const SmallVectorImpl<SUnit *> &SchedTDM,
-                      const SmallVectorImpl<SUnit *> &SchedEXP, bool IsPostRA) {
-  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
-  unsigned ReadyCycle = SU->TopReadyCycle;
-  auto *MI = SU->getInstr();
-  const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
-
-  if (SII->isDS(*MI) && MI->mayLoad()) {
-    if (SchedDSR.size() >= DSFIFOSize) {
-      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
-      unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
-      // TODO -- should be release at cycle.
-      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
-    }
-    if (SchedDSR.size()) {
-      unsigned LastDSRIssue = SchedDSR[SchedDSR.size() - 1]->TopReadyCycle;
-      // TODO -- should be release at cycle.
-      ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
-    }
-  }
-
-  else if (SII->isMFMAorWMMA(*MI) && SchedMFMA.size()) {
-    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-  }
-
-  else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
-    return 0;
-  }
-
-  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
-    auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
-
-    if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
-      ReadyCycle =
-          std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
-    }
-
-  }
-
-  else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
-            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
-    if (SchedDSR.size()) {
-      auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
-      ReadyCycle =
-          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
-    } else {
-      ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
-    }
-  }
-
-
-  if (IsPostRA) {
-    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) && (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
-      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-
-      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
-        for (auto &MO : MI->operands()) {
-          if (!MO.isReg())
-            continue;
-          if (!MO.getReg().isPhysical())
-            continue;
-          
-
-          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
-            continue;
-
-          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
-            if (!OtherMO.isReg())
-              continue;
-            if (!OtherMO.getReg().isPhysical())
-              continue;
-            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
-            continue;
-            
-            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
-              ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-              break;
-            }
-            
-          }
-        }
-
-      }
-
-    }
-
-    if (SchedEXP.size() && SII->isVALU(*MI) && !SII->isTRANS(*MI)) {
-      auto PrevEXP = SchedEXP[SchedEXP.size() - 1];
-      unsigned PrevEXPIssue = PrevEXP->TopReadyCycle;
-
-      if (PrevEXPIssue + 2 > ReadyCycle) {
-        for (auto &MO : MI->operands()) {
-          if (!MO.isReg())
-            continue;
-          if (!MO.getReg().isPhysical())
-            continue;
-
-          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
-            continue;
-
-          for (auto &OtherMO : PrevEXP->getInstr()->operands()) {
-            if (!OtherMO.isReg())
-              continue;
-            if (!OtherMO.getReg().isPhysical())
-              continue;
-            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
-              continue;
-
-            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
-              ReadyCycle = std::max(PrevEXPIssue + 2, ReadyCycle);
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) &&
-        (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
-      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-
-      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
-        for (auto &MO : MI->operands()) {
-          if (!MO.isReg())
-            continue;
-          if (!MO.getReg().isPhysical())
-            continue;
-
-          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
-            continue;
-
-          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
-            if (!OtherMO.isReg())
-              continue;
-            if (!OtherMO.getReg().isPhysical())
-              continue;
-            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
-              continue;
-
-            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
-              ReadyCycle =
-                  std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer*>(Zone->HazardRec);
-  if (HazardRec) {
-    unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
-    if (HazardStates + CurrCycle > ReadyCycle) {
-      // errs() << "Wait for: "; SU->getInstr()->dump();
-      // errs() << HazardStates << "\n";
-      return HazardStates;
-    }
-  }
-
-  if (ReadyCycle > CurrCycle) {
-    SU->TopReadyCycle = ReadyCycle;
-    auto Wait = ReadyCycle - CurrCycle;
-    //errs() << "Wait for: "; SU->getInstr()->dump();
-    //errs() << Wait << "\n";
-    return Wait;
-  }
-
-  return 0;
-}
 
 bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                                                 SchedCandidate &TryCand,
@@ -914,7 +922,8 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, false)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, false)) {
       if (PreRALog) { errs() << "ValuCoexec\n";}
       return TryCand.Reason != NoCand;
     }
@@ -995,7 +1004,8 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, false)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, false)) {
       if (PreRALog) { errs() << "VALUCoexec\n";}
       return TryCand.Reason != NoCand;
     }
@@ -1243,7 +1253,8 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, true)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, true)) {
       if (PostRALog) {errs() << "VALUCoexec\n";}
       return TryCand.Reason != NoCand;
     }
@@ -1343,7 +1354,8 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, true)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
+                                      SchedEXP, true)) {
       if (PostRALog) {errs() << "Coexec\n";}
       return TryCand.Reason != NoCand;
     }
