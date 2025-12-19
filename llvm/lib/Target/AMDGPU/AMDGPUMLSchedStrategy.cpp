@@ -76,6 +76,9 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   RegionPolicy.OnlyBottomUp = false;
   GCNSchedStrategy::initialize(DAG);
 
+  CI.clear();
+  CI.compute(DAG->MF);
+
   const MCSchedModel &SM = MF->getSubtarget().getSchedModel();
   unsigned NumPR = SM.getNumProcResourceKinds();
   HWUInfo.resize(NumPR);
@@ -996,6 +999,73 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     TryCand.Reason = FirstValid;
     return true;
   }
+
+  auto Cycle = CI.getCycle(TryCand.SU->getInstr()->getParent());
+  bool InCycle = true;
+  if (!Cycle)
+    InCycle = false;
+
+  if (!InCycle) {
+    // Fall through to original instruction order.
+    bool CandIsBArrierSignal = Cand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
+    if (CandIsBArrierSignal) {
+      TryCand.Reason = RegCritical;
+      return true;
+    }
+
+
+    
+    bool TryCandIsBArrierSignal = TryCand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
+    if (TryCandIsBArrierSignal) {
+      Cand.Reason = RegCritical;
+      return true;
+    }
+
+
+    if ((CandIsBArrierSignal || TryCandIsBArrierSignal) && SchedTDM.size()) {
+      auto Prev = SchedTDM[SchedTDM.size() - 1];
+      auto PrevOp = Prev->getInstr()->getOpcode();
+      if (PrevOp == AMDGPU::ATOMIC_FENCE || PrevOp == AMDGPU::S_BARRIER_SIGNAL_IMM || PrevOp == AMDGPU::S_BARRIER_WAIT) {
+        if (CandIsBArrierSignal) {
+          Cand.Reason = RegCritical;
+          return true;
+        }
+        TryCand.Reason = RegCritical;
+        return true;
+      }
+
+      unsigned CurrCycle = Zone->getCurrCycle();
+      if (CandIsBArrierSignal) {
+        unsigned ReadyCycle = Cand.SU->TopReadyCycle;
+        if (CurrCycle - ReadyCycle >= 100) {
+          Cand.Reason = RegCritical;
+          return true;
+        }
+        TryCand.Reason = RegCritical;
+        return true;
+      }
+      if (TryCandIsBArrierSignal) {
+        unsigned ReadyCycle = TryCand.SU->TopReadyCycle;
+        if (CurrCycle -  ReadyCycle >= 100) {
+          TryCand.Reason = RegCritical;
+          return true;
+        }
+        Cand.Reason = RegCritical;
+        return true;
+      }
+
+
+    }
+
+
+    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
+        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+      TryCand.Reason = NodeOrder;
+      return true;
+    }
+    return false;
+  }
+
 
 
   // Bias PhysReg Defs and copies to their uses and defined respectively.
