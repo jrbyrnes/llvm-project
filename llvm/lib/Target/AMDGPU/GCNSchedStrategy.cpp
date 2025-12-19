@@ -669,8 +669,6 @@ void GCNSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     MachineInstr *MI = SU->getInstr();
     IsTopNode ? (void)DownwardTracker.advance(MI, false)
               : UpwardTracker.recede(*MI);
-    errs() << "\nSched: "; DAG->dumpNode(*SU);
-    errs() << "PressureAfter: "; DownwardTracker.getPressure().dump();
   }
 
   return GenericScheduler::schedNode(SU, IsTopNode);
@@ -1191,9 +1189,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
     if (!Stage->initGCNSchedStage())
       continue;
 
-    unsigned R = 0;
     for (auto Region : Regions) {
-      errs() << "PreRA Region: " << R++ << "\n";
       // TODO -- do we really need this
       S.CollectedUse = false;
       RegionBegin = Region.first;
@@ -1218,9 +1214,9 @@ void GCNScheduleDAGMILive::runSchedStages() {
                              Stage->getRegionIdx()));
 
 
-                             errs() << "LiveInPressure: "; DownwardTracker->getPressure().dump();
+                             //errs() << "LiveInPressure: "; DownwardTracker->getPressure().dump();
             GCNRegPressure LiveThru;
-            errs() << "LiveOutPressure: "; UpwardTracker->getPressure().dump();
+            //errs() << "LiveOutPressure: "; UpwardTracker->getPressure().dump();
 
             for (auto LR : DownwardTracker->getLiveRegs()) {
               bool FoundUse = false;
@@ -1236,7 +1232,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
               }
             }
 
-            errs() << "LiveThruPressure: "; LiveThru.dump();
+            //errs() << "LiveThruPressure: "; LiveThru.dump();
       }
 
       ScheduleDAGMILive::schedule();
