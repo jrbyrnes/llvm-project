@@ -345,6 +345,25 @@ void GCNHazardRecognizer::updateSSrcState(const MachineInstr &MI) {
 void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
     return;
+  
+  unsigned Opc = MI.getOpcode();
+
+  if (Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_threeaddr || Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_twoaddr) {
+    WMMAPipelineState.clear();
+    WMMAPipelineState.append(1, WMMASlotType::Execute);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    // We want behavior of ValuCoExec1 here
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    // We want behavior of ValuCoexec0 here
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    return;
+  }
 
   // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
   WMMAPipelineState.clear();
