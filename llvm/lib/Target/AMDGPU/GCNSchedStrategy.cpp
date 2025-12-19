@@ -268,6 +268,8 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
   Pressure.clear();
   MaxPressure.clear();
 
+  unsigned OldVGPRPressure = VGPRPressure;
+
   // We try to use the cached PressureDiffs in the ScheduleDAG whenever
   // possible over querying the RegPressureTracker.
   //
@@ -320,6 +322,8 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
 
   unsigned NewSGPRPressure = Pressure[AMDGPU::RegisterPressureSets::SReg_32];
   unsigned NewVGPRPressure = Pressure[AMDGPU::RegisterPressureSets::VGPR_32];
+
+
 
   // If two instructions increase the pressure of different register sets
   // by the same amount, the generic scheduler will prefer to schedule the
@@ -374,6 +378,21 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
       Cand.RPDelta.CriticalMax.setUnitInc(VGPRDelta);
     }
   }
+
+
+  int VGPRReduction = (int)NewVGPRPressure - (int)OldVGPRPressure;
+  if (true) {
+      Cand.RPDelta.CriticalMax =
+          PressureChange(AMDGPU::RegisterPressureSets::VGPR_32);
+          Cand.RPDelta.CriticalMax.setUnitInc(VGPRReduction);
+  }
+
+  if (NewVGPRPressure >= 900) {
+      Cand.RPDelta.Excess =
+          PressureChange(AMDGPU::RegisterPressureSets::VGPR_32);
+          Cand.RPDelta.Excess.setUnitInc(VGPRReduction);
+  }
+
 }
 
 static bool shouldCheckPending(SchedBoundary &Zone,
@@ -650,6 +669,8 @@ void GCNSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     MachineInstr *MI = SU->getInstr();
     IsTopNode ? (void)DownwardTracker.advance(MI, false)
               : UpwardTracker.recede(*MI);
+    errs() << "\nSched: "; DAG->dumpNode(*SU);
+    errs() << "PressureAfter: "; DownwardTracker.getPressure().dump();
   }
 
   return GenericScheduler::schedNode(SU, IsTopNode);
@@ -1195,6 +1216,27 @@ void GCNScheduleDAGMILive::runSchedStages() {
         reinterpret_cast<GCNRPTracker *>(UpwardTracker)
             ->reset(MRI, RegionLiveOuts.getLiveRegsForRegionIdx(
                              Stage->getRegionIdx()));
+
+
+                             errs() << "LiveInPressure: "; DownwardTracker->getPressure().dump();
+            GCNRegPressure LiveThru;
+            errs() << "LiveOutPressure: "; UpwardTracker->getPressure().dump();
+
+            for (auto LR : DownwardTracker->getLiveRegs()) {
+              bool FoundUse = false;
+              for (auto &UseMI : MRI.use_nodbg_instructions(LR.first)) {
+                if (UseMI.getParent() == RegionBegin->getParent()) {
+                  FoundUse = true;
+                  break;
+                }
+
+              }
+              if (!FoundUse) {
+                LiveThru.inc(LR.first, (LaneBitmask)0, LR.second, MRI);
+              }
+            }
+
+            errs() << "LiveThruPressure: "; LiveThru.dump();
       }
 
       ScheduleDAGMILive::schedule();

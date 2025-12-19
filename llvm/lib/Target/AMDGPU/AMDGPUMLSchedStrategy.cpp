@@ -66,7 +66,7 @@ AMDGPUMLSchedStrategy::AMDGPUMLSchedStrategy(const MachineSchedContext *C)
   SchedStages.push_back(GCNSchedStageID::ILPInitialSchedule);
   SchedStages.push_back(GCNSchedStageID::PreRARematerialize);
   // Use more accurate GCN pressure trackers.
-  UseGCNTrackers = false;
+  UseGCNTrackers = true;
 }
 
 void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
@@ -1048,6 +1048,13 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+  // Avoid increasing the max critical pressure in the scheduled region.
+  if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.Excess,
+                                               Cand.RPDelta.Excess,
+                                               TryCand, Cand, RegCritical, TRI,
+                                               DAG->MF))
+    return TryCand.Reason != NoCand;
+
     sortResources(HWUInfo);
 
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
@@ -1067,12 +1074,19 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+  // Avoid increasing the max critical pressure in the scheduled region.
+  if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.CriticalMax,
+                                               Cand.RPDelta.CriticalMax,
+                                               TryCand, Cand, RegCritical, TRI,
+                                               DAG->MF))
+    return TryCand.Reason != NoCand;
+
     // For loops that are acyclic path limited, aggressively schedule for
     // latency. Within an single cycle, whenever CurrMOps > 0, allow normal
     // heuristics to take precedence.
-    if (Rem.IsAcyclicLatencyLimited && !Zone->getCurrMOps() &&
-        tryLatency(TryCand, Cand, *Zone))
-      return TryCand.Reason != NoCand;
+    //if (Rem.IsAcyclicLatencyLimited && !Zone->getCurrMOps() &&
+    //    tryLatency(TryCand, Cand, *Zone))
+    //  return TryCand.Reason != NoCand;
 
   }
 
@@ -1082,6 +1096,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   // This is a best effort to set things up for a post-RA pass. Optimizations
   // like generating loads of multiple registers should ideally be done within
   // the scheduler pass by combining the loads during DAG postprocessing.
+  /*
   unsigned CandZoneCluster = getClusterID(Cand.AtTop);
   unsigned TryCandZoneCluster = getClusterID(TryCand.AtTop);
   bool CandIsClusterSucc =
@@ -1094,23 +1109,25 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
                  if (PreRALog) {  errs() << "Cluster\n";}
     return TryCand.Reason != NoCand;
                  }
-
+*/
   if (SameBoundary) {
+    /*
     // Weak edges are for clustering and other constraints.
     if (tryLess(getWeakLeft(TryCand.SU, TryCand.AtTop),
                 getWeakLeft(Cand.SU, Cand.AtTop), TryCand, Cand, Weak)) {
                   if (PreRALog) { errs() << "Weak\n";}
       return TryCand.Reason != NoCand;
                 }
+                */
   }
 
   // Avoid increasing the max pressure of the entire region.
-  if (DAG->isTrackingPressure() &&
-      tryPressure(TryCand.RPDelta.CurrentMax, Cand.RPDelta.CurrentMax, TryCand,
-                  Cand, RegMax, TRI, DAG->MF)) {
-                   if (PreRALog) {  errs() << "RP\n";}
-    return TryCand.Reason != NoCand;
-                  }
+  //if (DAG->isTrackingPressure() &&
+  //    tryPressure(TryCand.RPDelta.CurrentMax, Cand.RPDelta.CurrentMax, TryCand,
+  //                Cand, RegMax, TRI, DAG->MF)) {
+   //                if (PreRALog) {  errs() << "RP\n";}
+   // return TryCand.Reason != NoCand;
+   //               }
 
   // Fall through to original instruction order.
   if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
