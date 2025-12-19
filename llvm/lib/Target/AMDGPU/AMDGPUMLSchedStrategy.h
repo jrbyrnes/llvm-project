@@ -13,6 +13,7 @@
 
 #include "GCNSchedStrategy.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/CodeGen/MachineCycleAnalysis.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -170,6 +171,8 @@ public:
   void initialize(ScheduleDAGMI *DAG) override;
 
   void schedNode(SUnit *SU, bool IsTopNode) override;
+
+  MachineCycleInfo CI;
 };
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
