@@ -191,12 +191,6 @@ private:
   MachineBasicBlock::instr_iterator
   handleClause(MachineBasicBlock::instr_iterator I);
 
-  /// Check if an instruction \p I is immediately after another program state
-  /// instruction which it cannot coissue with. If so, insert before that
-  /// instruction to encourage more coissuing.
-  MachineBasicBlock::instr_iterator
-  handleCoissue(MachineBasicBlock::instr_iterator I);
-
   /// Handle S_SETREG_IMM32_B32 targeting MODE register. On certain hardware,
   /// this instruction clobbers VGPR MSB bits[12:19], so we need to restore
   /// the current mode. \returns true if the instruction was modified or a
@@ -255,15 +249,6 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   }
 
   I = handleClause(I);
-  I = handleCoissue(I);
-  // Case 2 match in handleSetregMode: the setreg's imm[12:19] matched
-  // current MSBs, but the next VALU needs different MSBs, so this
-  // S_SET_VGPR_MSB would land right after the setreg. Insert S_NOP to
-  // prevent it from being silently dropped.
-  if (NeedNopBeforeSetVGPRMSB) {
-    BuildMI(*MBB, I, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
-    NeedNopBeforeSetVGPRMSB = false;
-  }
   MostRecentModeSet = BuildMI(*MBB, I, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
                           .addImm(NewMode.encode() | OldModeBits);
   LLVM_DEBUG(dbgs() << "    -> inserted new S_SET_VGPR_MSB: "
@@ -409,30 +394,6 @@ AMDGPULowerVGPREncoding::handleClause(MachineBasicBlock::instr_iterator I) {
   return I;
 }
 
-MachineBasicBlock::instr_iterator
-AMDGPULowerVGPREncoding::handleCoissue(MachineBasicBlock::instr_iterator I) {
-  if (I.isEnd())
-    return I;
-
-
-  // "Program State instructions" are instructions which are used to control
-  // operation of the GPU rather than performing arithmetic. Such instructions
-  // have different coissuing rules w.r.t s_set_vgpr_msb.
-  auto isProgramStateInstr = [this](MachineInstr *MI) {
-    unsigned Opc = MI->getOpcode();
-    return TII->isBarrier(Opc) || TII->isWaitcnt(Opc) ||
-           Opc == AMDGPU::S_DELAY_ALU;
-  };
-
-  while (!I.isEnd() && I != I->getParent()->begin()) {
-    auto Prev = std::prev(I);
-    if (!isProgramStateInstr(&*Prev))
-      return I;
-    I = Prev;
-  }
-
-  return I;
-}
 
 /// Convert mode value from S_SET_VGPR_MSB format to MODE register format.
 /// S_SET_VGPR_MSB uses: (src0[0-1], src1[2-3], src2[4-5], dst[6-7])
