@@ -1209,6 +1209,7 @@ void GCNScheduleDAGMILive::runSchedStages() {
       continue;
 
     for (auto Region : Regions) {
+      errs() << "\n\nNext Region\n";
       // TODO -- do we really need this
       S.CollectedUse = false;
       RegionBegin = Region.first;

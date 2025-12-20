@@ -541,6 +541,38 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     return true;
   };
 
+  auto PreferTransVALU = [SII, &PreferNonTransVALU](GenericSchedulerBase::SchedCandidate &TryCand,
+                                  GenericSchedulerBase::SchedCandidate &Cand) {
+    MachineInstr *TryMI = TryCand.SU->getInstr();
+    MachineInstr *CandMI = Cand.SU->getInstr();
+    // We don't want to issue TRANS or CVT here as they (along with WMMA) will
+    // clog the whole VALU unit for multiple cycles
+    unsigned TryOp = TryMI->getOpcode();
+    unsigned CandOp = CandMI->getOpcode();
+    bool TryIsTRANS = SII->isTRANS(*TryMI);
+    bool CandIsTTRANS = SII->isTRANS(*CandMI);
+
+
+    if (!TryIsTRANS && !CandIsTTRANS) {
+      return PreferNonTransVALU(TryCand, Cand);
+    }
+
+    if (TryIsTRANS && CandIsTTRANS) {
+      return false;
+    }
+    if (CandIsTTRANS)
+      if (Cand.Reason > GenericSchedulerBase::RegCritical) {
+        Cand.Reason = GenericSchedulerBase::RegCritical;
+      }
+
+    if (TryIsTRANS) {
+      TryCand.Reason = GenericSchedulerBase::RegCritical;
+    }
+
+    return true;
+  };
+
+
   switch (CurrentSlot) {
     default:
       return false;
@@ -643,47 +675,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec0: {
       //errs() << "Valucoexec0\n";
       // We prefer 2 cycle TRANS here
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALUOrTrans = SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandIsSingleCycleVALUOrTrans = SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 && CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-
-      bool TryTRANS = SII->isTRANS(*TryMI);
-      bool CandTRANS = SII->isTRANS(*CandMI);
-
-
-      if (!TryTRANS && !CandTRANS) {
-        if (!TryIsSingleCycleVALUOrTrans && !CandIsSingleCycleVALUOrTrans)
-          return false;
-      
-      if (TryIsSingleCycleVALUOrTrans && CandIsSingleCycleVALUOrTrans) {
-        return false;
-
-      }
-
-        if (CandIsSingleCycleVALUOrTrans)
-          if (Cand.Reason > GenericSchedulerBase::RegCritical)
-            Cand.Reason = GenericSchedulerBase::RegCritical;
-      
-        if (TryIsSingleCycleVALUOrTrans)
-          TryCand.Reason = GenericSchedulerBase::RegCritical;
-      
-        return true;
-      }
-
-      if (CandTRANS && TryTRANS) {
-        return false;
-    }
-
-
-      if (CandTRANS)
-        if (Cand.Reason > GenericSchedulerBase::RegCritical)
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-      
-      if (TryTRANS)
-        TryCand.Reason = GenericSchedulerBase::RegCritical;
-      
-      return true;
+      return PreferTransVALU(TryCand, Cand);
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec2: {
@@ -692,12 +684,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       // clog the whole VALU unit for multiple cycles
       unsigned TryOp = TryMI->getOpcode();
       unsigned CandOp = CandMI->getOpcode();
-      bool TryIsSingleCycleVALUOrTrans = SII->isVALU(*TryMI) &&
-                                         !SII->isMFMAorWMMA(*TryMI) &&
-                                         !SII->isTRANS(*TryMI);
-      bool CandIsSingleCycleVALUOrTrans = SII->isVALU(*CandMI) &&
-                                          !SII->isMFMAorWMMA(*CandMI) &&
-                                          !SII->isTRANS(*CandMI);
+
 
       bool TryLongLat = TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
                         TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
@@ -706,27 +693,12 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
           CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
 
       if (!TryLongLat && !CandLongLat) {
-        if (!TryIsSingleCycleVALUOrTrans && !CandIsSingleCycleVALUOrTrans)
-          return false;
-
-      if (CandIsSingleCycleVALUOrTrans && TryIsSingleCycleVALUOrTrans) {
-        return false;
-
-    }
-
-        if (CandIsSingleCycleVALUOrTrans)
-          if (Cand.Reason > GenericSchedulerBase::RegCritical)
-            Cand.Reason = GenericSchedulerBase::RegCritical;
-
-        if (TryIsSingleCycleVALUOrTrans)
-          TryCand.Reason = GenericSchedulerBase::RegCritical;
-
-        return true;
+        return PreferTransVALU(TryCand, Cand);
+        
       }
 
-      if (CandLongLat && TryLongLat) {
+      if (CandLongLat && TryLongLat)
         return false;
-    }
 
       if (CandLongLat)
         if (Cand.Reason > GenericSchedulerBase::RegCritical)
@@ -738,7 +710,6 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       return true;
     }
   }
-
   return false;
 }
 
@@ -958,7 +929,9 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                                       SchedEXP, false),
                 TryCand, Cand, Stall)) {
       if (PreRALog) {
-        errs() << "Stall\n";
+        unsigned TryStall = getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
+        unsigned CandStall = getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
+        errs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       }
       return TryCand.Reason != NoCand;
     }
@@ -1107,7 +1080,9 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
                                       SchedEXP, false),
                 TryCand, Cand, Stall)) {
       if (PreRALog) {
-        errs() << "Stall\n";
+        unsigned TryStall = getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
+        unsigned CandStall = getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
+        errs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       }
       return TryCand.Reason != NoCand;
     }
