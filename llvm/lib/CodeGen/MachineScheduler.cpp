@@ -2961,7 +2961,7 @@ void SchedBoundary::bumpNode(SUnit *SU) {
   // checkHazard should prevent scheduling multiple instructions per cycle that
   // exceed the issue width.
   const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
-  unsigned IncMOps = SchedModel->getNumMicroOps(SU->getInstr());
+  unsigned IncMOps = std::min(SchedModel->getNumMicroOps(SU->getInstr()), (unsigned)1);
   assert(
       (CurrMOps == 0 || (CurrMOps + IncMOps) <= SchedModel->getIssueWidth()) &&
       "Cannot schedule this instruction's MicroOps in the current cycle.");
