@@ -571,6 +571,9 @@ bool SIInstrInfo::shouldClusterMemOps(ArrayRef<const MachineOperand *> BaseOps1,
   if (!BaseOps1.empty() && !BaseOps2.empty()) {
     const MachineInstr &FirstLdSt = *BaseOps1.front()->getParent();
     const MachineInstr &SecondLdSt = *BaseOps2.front()->getParent();
+    if (isDS(FirstLdSt) || isDS(SecondLdSt))
+      return false;
+
     if (!memOpsHaveSameBasePtr(FirstLdSt, BaseOps1, SecondLdSt, BaseOps2))
       return false;
 
