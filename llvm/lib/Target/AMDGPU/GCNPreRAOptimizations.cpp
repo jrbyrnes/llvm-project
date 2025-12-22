@@ -344,6 +344,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           continue;
 
         // Process operands that might reuse MFMA registers
+
         for (const MachineOperand &MO : MI.operands()) {
           if (!MO.isReg() || !MO.getReg().isVirtual())
             continue;
@@ -355,35 +356,41 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           // Only process VGPR registers
           if (!TRI->isVGPRClass(CandidateRC))
             continue;
-          for (auto It = RecentMFMAs.rbegin(); It != RecentMFMAs.rend(); ++It) {
-            const SmallVector<Register, 4> &MFMARegs = *It;
-            for (Register MFMAReg : MFMARegs) {
-              if (MFMAReg == CandidateReg)
-                continue;
-              // Check if MFMA register is dead at current instruction
-              const LiveInterval &MFMAInterval = LIS->getInterval(MFMAReg);
-              const SlotIndex CurrentSlot =
-                  LIS->getInstructionIndex(MI).getRegSlot();
-              if (!MFMAInterval.liveAt(CurrentSlot)) {
-                // Add bi-directional anti-hints
-                MRI->addRegAllocationAntiHints(CandidateReg, MFMAReg);
-                MRI->addRegAllocationAntiHints(MFMAReg, CandidateReg);
+          if (!SIInstrInfo::isMFMAorWMMA(MI)) {
+            for (auto It = RecentMFMAs.rbegin(); It != RecentMFMAs.rend();
+                 ++It) {
+              const SmallVector<Register, 4> &MFMARegs = *It;
+              for (Register MFMAReg : MFMARegs) {
+                if (MFMAReg == CandidateReg)
+                  continue;
+                // Check if MFMA register is dead at current instruction
+                const LiveInterval &MFMAInterval = LIS->getInterval(MFMAReg);
+                const SlotIndex CurrentSlot =
+                    LIS->getInstructionIndex(MI).getRegSlot();
+                if (!MFMAInterval.liveAt(CurrentSlot)) {
+                  // Add bi-directional anti-hints
+                  MRI->addRegAllocationAntiHints(CandidateReg, MFMAReg);
+                  MRI->addRegAllocationAntiHints(MFMAReg, CandidateReg);
+                }
               }
             }
           }
+
           if (!MO.isDef())
             continue;
-          for (auto It = RecentEXPs.rbegin(); It != RecentEXPs.rend(); ++It) {
-            const SmallVector<Register, 4> &EXPRegs = *It;
-            for (Register EXPReg : EXPRegs) {
-              // Check if MFMA register is dead at current instruction
-              const LiveInterval &EXPInterval = LIS->getInterval(EXPReg);
-              const SlotIndex CurrentSlot =
-                  LIS->getInstructionIndex(MI).getRegSlot();
-              if (!EXPInterval.liveAt(CurrentSlot)) {
-                // Add bi-directional anti-hints
-                MRI->addRegAllocationAntiHints(CandidateReg, EXPReg);
-                MRI->addRegAllocationAntiHints(EXPReg, CandidateReg);
+          if (!SIInstrInfo::isTRANS(MI)) {
+            for (auto It = RecentEXPs.rbegin(); It != RecentEXPs.rend(); ++It) {
+              const SmallVector<Register, 4> &EXPRegs = *It;
+              for (Register EXPReg : EXPRegs) {
+                // Check if MFMA register is dead at current instruction
+                const LiveInterval &EXPInterval = LIS->getInterval(EXPReg);
+                const SlotIndex CurrentSlot =
+                    LIS->getInstructionIndex(MI).getRegSlot();
+                if (!EXPInterval.liveAt(CurrentSlot)) {
+                  // Add bi-directional anti-hints
+                  MRI->addRegAllocationAntiHints(CandidateReg, EXPReg);
+                  MRI->addRegAllocationAntiHints(EXPReg, CandidateReg);
+                }
               }
             }
           }

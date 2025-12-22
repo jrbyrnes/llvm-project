@@ -233,6 +233,8 @@ private:
   bool fixVALUTransCoexecutionHazards(MachineInstr *MI);
   bool fixWMMAHazards(MachineInstr *MI);
   int checkWMMACoexecutionHazards(MachineInstr *MI);
+  int checkTRANSCoexecutionHazards(MachineInstr *MI);
+
   bool fixShift64HighRegBug(MachineInstr *MI);
   bool fixVALUMaskWriteHazard(MachineInstr *MI);
   bool fixRequiredExportPriority(MachineInstr *MI);
