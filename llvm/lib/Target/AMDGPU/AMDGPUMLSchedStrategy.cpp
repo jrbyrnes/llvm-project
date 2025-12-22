@@ -33,7 +33,7 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(1));
+                   cl::init(4));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
@@ -520,8 +520,6 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     MachineInstr *CandMI = Cand.SU->getInstr();
     // We don't want to issue TRANS or CVT here as they (along with WMMA) will
     // clog the whole VALU unit for multiple cycles
-    unsigned TryOp = TryMI->getOpcode();
-    unsigned CandOp = CandMI->getOpcode();
     bool TryIsTRANS = SII->isTRANS(*TryMI);
     bool CandIsTTRANS = SII->isTRANS(*CandMI);
 
@@ -651,10 +649,6 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       //errs() << "Valucoexec2\n";
       // We don't want to issue TRANS or CVT here as they (along with WMMA) will
       // clog the whole VALU unit for multiple cycles
-      unsigned TryOp = TryMI->getOpcode();
-      unsigned CandOp = CandMI->getOpcode();
-
-
       bool TryLongLat = false;
       bool CandLongLat = false;
 
@@ -1314,7 +1308,13 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
                                       SchedEXP, true),
                 TryCand, Cand, Stall)) {
       if (PostRALog) {
-        errs() << "Stall\n";
+        unsigned TryStall = getLatencyStallCycles(
+            TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA,
+            SchedDSR, SchedTDM, SchedEXP, false);
+        unsigned CandStall = getLatencyStallCycles(
+            Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
+            SchedTDM, SchedEXP, false);
+        errs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       }
       return TryCand.Reason != NoCand;
     }
@@ -1415,7 +1415,13 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
                                       SchedEXP, true),
                 TryCand, Cand, Stall)) {
       if (PostRALog) {
-        errs() << "Stall\n";
+        unsigned TryStall = getLatencyStallCycles(
+            TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA,
+            SchedDSR, SchedTDM, SchedEXP, false);
+        unsigned CandStall = getLatencyStallCycles(
+            Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
+            SchedTDM, SchedEXP, false);
+        errs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       }
       return TryCand.Reason != NoCand;
     }
