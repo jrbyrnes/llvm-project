@@ -247,7 +247,7 @@ static cl::opt<unsigned> SchedOnlyBlock("misched-only-block", cl::Hidden,
 /// Avoid quadratic complexity in unusually large basic blocks by limiting the
 /// size of the ready lists.
 static cl::opt<unsigned> ReadyListLimit("misched-limit", cl::Hidden,
-  cl::desc("Limit ready list to N instructions"), cl::init(256));
+  cl::desc("Limit ready list to N instructions"), cl::init(2000));
 
 static cl::opt<bool> EnableRegPressure("misched-regpressure", cl::Hidden,
   cl::desc("Enable register pressure scheduling."), cl::init(true));
