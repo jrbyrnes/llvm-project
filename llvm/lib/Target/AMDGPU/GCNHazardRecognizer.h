@@ -250,6 +250,8 @@ private:
                                const MachineInstr &MI) const;
   bool isCoexecutionHazardFor(const MachineInstr &I,
                               const MachineInstr &MI) const;
+  int checkTRANSCoexecutionHazards(MachineInstr *MI);
+
   bool fixShift64HighRegBug(MachineInstr *MI);
   bool fixVALUMaskWriteHazard(MachineInstr *MI);
   bool fixRequiredExportPriority(MachineInstr *MI);
