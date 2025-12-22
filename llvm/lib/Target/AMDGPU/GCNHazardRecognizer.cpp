@@ -156,7 +156,6 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
   bool IsVALU = (SIInstrInfo::isVALU(MI) && !IsWMMA && !IsMem) || VALUCopy;
   bool IsControl = SIInstrInfo::isProgramStateSALU(MI);
   bool IsSALU = (SIInstrInfo::isSALU(MI) && !IsControl) || SALUCopy;
-  bool IsTrans = SIInstrInfo::isTRANS(MI);
 
   // For the WMMA scale pipeline, if the final ValuCoExec slot was consumed by
   // a VALU, the next WMMA must wait an extra cycle. This is hard-coded for the
@@ -332,7 +331,6 @@ void GCNHazardRecognizer::updateSSrcState(const MachineInstr &MI) {
     CyclesUntilSALU = 16;
 
   bool UsesSGPR = false;
-  bool IsDef = false;
   const SIRegisterInfo *TRI = ST.getRegisterInfo();
   const MachineRegisterInfo &MRI = MF.getRegInfo();
   
@@ -679,6 +677,9 @@ GCNHazardRecognizer::postRAGetHazardWaitStates(MachineInstr *MI) const {
   WaitStates = std::max(WaitStates, checkTRANS32Hazard(*MI));
   WaitStates = std::max(WaitStates, checkCVTHazard(*MI));
   WaitStates = std::max(WaitStates, checkSSrcHazard(*MI));
+  WaitStates =
+      std::max(WaitStates, (unsigned)const_cast<GCNHazardRecognizer *>(this)
+                               ->checkTRANSCoexecutionHazards(MI));
   return WaitStates;
 }
 
@@ -2646,6 +2647,102 @@ static bool IsWMMAHazardInstInCategory(const MachineInstr &MI,
   return false;
 }
 
+int GCNHazardRecognizer::checkTRANSCoexecutionHazards(MachineInstr *MI) {
+  if (!AMDGPU::isGFX1250(ST))
+    return 0;
+
+  const SIInstrInfo *TII = ST.getInstrInfo();
+  if (!TII->isVALU(*MI))
+    return 0;
+
+  if (!EmittedVALUInstrs.size())
+    return 0;
+
+  MachineInstr *PrevVALU = EmittedVALUInstrs.front();
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  if (!PrevVALU)
+    return 0;
+
+  if (TII->isTRANS(*PrevVALU)) {
+
+    LLVM_DEBUG(dbgs() << "checkTRANSCoexecutionHazards: " << *MI);
+
+    // auto IsVALUHazardFn = [MI, TII, TRI, this](const MachineInstr &I) {
+    //  if (!TII->isTRANS(I))
+    //     return false;
+
+    // TRANS writes, VALU reads.
+    Register D0 =
+        TII->getNamedOperand(*PrevVALU, AMDGPU::OpName::vdst)->getReg();
+    for (const MachineOperand &ValuUse : MI->explicit_uses()) {
+      if (ValuUse.isReg() && TRI->regsOverlap(D0, ValuUse.getReg()))
+        return 1;
+    }
+
+    auto *ValuDst = TII->getNamedOperand(*MI, AMDGPU::OpName::vdst);
+    if (!ValuDst || !ValuDst->isReg())
+      return 0;
+    Register D1 = ValuDst->getReg();
+
+    // TRANS writes, VALU writes.
+    if (TRI->regsOverlap(D0, D1)) {
+
+      return 1;
+    }
+
+    // TRANS reads, VALU writes.
+    Register A0 =
+        TII->getNamedOperand(*PrevVALU, AMDGPU::OpName::src0)->getReg();
+    if (TRI->regsOverlap(A0, D1)) {
+      // errs() << "VALU: "; MI->dump();
+      // errs() << "Trans: "; I.dump();
+      return 1;
+    }
+
+    return 0;
+  }
+
+  unsigned Counter = 0;
+  for (auto *VALU : EmittedVALUInstrs) {
+    if (Counter >= 8)
+      return 0;
+    if (!VALU)
+      return 0;
+
+    Counter++;
+    if (!TII->isMFMAorWMMA(*VALU))
+      continue;
+
+    // WMMA writes, VALU reads.
+    Register D0 = TII->getNamedOperand(*VALU, AMDGPU::OpName::vdst)->getReg();
+    for (const MachineOperand &ValuUse : MI->explicit_uses()) {
+      if (ValuUse.isReg() && TRI->regsOverlap(D0, ValuUse.getReg()))
+        return 9 - Counter;
+    }
+
+    auto *ValuDst = TII->getNamedOperand(*MI, AMDGPU::OpName::vdst);
+    if (!ValuDst || !ValuDst->isReg())
+      return 0;
+    Register D1 = ValuDst->getReg();
+
+    // WMMA writes, VALU writes.
+    if (TRI->regsOverlap(D0, D1)) {
+
+      return 9 - Counter;
+    }
+
+    // TRANS reads, VALU writes.
+    Register A0 = TII->getNamedOperand(*VALU, AMDGPU::OpName::src0)->getReg();
+    Register B0 = TII->getNamedOperand(*VALU, AMDGPU::OpName::src1)->getReg();
+    if (TRI->regsOverlap(A0, D1) || TRI->regsOverlap(B0, D1)) {
+      // errs() << "VALU: "; MI->dump();
+      // errs() << "Trans: "; I.dump();
+      return 9 - Counter;
+    }
+  }
+  return 0;
+}
+
 int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
   if (!AMDGPU::isGFX1250(ST))
     return 0;
@@ -2713,14 +2810,17 @@ int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
     Register D1 = ValuDst->getReg();
 
     // WMMA writes, VALU writes.
-    if (TRI->regsOverlap(D0, D1))
+    if (TRI->regsOverlap(D0, D1)) {
+
       return true;
+    }
 
     // WMMA reads, VALU writes.
     Register A0 = TII->getNamedOperand(I, AMDGPU::OpName::src0)->getReg();
     Register B0 = TII->getNamedOperand(I, AMDGPU::OpName::src1)->getReg();
-    if (TRI->regsOverlap(A0, D1) || TRI->regsOverlap(B0, D1))
+    if (TRI->regsOverlap(A0, D1) || TRI->regsOverlap(B0, D1)) {
       return true;
+    }
 
     if (SIInstrInfo::isSWMMAC(I)) {
       Register Idx0 = TII->getNamedOperand(I, AMDGPU::OpName::src2)->getReg();
