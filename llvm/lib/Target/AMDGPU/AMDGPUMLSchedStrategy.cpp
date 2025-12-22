@@ -33,7 +33,7 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(8));
+                   cl::init(1));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
@@ -333,6 +333,12 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
     }
   }
 
+  else if (MI->getOpcode() == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
+           SchedMFMA.size()) {
+    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+  }
 
   if (IsPostRA) {
     if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) && (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
@@ -345,7 +351,6 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
             continue;
           if (!MO.getReg().isPhysical())
             continue;
-          
 
           if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
             continue;
@@ -355,6 +360,7 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
               continue;
             if (!OtherMO.getReg().isPhysical())
               continue;
+
             if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
             continue;
             
@@ -365,9 +371,7 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
             
           }
         }
-
       }
-
     }
 
     if (SchedEXP.size() && SII->isVALU(*MI) && !SII->isTRANS(*MI)) {
@@ -389,6 +393,9 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
               continue;
             if (!OtherMO.getReg().isPhysical())
               continue;
+            if (!OtherMO.isDef())
+              continue;
+
             if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
               continue;
 
@@ -401,38 +408,7 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
       }
     }
 
-    if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) &&
-        (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
-      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
 
-      if (PrevMFMAIssue + PrevMFMA->Latency > ReadyCycle) {
-        for (auto &MO : MI->operands()) {
-          if (!MO.isReg())
-            continue;
-          if (!MO.getReg().isPhysical())
-            continue;
-
-          if (!SRI->isVGPR(DAG->MRI, MO.getReg()))
-            continue;
-
-          for (auto &OtherMO : PrevMFMA->getInstr()->operands()) {
-            if (!OtherMO.isReg())
-              continue;
-            if (!OtherMO.getReg().isPhysical())
-              continue;
-            if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
-              continue;
-
-            if (TRI->regsOverlap(MO.getReg(), OtherMO.getReg())) {
-              ReadyCycle =
-                  std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-              break;
-            }
-          }
-        }
-      }
-    }
 
     if (SchedDSR.size()) {
       const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
@@ -522,13 +498,10 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
         CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
         CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
 
-    if (!TryIsSingleCycleVALU && !CandIsSingleCycleVALU) {
+    if (TryIsSingleCycleVALU == CandIsSingleCycleVALU) {
       return false;
     }
 
-    if (CandIsSingleCycleVALU && TryIsSingleCycleVALU) {
-      return false;
-    }
     if (CandIsSingleCycleVALU)
       if (Cand.Reason > GenericSchedulerBase::RegCritical) {
         Cand.Reason = GenericSchedulerBase::RegCritical;
@@ -557,9 +530,10 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       return PreferNonTransVALU(TryCand, Cand);
     }
 
-    if (TryIsTRANS && CandIsTTRANS) {
+    if (TryIsTRANS == CandIsTTRANS) {
       return false;
     }
+
     if (CandIsTTRANS)
       if (Cand.Reason > GenericSchedulerBase::RegCritical) {
         Cand.Reason = GenericSchedulerBase::RegCritical;
@@ -578,16 +552,15 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       return false;
     
     case GCNHazardRecognizer::WMMASlotType::MemCoExec0:
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec1:
- {
-        //errs() << "Mem0/1\n";
-      return false;
+    case GCNHazardRecognizer::WMMASlotType::MemCoExec2: {
+      // errs() << "Mem0/1\n";
+      // return false;
       bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
       bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
 
-      if (!TryIsMem && !CandIsMem)
+      if (TryIsMem == CandIsMem)
         return false;
-      
+
       if (CandIsMem)
         if (Cand.Reason > GenericSchedulerBase::RegCritical)
           Cand.Reason = GenericSchedulerBase::RegCritical;
@@ -598,26 +571,22 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       return true;
     }
 
-    case GCNHazardRecognizer::WMMASlotType::MemCoExec2:
+    case GCNHazardRecognizer::WMMASlotType::MemCoExec1:
     case GCNHazardRecognizer::WMMASlotType::MemCoExec3: {
      // errs() << "Mem2/3\n";
 
       bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
       bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
 
-      if (!TryIsMem && !CandIsMem)
-        return PreferNonTransVALU(TryCand, Cand);
+      if (CandIsMem == TryIsMem) {
+        return false;
+      }
 
-    if (CandIsMem && TryIsMem) {
-      return false;
-
-    }
-
-      if (CandIsMem)
+      if (!CandIsMem)
         if (Cand.Reason > GenericSchedulerBase::RegCritical)
           Cand.Reason = GenericSchedulerBase::RegCritical;
 
-      if (TryIsMem)
+      if (!TryIsMem)
         TryCand.Reason = GenericSchedulerBase::RegCritical;
 
       return true;
@@ -686,18 +655,15 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       unsigned CandOp = CandMI->getOpcode();
 
 
-      bool TryLongLat = TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
-                        TryOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-      bool CandLongLat =
-          CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
-          CandOp == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
+      bool TryLongLat = false;
+      bool CandLongLat = false;
 
       if (!TryLongLat && !CandLongLat) {
         return PreferTransVALU(TryCand, Cand);
         
       }
 
-      if (CandLongLat && TryLongLat)
+      if (CandLongLat == TryLongLat)
         return false;
 
       if (CandLongLat)

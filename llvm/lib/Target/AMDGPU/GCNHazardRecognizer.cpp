@@ -128,8 +128,23 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
   if (WMMAPipelineState.empty())
     return 0;
 
+  bool SALUCopy = false;
+  bool VALUCopy = false;
+
+  const SIRegisterInfo *TRI = ST.getRegisterInfo();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+
   if (MI.isCopy()) {
-    return 0;
+    Register Dest = MI.getOperand(0).getReg();
+    if (Dest.isVirtual()) {
+      auto RC = MRI.getRegClass(Dest);
+      if (TRI->isSGPRClass(RC)) {
+        SALUCopy = true;
+      }
+      if (TRI->isVGPRClass(RC)) {
+        VALUCopy = true;
+      }
+    }
   }
 
   // Check what the current slot allows.
@@ -138,9 +153,9 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
   // Determine the instruction type.
   bool IsWMMA = SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI);
   bool IsMem = SIInstrInfo::isVMEM(MI) || SIInstrInfo::isDS(MI) || SIInstrInfo::isLDSDMA(MI);
-  bool IsVALU = SIInstrInfo::isVALU(MI) && !IsWMMA && !IsMem;
+  bool IsVALU = (SIInstrInfo::isVALU(MI) && !IsWMMA && !IsMem) || VALUCopy;
   bool IsControl = SIInstrInfo::isProgramStateSALU(MI);
-  bool IsSALU = SIInstrInfo::isSALU(MI) && !IsControl;
+  bool IsSALU = (SIInstrInfo::isSALU(MI) && !IsControl) || SALUCopy;
   bool IsTrans = SIInstrInfo::isTRANS(MI);
 
   // For the WMMA scale pipeline, if the final ValuCoExec slot was consumed by
@@ -310,7 +325,7 @@ void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
 
 
 void GCNHazardRecognizer::updateSSrcState(const MachineInstr &MI) {
-  if (!SIInstrInfo::isVALU(MI) || SIInstrInfo::isMFMAorWMMA(MI))
+  if (!SIInstrInfo::isVALU(MI))
     return;
   
   if (MI.getOpcode() == AMDGPU::V_READFIRSTLANE_B32)

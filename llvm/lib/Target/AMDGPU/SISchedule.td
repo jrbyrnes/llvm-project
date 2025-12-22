@@ -492,11 +492,20 @@ def : HWWriteRes<Write8PassWMMA,  [HWVALU], 16>;
 def : HWWriteRes<Write16PassWMMA, [HWVALU], 32>;
 
 
-def : HWWriteRes<Write32Bit,             [HWVALU, HWRC],   5>;
-def : HWWriteRes<WriteFloatCvt,          [HWVALU, HWRC],   5>;
-def : HWWriteRes<WriteTrans32,           [HWTransVALU, HWRC],   7>;
+// Latencies should be 
+//def : HWWriteRes<Write32Bit,             [HWVALU, HWRC],   5>;
+//def : HWWriteRes<WriteFloatCvt,          [HWVALU, HWRC],   5>;
+//def : HWWriteRes<WriteTrans32,           [HWTransVALU, HWRC],   7>;
+//def : HWWriteRes<WriteQuarterRate32,     [HWVALU, HWRC],   6>;
+//def : HWWriteRes<WriteFloatFMA,          [HWVALU, HWRC],   5;
+
+// However, we are using padded latencies as temporary workaround for VOPD scheduling
+
+def : HWWriteRes<Write32Bit,             [HWVALU, HWRC],   7>;
+def : HWWriteRes<WriteFloatCvt,          [HWVALU, HWRC],   6>;
+def : HWWriteRes<WriteTrans32,           [HWTransVALU, HWRC],   8>;
 def : HWWriteRes<WriteQuarterRate32,     [HWVALU, HWRC],   6>;
-def : HWWriteRes<WriteFloatFMA,          [HWVALU, HWRC],   5>;
+def : HWWriteRes<WriteFloatFMA,          [HWVALU, HWRC],   7>;
 def : HWWriteRes<WritePseudoScalarTrans, [HWVALU, HWRC],   8>;
 
 def : HWWriteRes<WriteBranch,            [HWBranch],       32>;
