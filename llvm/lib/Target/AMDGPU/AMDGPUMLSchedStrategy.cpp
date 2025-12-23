@@ -61,6 +61,11 @@ static cl::opt<bool> IgnoreVALU(
   cl::desc("Whether or not to ignore VALU unit when balancing HW resoiurces."),
   cl::init(true));
 
+static cl::opt<bool> AvoidEXP(
+  "amdgpu-avoid-exp-final-islot", cl::Hidden,
+  cl::desc("Whether or not to try avoiding putting v_exp in final I slot of WMMA."),
+  cl::init(true));
+
 AMDGPUMLSchedStrategy::AMDGPUMLSchedStrategy(const MachineSchedContext *C)
     : GCNSchedStrategy(C) {
   SchedStages.push_back(GCNSchedStageID::ILPInitialSchedule);
@@ -708,28 +713,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec2: {
-      //errs() << "Valucoexec2\n";
-      // We don't want to issue TRANS or CVT here as they (along with WMMA) will
-      // clog the whole VALU unit for multiple cycles
-      bool TryLongLat = false;
-      bool CandLongLat = false;
-
-      if (!TryLongLat && !CandLongLat) {
-        return PreferTransVALU(TryCand, Cand);
-        
-      }
-
-      if (CandLongLat == TryLongLat)
-        return false;
-
-      if (CandLongLat)
-        if (Cand.Reason > GenericSchedulerBase::RegCritical)
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-
-      if (TryLongLat)
-        TryCand.Reason = GenericSchedulerBase::RegCritical;
-      
-      return true;
+      return AvoidEXP ? PreferNonTransVALU(TryCand, Cand) : PreferTransVALU(TryCand, Cand);
     }
   }
   return false;
