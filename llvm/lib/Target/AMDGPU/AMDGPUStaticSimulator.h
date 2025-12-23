@@ -917,7 +917,6 @@ struct RegisterFile {
   RegBankResult getRegBankStalls(const MachineInstr &MI) {
     RegBankResult Result;
     if (!TRI) return Result;
-
     SrcCache.resetCycleStats();
     SmallVector<unsigned, 16> VGPRMisses;
     SmallVector<unsigned, 8> SGPRHWRegs;
