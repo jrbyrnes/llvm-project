@@ -563,16 +563,43 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
       bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
 
-      if (TryIsMem == CandIsMem)
+      bool TryIsLargeCopy = TryMI->isCopy();
+      bool CandIsLargeCopy = CandMI->isCopy();
+
+      if (TryIsLargeCopy) {
+        TryIsLargeCopy &= TRI->getRegSizeInBits(*DAG->MRI.getRegClass(
+                              TryMI->getOperand(0).getReg())) > 64;
+      }
+
+      if (CandIsLargeCopy) {
+        CandIsLargeCopy &= TRI->getRegSizeInBits(*DAG->MRI.getRegClass(
+                               CandMI->getOperand(0).getReg())) > 64;
+      }
+
+      if (CandIsLargeCopy && TryIsLargeCopy)
         return false;
 
-      if (CandIsMem)
-        if (Cand.Reason > GenericSchedulerBase::RegCritical)
-          Cand.Reason = GenericSchedulerBase::RegCritical;
-      
-      if (TryIsMem)
+      if (!CandIsLargeCopy && !TryIsLargeCopy) {
+
+        if (TryIsMem == CandIsMem)
+          return false;
+
+        if (CandIsMem)
+          if (Cand.Reason > GenericSchedulerBase::RegCritical)
+            Cand.Reason = GenericSchedulerBase::RegCritical;
+
+        if (TryIsMem)
+          TryCand.Reason = GenericSchedulerBase::RegCritical;
+
+        return true;
+      }
+
+      if (CandIsLargeCopy)
         TryCand.Reason = GenericSchedulerBase::RegCritical;
-      
+
+      else if (Cand.Reason > GenericSchedulerBase::RegCritical)
+        Cand.Reason = GenericSchedulerBase::RegCritical;
+
       return true;
     }
 
@@ -583,19 +610,47 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       bool TryIsMem = SII->isFLATGlobal(*TryMI) || SII->isDS(*TryMI);
       bool CandIsMem = SII->isFLATGlobal(*CandMI) || SII->isDS(*CandMI);
 
-      if (CandIsMem == TryIsMem) {
-        return false;
+      bool TryIsLargeCopy = TryMI->isCopy();
+      bool CandIsLargeCopy = CandMI->isCopy();
+
+      if (TryIsLargeCopy) {
+        TryIsLargeCopy &= TRI->getRegSizeInBits(*DAG->MRI.getRegClass(
+                              TryMI->getOperand(0).getReg())) > 64;
       }
 
-      if (!CandIsMem)
-        if (Cand.Reason > GenericSchedulerBase::RegCritical)
-          Cand.Reason = GenericSchedulerBase::RegCritical;
+      if (CandIsLargeCopy) {
+        CandIsLargeCopy &= TRI->getRegSizeInBits(*DAG->MRI.getRegClass(
+                               CandMI->getOperand(0).getReg())) > 64;
+      }
 
-      if (!TryIsMem)
+      if (CandIsLargeCopy && TryIsLargeCopy)
+        return false;
+
+      if (!CandIsLargeCopy && !TryIsLargeCopy) {
+
+        if (CandIsMem == TryIsMem) {
+          return false;
+        }
+
+        if (!CandIsMem)
+          if (Cand.Reason > GenericSchedulerBase::RegCritical)
+            Cand.Reason = GenericSchedulerBase::RegCritical;
+
+        if (!TryIsMem)
+          TryCand.Reason = GenericSchedulerBase::RegCritical;
+
+        return true;
+      }
+
+      if (CandIsLargeCopy)
         TryCand.Reason = GenericSchedulerBase::RegCritical;
+
+      else if (Cand.Reason > GenericSchedulerBase::RegCritical)
+        Cand.Reason = GenericSchedulerBase::RegCritical;
 
       return true;
     }
+
     case GCNHazardRecognizer::WMMASlotType::ValuBlocked0: {
       //errs() << "ValuBlocked0\n";
       bool TryIsSALU = SII->isMFMAorWMMA(*TryMI);
