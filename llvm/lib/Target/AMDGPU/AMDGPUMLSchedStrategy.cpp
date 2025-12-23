@@ -231,10 +231,10 @@ void AMDGPUMLSchedStrategy::collectUse() {
     I++;
 
     unsigned Opc = MI->getOpcode();
-    bool LongLatVALU = Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
-                        Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
-    if (LongLatVALU) {
-      HWUInfo[9].insert(&SU, 4);
+    unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
+
+    if (LongLatVALU > 1) {
+      HWUInfo[9].insert(&SU, LongLatVALU);
     }
   }
 
@@ -345,8 +345,8 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
     }
   }
 
-  else if (MI->getOpcode() == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
-           SchedMFMA.size()) {
+  unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
+  if (LongLatVALU > 1 && SchedMFMA.size()) {
     auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
     unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
     ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
@@ -501,14 +501,11 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     unsigned CandOp = CandMI->getOpcode();
     bool TryIsSingleCycleVALU =
         SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) &&
-        !SII->isTRANS(*TryMI) &&
-        TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
-        TryOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
+        !SII->isTRANS(*TryMI) && (SII->getRepeatRate(*TryMI) <= 1);
     bool CandIsSingleCycleVALU =
         SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) &&
-        !SII->isTRANS(*CandMI) &&
-        CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 &&
-        CandOp != AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
+        !SII->isTRANS(*CandMI) && !SII->isTRANS(*CandMI) &&
+        (SII->getRepeatRate(*TryMI) <= 1);
 
     if (TryIsSingleCycleVALU == CandIsSingleCycleVALU) {
       return false;
@@ -1578,6 +1575,12 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
       PrevFence = I;
     }
     I++;
+    unsigned Opc = MI->getOpcode();
+    unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
+
+    if (LongLatVALU > 1) {
+      HWUInfo[9].insert(&SU, LongLatVALU);
+    }
   }
 
   // errs() << "\n\nAfter Collect use:\n";

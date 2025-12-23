@@ -314,11 +314,11 @@ unsigned GCNHazardRecognizer::checkSSrcHazard(const MachineInstr &MI) const {
 
 
 void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
-  unsigned Opc = MI.getOpcode();
-  bool IsCVT = (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64) || (Opc == AMDGPU::V_CVT_SCALEF32_SR_PK8_FP8_F32_e64_gfx1250);
 
-  if (IsCVT) {
-    CyclesUntilVALU = 4;
+  unsigned LongLatVALU = TII.isTRANS(MI) ? 0 : TII.getRepeatRate(MI);
+
+  if (LongLatVALU > 1) {
+    CyclesUntilVALU = LongLatVALU;
   }
 }
 
@@ -360,7 +360,14 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
   
   unsigned Opc = MI.getOpcode();
 
-  if (Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_threeaddr || Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_twoaddr) {
+  if (Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X32_F16_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X32_F16_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_BF16_16X16X32_BF16_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_BF16_16X16X32_BF16_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X32_F16_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X32_F16_w32_twoaddr) {
     WMMAPipelineState.clear();
     WMMAPipelineState.append(1, WMMASlotType::Execute);
     WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
@@ -377,18 +384,165 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
     return;
   }
 
-  // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
-  WMMAPipelineState.clear();
-  WMMAPipelineState.append(1, WMMASlotType::Execute);
-  WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-  WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
-  WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
-  WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
-  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-  WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
-  WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-  WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+  if (Opc == AMDGPU::V_WMMA_F32_16X16X64_BF8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_BF8_BF8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_FP8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X64_FP8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_BF8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_BF8_BF8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_FP8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X64_FP8_BF8_w32_threeaddr) {
+    WMMAPipelineState.clear();
+    WMMAPipelineState.append(1, WMMASlotType::Execute);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    // We want behavior of ValuCoExec1 here
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    // We want behavior of ValuCoexec0 here
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    return;
+  }
+
+  if (Opc == AMDGPU::V_WMMA_F32_16X16X128_BF8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_BF8_BF8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_FP8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_FP8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_BF8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_BF8_BF8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_FP8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_BF8_FP8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_FP8_BF8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F16_16X16X128_FP8_BF8_w32_threeaddr) {
+
+    WMMAPipelineState.clear();
+    WMMAPipelineState.append(1, WMMASlotType::Execute);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    return;
+  }
+
+  if (Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f6_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f6_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f6_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f6_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f6_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f6_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f6_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f6_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f8_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f8_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f6_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f6_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f8_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f8_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f6_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f6_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f8_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f8_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_w32_twoaddr) {
+    // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
+    WMMAPipelineState.clear();
+    WMMAPipelineState.append(1, WMMASlotType::Execute);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    return;
+  }
+
+  if (Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_w32_twoaddr) {
+    WMMAPipelineState.clear();
+    WMMAPipelineState.append(1, WMMASlotType::Execute);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    // We want behavior of ValuCoExec1 here
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    // We want behavior of ValuCoexec0 here
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    return;
+  }
+
+  if (Opc == AMDGPU::V_WMMA_F32_32X16X128_F4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_F32_32X16X128_F4_w32_twoaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_32X16X128_F4_w32_threeaddr ||
+      Opc == AMDGPU::V_WMMA_SCALE_F32_32X16X128_F4_w32_twoaddr) {
+
+    // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
+    WMMAPipelineState.clear();
+    WMMAPipelineState.append(1, WMMASlotType::Execute);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    return;
+  }
 }
 
 void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
