@@ -33,7 +33,7 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(4));
+                   cl::init(2));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
@@ -224,6 +224,13 @@ void AMDGPUMLSchedStrategy::collectUse() {
       PrevFence = I;
     }
     I++;
+
+    unsigned Opc = MI->getOpcode();
+    bool LongLatVALU = Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
+                        Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250;
+    if (LongLatVALU) {
+      HWUInfo[9].insert(&SU, 4);
+    }
   }
 
 
@@ -393,8 +400,8 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
               continue;
             if (!OtherMO.getReg().isPhysical())
               continue;
-            if (!OtherMO.isDef())
-              continue;
+            //if (!OtherMO.isDef())
+            //  continue;
 
             if (!SRI->isVGPR(DAG->MRI, OtherMO.getReg()))
               continue;
