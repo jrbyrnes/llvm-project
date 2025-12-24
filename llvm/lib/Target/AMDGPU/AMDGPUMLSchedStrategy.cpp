@@ -230,7 +230,6 @@ void AMDGPUMLSchedStrategy::collectUse() {
     }
     I++;
 
-    unsigned Opc = MI->getOpcode();
     unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
 
     if (LongLatVALU > 1) {
@@ -497,8 +496,6 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     MachineInstr *CandMI = Cand.SU->getInstr();
     // We don't want to issue TRANS or CVT here as they (along with WMMA) will
     // clog the whole VALU unit for multiple cycles
-    unsigned TryOp = TryMI->getOpcode();
-    unsigned CandOp = CandMI->getOpcode();
     bool TryIsSingleCycleVALU =
         SII->isVALU(*TryMI) && !SII->isMFMAorWMMA(*TryMI) &&
         !SII->isTRANS(*TryMI) && (SII->getRepeatRate(*TryMI) <= 1);
@@ -1575,7 +1572,7 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
       PrevFence = I;
     }
     I++;
-    unsigned Opc = MI->getOpcode();
+
     unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
 
     if (LongLatVALU > 1) {
