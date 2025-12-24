@@ -49,7 +49,7 @@ static cl::opt<bool, true>
 static cl::opt<bool>
 DisableLoopSpill("disable-loop-spill", cl::Hidden,
                              cl::desc("Whether or not to discourage spilling into loops"),
-                             cl::init(false));
+                             cl::init(true));
 
 
 
