@@ -33,7 +33,7 @@ static cl::opt<unsigned> DSLatency(
 static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(2));
+                   cl::init(1));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
@@ -1093,12 +1093,12 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
-  // Avoid increasing the max critical pressure in the scheduled region.
-  if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.Excess,
-                                               Cand.RPDelta.Excess,
-                                               TryCand, Cand, RegCritical, TRI,
-                                               DAG->MF))
-    return TryCand.Reason != NoCand;
+    // Avoid increasing the max critical pressure in the scheduled region.
+    if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.Excess,
+                                                Cand.RPDelta.Excess,
+                                                TryCand, Cand, RegCritical, TRI,
+                                                DAG->MF))
+      return TryCand.Reason != NoCand;
 
     sortResources(HWUInfo);
 
@@ -1108,23 +1108,23 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
-                                       false)) {
+                                      false)) {
                                       if (PreRALog) {  errs() << "CritResourceDep\n";}
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
-                                       false)) {
+                                      false)) {
                                         if (PreRALog) { errs() << "CritResourceDep Async\n";}
       return TryCand.Reason != NoCand;
     }
 
-  // Avoid increasing the max critical pressure in the scheduled region.
-  if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.CriticalMax,
-                                               Cand.RPDelta.CriticalMax,
-                                               TryCand, Cand, RegCritical, TRI,
-                                               DAG->MF))
-    return TryCand.Reason != NoCand;
+    // Avoid increasing the max critical pressure in the scheduled region.
+    if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.CriticalMax,
+                                                Cand.RPDelta.CriticalMax,
+                                                TryCand, Cand, RegCritical, TRI,
+                                                DAG->MF))
+      return TryCand.Reason != NoCand;
 
     // For loops that are acyclic path limited, aggressively schedule for
     // latency. Within an single cycle, whenever CurrMOps > 0, allow normal
