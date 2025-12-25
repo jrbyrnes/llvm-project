@@ -61,11 +61,6 @@ static cl::opt<bool> IgnoreVALU(
   cl::desc("Whether or not to ignore VALU unit when balancing HW resoiurces."),
   cl::init(true));
 
-static cl::opt<bool> AvoidEXP(
-  "amdgpu-avoid-exp-final-islot", cl::Hidden,
-  cl::desc("Whether or not to try avoiding putting v_exp in final I slot of WMMA."),
-  cl::init(true));
-
 AMDGPUMLSchedStrategy::AMDGPUMLSchedStrategy(const MachineSchedContext *C)
     : GCNSchedStrategy(C) {
   SchedStages.push_back(GCNSchedStageID::ILPInitialSchedule);
@@ -313,12 +308,6 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
     }
   }
 
-  else if (SII->isMFMAorWMMA(*MI) && SchedMFMA.size()) {
-    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-  }
-
   else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
     return 0;
   }
@@ -450,8 +439,6 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
   if (HazardRec) {
     unsigned HazardStates = HazardRec->getHazardWaitStates(MI);
     if (HazardStates + CurrCycle > ReadyCycle) {
-      // errs() << "Wait for: "; SU->getInstr()->dump();
-      // errs() << HazardStates << "\n";
       return HazardStates;
     }
   }
@@ -502,7 +489,7 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
     bool CandIsSingleCycleVALU =
         SII->isVALU(*CandMI) && !SII->isMFMAorWMMA(*CandMI) &&
         !SII->isTRANS(*CandMI) && !SII->isTRANS(*CandMI) &&
-        (SII->getRepeatRate(*TryMI) <= 1);
+        (SII->getRepeatRate(*CandMI) <= 1);
 
     if (TryIsSingleCycleVALU == CandIsSingleCycleVALU) {
       return false;
@@ -706,8 +693,12 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
       return PreferTransVALU(TryCand, Cand);
     }
 
+    case GCNHazardRecognizer::WMMASlotType::ValuCoexecLastLdScale: {
+      return PreferNonTransVALU(TryCand, Cand);
+    }
+
     case GCNHazardRecognizer::WMMASlotType::ValuCoExec2: {
-      return AvoidEXP ? PreferNonTransVALU(TryCand, Cand) : PreferTransVALU(TryCand, Cand);
+      return PreferTransVALU(TryCand, Cand);
     }
   }
   return false;

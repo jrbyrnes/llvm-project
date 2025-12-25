@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "GCNHazardRecognizer.h"
 #include "GCNSchedStrategy.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/CodeGen/MachineCycleAnalysis.h"

@@ -66,6 +66,8 @@ public:
   /// set to an initialized state.
   virtual void Reset() {}
 
+  virtual void RefreshState(SUnit *) {}
+
   /// EmitInstruction - This callback is invoked when an instruction is
   /// emitted, to advance the hazard state.
   virtual void EmitInstruction(SUnit *) {}
