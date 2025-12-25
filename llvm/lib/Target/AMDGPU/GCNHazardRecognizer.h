@@ -57,6 +57,8 @@ public:
     ValuCoExec0,
     ValuCoExec1,
     ValuCoExec2,
+    ValuCoexecLastLdScale,
+    ValuCoExecLdScale,
     ValuBlocked0,
     ValuBlocked1,
     WMMABlocked
@@ -133,12 +135,14 @@ private:
   /// Update WMMA pipeline state when a WMMA instruction is emitted.
   void updateWMMAPipelineState(const MachineInstr &MI);
 
+  void RefreshState(SUnit *SU) override;
+
   /// Update TRANS32 state when an instruction is emitted.
-  void updateTRANS32State(const MachineInstr &MI);
+  void updateTRANS32State(const MachineInstr &MI, bool SubOne = false);
 
-  void updateCVTState(const MachineInstr &MI);
+  void updateCVTState(const MachineInstr &MI, bool SubOne = false);
 
-  void updateSSrcState(const MachineInstr &MI);
+  void updateSSrcState(const MachineInstr &MI, bool SubOne = false);
 
   //===--------------------------------------------------------------------===//
   // Pre-RA scheduling mode wrappers.

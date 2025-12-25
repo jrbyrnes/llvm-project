@@ -461,7 +461,6 @@ public:
   bool run(MachineFunction &MF) {
     LLVM_DEBUG(dbgs() << "AMDGPUInsertDelayAlu running on " << MF.getName()
                       << "\n");
-
     ST = &MF.getSubtarget<GCNSubtarget>();
     if (!ST->hasDelayAlu())
       return false;
