@@ -182,11 +182,16 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
     break;
 
   case WMMASlotType::MemCoExec0:
-  case WMMASlotType::MemCoExec1:
   case WMMASlotType::MemCoExec2:
-  case WMMASlotType::MemCoExec3:
     // MemCoExec slots: can co-issue mem or salu.
     if (IsMem || IsSALU)
+      return 0;
+    break;
+
+  case WMMASlotType::MemCoExec1:
+  case WMMASlotType::MemCoExec3:
+    // MemCoExec slots: can co-issue mem or salu.
+    if (IsSALU)
       return 0;
     break;
 
@@ -222,10 +227,13 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
         return StallCycles;
       break;
     case WMMASlotType::MemCoExec0:
-    case WMMASlotType::MemCoExec1:
     case WMMASlotType::MemCoExec2:
-    case WMMASlotType::MemCoExec3:
       if (IsMem || IsSALU)
+        return StallCycles;
+      break;
+    case WMMASlotType::MemCoExec1:
+    case WMMASlotType::MemCoExec3:
+      if (IsSALU)
         return StallCycles;
       break;
     case WMMASlotType::ValuCoExec0:
