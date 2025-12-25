@@ -11194,6 +11194,15 @@ unsigned SIInstrInfo::getRepeatRate(const MachineInstr &MI) const {
       Opc == AMDGPU::V_CVT_SCALEF32_SR_PK16_BF6_F32_e64 ||
       Opc == AMDGPU::V_CVT_SCALEF32_SR_PK16_FP6_F32_e64)
     return 8;
+  
+  if (Opc == AMDGPU::V_CVT_SCALE_PK16_BF16_BF6_e64 || 
+      Opc == AMDGPU::V_CVT_SCALE_PK16_F16_BF6_e64 || 
+      Opc == AMDGPU::V_CVT_SCALE_PK16_F32_BF6_e64 || 
+      Opc == AMDGPU::V_CVT_SCALE_PK16_BF16_FP6_e64 || 
+      Opc == AMDGPU::V_CVT_SCALE_PK16_F16_FP6_e64 || 
+      Opc == AMDGPU::V_CVT_SCALE_PK16_F32_FP6_e64)
+    return 8;
+
 
   if (Opc == AMDGPU::V_CVT_SCALEF32_PK8_BF8_BF16_e64 ||
       Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_BF16_e64 ||

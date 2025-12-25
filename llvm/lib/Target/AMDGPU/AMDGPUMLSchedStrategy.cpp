@@ -313,12 +313,6 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
     }
   }
 
-  else if (SII->isMFMAorWMMA(*MI) && SchedMFMA.size()) {
-    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
-  }
-
   else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
     return 0;
   }

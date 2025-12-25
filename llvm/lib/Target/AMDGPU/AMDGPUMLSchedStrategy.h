@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "GCNSchedStrategy.h"
+#include "GCNHazardRecognizer.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/CodeGen/MachineCycleAnalysis.h"
 #include "llvm/CodeGen/MachineScheduler.h"
@@ -132,6 +133,23 @@ public:
       SU->getInstr()->dump();
     }
   }
+};
+
+class WMMACoexecutionWindow {
+  SmallVector<std::pair<GCNHazardRecognizer::WMMASlotType, MachineInstr *>, 8> WMMACoexecutionSlots;
+  MachineInstr *WMMA = nullptr;
+
+public:
+  WMMACoexecutionWindow() = default;
+  WMMACoexecutionWindow(MachineInstr *WMMA) {
+    auto Opc = WMMA->getOpcode();
+    if (Opc != AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_w32_threeaddr && Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_w32_twoaddr)
+      return;
+    
+    return;
+  }
+
+
 };
 
 class AMDGPUMLSchedStrategy final : public GCNSchedStrategy {

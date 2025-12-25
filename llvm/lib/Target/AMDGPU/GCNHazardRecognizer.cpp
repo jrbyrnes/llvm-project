@@ -192,12 +192,12 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
 
   case WMMASlotType::ValuCoExec0:
   case WMMASlotType::ValuCoExec1:
-  case WMMASlotType::ValuCoExec2:
     // ValuCoExec slots: can co-issue mem, salu, valu, or wmma.
     if (IsMem || IsSALU || IsVALU || IsWMMA)
       return 0;
     break;
-
+  case WMMASlotType::ValuCoExec2:
+    break;
   case WMMASlotType::ValuBlocked0:
   case WMMASlotType::ValuBlocked1:
     // ValuBlocked slots: VALU blocked, can only issue wmma/mem/salu.
@@ -230,9 +230,10 @@ unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const 
       break;
     case WMMASlotType::ValuCoExec0:
     case WMMASlotType::ValuCoExec1:
-    case WMMASlotType::ValuCoExec2:
       if (IsMem || IsSALU || IsVALU || IsWMMA)
         return StallCycles;
+      break;
+    case WMMASlotType::ValuCoExec2:
       break;
     case WMMASlotType::ValuBlocked0:
     case WMMASlotType::ValuBlocked1:
@@ -276,7 +277,7 @@ unsigned GCNHazardRecognizer::checkCVTHazard(const MachineInstr &MI) const {
   }
 
   // TRANS32 can be followed by VALU or control instructions without stall
-  if (!SIInstrInfo::isVALU(MI) || SIInstrInfo::isTRANS(MI) || SIInstrInfo::isMFMAorWMMA(MI))
+  if (!SIInstrInfo::isVALU(MI))
     return 0;
 
   // Any other instruction requires a 1-cycle stall
@@ -315,7 +316,7 @@ unsigned GCNHazardRecognizer::checkSSrcHazard(const MachineInstr &MI) const {
 
 void GCNHazardRecognizer::updateCVTState(const MachineInstr &MI) {
 
-  unsigned LongLatVALU = TII.isTRANS(MI) ? 0 : TII.getRepeatRate(MI);
+  unsigned LongLatVALU = (TII.isTRANS(MI) || TII.isMFMAorWMMA(MI)) ? 0 : TII.getRepeatRate(MI);
 
   if (LongLatVALU > 1) {
     CyclesUntilVALU = LongLatVALU;
