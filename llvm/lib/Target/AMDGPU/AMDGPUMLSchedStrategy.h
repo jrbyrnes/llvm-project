@@ -19,6 +19,211 @@
 
 namespace llvm {
 
+//===----------------------------------------------------------------------===//
+// Instruction Flavor Classification
+//===----------------------------------------------------------------------===//
+
+enum class InstructionFlavor : uint8_t {
+  WMMA,           // WMMA/MFMA matrix operations
+  SingleCycleVALU,// Single-cycle VALU (not TRANS32, not multi-cycle CVT)
+  TRANS32,        // Transcendental ops (v_exp, v_log, etc.) - 2 cycles
+  CVT4Cycle,      // 4-cycle CVT instructions (v_cvt_scalef32_pk8_fp8_f32)
+  VMEM,           // FLAT/GLOBAL memory operations
+  DS,             // LDS/GDS operations
+  SALU,           // Scalar ALU
+  DMA,            // Tensor DMA operations
+  Fence,          // Fences and waits
+  Other,          // Everything else
+  NUM_FLAVORS
+};
+
+inline StringRef getFlavorName(InstructionFlavor F) {
+  switch (F) {
+  case InstructionFlavor::WMMA:           return "WMMA";
+  case InstructionFlavor::SingleCycleVALU:return "VALU(1c)";
+  case InstructionFlavor::TRANS32:        return "TRANS32(2c)";
+  case InstructionFlavor::CVT4Cycle:      return "CVT(4c)";
+  case InstructionFlavor::VMEM:           return "VMEM";
+  case InstructionFlavor::DS:             return "DS";
+  case InstructionFlavor::SALU:           return "SALU";
+  case InstructionFlavor::DMA:            return "DMA";
+  case InstructionFlavor::Fence:          return "Fence";
+  case InstructionFlavor::Other:          return "Other";
+  case InstructionFlavor::NUM_FLAVORS:    return "???";
+  }
+  llvm_unreachable("Unknown InstructionFlavor");
+}
+
+inline StringRef getFlavorShortName(InstructionFlavor F) {
+  switch (F) {
+  case InstructionFlavor::WMMA:           return "W";
+  case InstructionFlavor::SingleCycleVALU:return "V";
+  case InstructionFlavor::TRANS32:        return "T";
+  case InstructionFlavor::CVT4Cycle:      return "C";
+  case InstructionFlavor::VMEM:           return "M";
+  case InstructionFlavor::DS:             return "D";
+  case InstructionFlavor::SALU:           return "S";
+  case InstructionFlavor::DMA:            return "X";
+  case InstructionFlavor::Fence:          return "F";
+  case InstructionFlavor::Other:          return "O";
+  case InstructionFlavor::NUM_FLAVORS:    return "?";
+  }
+  llvm_unreachable("Unknown InstructionFlavor");
+}
+
+InstructionFlavor classifyFlavor(const MachineInstr *MI, const SIInstrInfo *SII);
+
+using FlavorGroup = SmallVector<InstructionFlavor, 4>;
+
+namespace FlavorGroups {
+  inline FlavorGroup allVALU() {
+    return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS32,
+            InstructionFlavor::CVT4Cycle};
+  }
+  inline FlavorGroup allMem() {
+    return {InstructionFlavor::VMEM, InstructionFlavor::DS,
+            InstructionFlavor::DMA};
+  }
+  inline FlavorGroup individual(InstructionFlavor F) {
+    return {F};
+  }
+  inline FlavorGroup all() {
+    FlavorGroup G;
+    for (unsigned I = 0; I < static_cast<unsigned>(InstructionFlavor::NUM_FLAVORS); ++I)
+      G.push_back(static_cast<InstructionFlavor>(I));
+    return G;
+  }
+}
+
+/// AMDGPU-specific scheduling decision reasons. These provide more granularity
+/// than the generic CandReason enum for debugging purposes.
+enum class AMDGPUSchedReason : uint8_t {
+  None,
+  WMMACoexec,         // tryVALUCoexecSlot chose based on WMMA coexecution
+  CritResourceBalance,// tryCriticalResource chose based on resource pressure
+  CritResourceDep,    // tryCriticalResourceDependency chose based on enabling
+  ShadowMixDefer,     // Deferred instruction waiting for shadow mix
+  ShadowMixEnable,    // Prioritized to enable shadow mix
+  NUM_REASONS
+};
+
+inline StringRef getReasonName(AMDGPUSchedReason R) {
+  switch (R) {
+  case AMDGPUSchedReason::None:              return "None";
+  case AMDGPUSchedReason::WMMACoexec:        return "WMMACoexec";
+  case AMDGPUSchedReason::CritResourceBalance: return "CritResource";
+  case AMDGPUSchedReason::CritResourceDep:   return "CritResourceDep";
+  case AMDGPUSchedReason::ShadowMixDefer:    return "ShadowDefer";
+  case AMDGPUSchedReason::ShadowMixEnable:   return "ShadowEnable";
+  case AMDGPUSchedReason::NUM_REASONS:       return "???";
+  }
+  llvm_unreachable("Unknown AMDGPUSchedReason");
+}
+
+class RegionMixInfo {
+public:
+  static constexpr unsigned NumFlavors =
+      static_cast<unsigned>(InstructionFlavor::NUM_FLAVORS);
+
+private:
+  SmallVector<SmallVector<SUnit *, 8>, NumFlavors> AllSUs;
+
+  SmallVector<SmallSetVector<SUnit *, 8>, NumFlavors> ScheduledSUs;
+
+  SmallVector<DenseMap<SUnit *, unsigned>, NumFlavors> SUCycles;
+
+  SmallVector<unsigned, NumFlavors> ReadyCounts;
+
+  SmallVector<unsigned, NumFlavors> TotalCycles;
+
+  SmallVector<unsigned, NumFlavors> ScheduledCycles;
+
+public:
+  void reset() {
+    AllSUs.clear();
+    AllSUs.resize(NumFlavors);
+    ScheduledSUs.clear();
+    ScheduledSUs.resize(NumFlavors);
+    SUCycles.clear();
+    SUCycles.resize(NumFlavors);
+    ReadyCounts.assign(NumFlavors, 0);
+    TotalCycles.assign(NumFlavors, 0);
+    ScheduledCycles.assign(NumFlavors, 0);
+  }
+
+  void addSU(SUnit *SU, InstructionFlavor F, unsigned Cycles = 1) {
+    unsigned Idx = static_cast<unsigned>(F);
+    AllSUs[Idx].push_back(SU);
+    TotalCycles[Idx] += Cycles;
+    SUCycles[Idx][SU] = Cycles;
+    if (SU->isTopReady())
+      ReadyCounts[Idx]++;
+  }
+
+  void markScheduled(SUnit *SU, InstructionFlavor F) {
+    unsigned Idx = static_cast<unsigned>(F);
+    ScheduledSUs[Idx].insert(SU);
+    ScheduledCycles[Idx] += SUCycles[Idx].lookup(SU);
+    if (ReadyCounts[Idx] > 0)
+      ReadyCounts[Idx]--;
+  }
+
+  void updateReadyCounts() {
+    for (unsigned I = 0; I < NumFlavors; ++I) {
+      ReadyCounts[I] = 0;
+      for (SUnit *SU : AllSUs[I]) {
+        if (!ScheduledSUs[I].contains(SU) && SU->isTopReady())
+          ReadyCounts[I]++;
+      }
+    }
+  }
+
+  unsigned getReadyCount(InstructionFlavor F) const {
+    return ReadyCounts[static_cast<unsigned>(F)];
+  }
+
+  unsigned getReadyCount(const FlavorGroup &G) const {
+    unsigned Count = 0;
+    for (InstructionFlavor F : G)
+      Count += getReadyCount(F);
+    return Count;
+  }
+
+  unsigned getPendingCount(InstructionFlavor F) const {
+    unsigned Idx = static_cast<unsigned>(F);
+    unsigned Total = AllSUs[Idx].size();
+    unsigned Scheduled = ScheduledSUs[Idx].size();
+    unsigned Ready = ReadyCounts[Idx];
+    return Total - Scheduled - Ready;
+  }
+
+  unsigned getTotalCount(InstructionFlavor F) const {
+    return AllSUs[static_cast<unsigned>(F)].size();
+  }
+
+  unsigned getRemainingCount(InstructionFlavor F) const {
+    unsigned Idx = static_cast<unsigned>(F);
+    return AllSUs[Idx].size() - ScheduledSUs[Idx].size();
+  }
+
+  unsigned getTotalCycles(InstructionFlavor F) const {
+    return TotalCycles[static_cast<unsigned>(F)];
+  }
+
+  unsigned getRemainingCycles(InstructionFlavor F) const {
+    unsigned Idx = static_cast<unsigned>(F);
+    return TotalCycles[Idx] - ScheduledCycles[Idx];
+  }
+
+  ArrayRef<SUnit *> getSUs(InstructionFlavor F) const {
+    return AllSUs[static_cast<unsigned>(F)];
+  }
+
+  void dumpMix(raw_ostream &OS, bool Detailed = false) const;
+
+  void dumpReadyPending(raw_ostream &OS) const;
+};
+
 class HardwareUnitInfo {
 private:
   const MCProcResourceDesc *ProcRes = nullptr;
@@ -150,6 +355,10 @@ protected:
 
   SmallVector<SUnit *, 16> SchedEXP;
 
+  RegionMixInfo MixInfo;
+
+  AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
+
   unsigned FencedDSRLatency = 0;
 
   void collectUse();
@@ -165,6 +374,10 @@ protected:
                          bool IsBottomUp);
 
   SUnit *pickNode(bool &IsTopNode) override;
+
+  void dumpRegionSummary();
+
+  void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);
 
 public:
   AMDGPUMLSchedStrategy(const MachineSchedContext *C);
@@ -191,6 +404,14 @@ protected:
   SmallVector<SUnit *, 16> SchedTDM;
 
   SmallVector<SUnit *, 16> SchedEXP;
+
+  RegionMixInfo MixInfo;
+
+  AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
+
+  void dumpRegionSummary();
+
+  void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);
 
 public:
   AMDGPUMLPostSchedStrategy(const MachineSchedContext *C);
