@@ -103,6 +103,9 @@ static cl::opt<bool> PrintMaxRPRegUsageAfterScheduler(
 static cl::opt<bool> DisableRewriteMFMAFormSchedStage(
     "amdgpu-disable-rewrite-mfma-form-sched-stage", cl::Hidden,
     cl::desc("Disable rewrie mfma rewrite scheduling stage"), cl::init(true));
+#ifndef NDEBUG
+extern cl::opt<int> DebugOnlyBlock;
+#endif
 
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
@@ -427,7 +430,7 @@ static SUnit *pickOnlyChoice(SchedBoundary &Zone,
 
 void GCNSchedStrategy::printCandidateDecision(const SchedCandidate &Current,
                                               const SchedCandidate &Preferred) {
-  LLVM_DEBUG({
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", {
     dbgs() << "Prefer:\t\t";
     DAG->dumpNode(*Preferred.SU);
 
@@ -465,7 +468,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       VGPRPressure = T->getPressure().getArchVGPRNum();
     }
   }
-  LLVM_DEBUG(dbgs() << "Available Q:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Available Q:\n");
   ReadyQueue &AQ = Zone.Available;
   for (SUnit *SU : AQ) {
     SchedCandidate TryCand(ZonePolicy);
@@ -478,7 +481,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       // Initialize resource delta if needed in case future heuristics query it.
       if (TryCand.ResDelta == SchedResourceDelta())
         TryCand.initResourceDelta(Zone.DAG, SchedModel);
-      LLVM_DEBUG(printCandidateDecision(Cand, TryCand));
+      printCandidateDecision(Cand, TryCand);
       Cand.setBest(TryCand);
     } else {
       printCandidateDecision(TryCand, Cand);
@@ -488,7 +491,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
   if (!shouldCheckPending(Zone, SchedModel))
     return;
 
-  LLVM_DEBUG(dbgs() << "Pending Q:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Pending Q:\n");
   ReadyQueue &PQ = Zone.Pending;
   for (SUnit *SU : PQ) {
     SchedCandidate TryCand(ZonePolicy);
@@ -501,7 +504,7 @@ void GCNSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
       // Initialize resource delta if needed in case future heuristics query it.
       if (TryCand.ResDelta == SchedResourceDelta())
         TryCand.initResourceDelta(Zone.DAG, SchedModel);
-      LLVM_DEBUG(printCandidateDecision(Cand, TryCand));
+      printCandidateDecision(Cand, TryCand);
       IsPending = true;
       Cand.setBest(TryCand);
     } else {
@@ -535,7 +538,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
 
   bool BotPending = false;
   // See if BotCand is still valid (because we previously scheduled from Top).
-  LLVM_DEBUG(dbgs() << "Picking from Bot:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Picking from Bot:\n");
   if (!BotCand.isValid() || BotCand.SU->isScheduled ||
       BotCand.Policy != BotPolicy) {
     BotCand.reset(CandPolicy());
@@ -544,7 +547,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
                       /*IsBottomUp=*/true);
     assert(BotCand.Reason != NoCand && "failed to find the first candidate");
   } else {
-    LLVM_DEBUG(traceCandidate(BotCand));
+    DEBUG_WITH_TYPE("machine-scheduler-verbose", traceCandidate(BotCand));
 #ifndef NDEBUG
     if (VerifyScheduling) {
       SchedCandidate TCand;
@@ -560,7 +563,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
 
   bool TopPending = false;
   // Check if the top Q has a better candidate.
-  LLVM_DEBUG(dbgs() << "Picking from Top:\n");
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "Picking from Top:\n");
   if (!TopCand.isValid() || TopCand.SU->isScheduled ||
       TopCand.Policy != TopPolicy) {
     TopCand.reset(CandPolicy());
@@ -569,7 +572,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
                       /*IsBottomUp=*/false);
     assert(TopCand.Reason != NoCand && "failed to find the first candidate");
   } else {
-    LLVM_DEBUG(traceCandidate(TopCand));
+    DEBUG_WITH_TYPE("machine-scheduler-verbose", traceCandidate(TopCand));
 #ifndef NDEBUG
     if (VerifyScheduling) {
       SchedCandidate TCand;
@@ -584,8 +587,10 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
   }
 
   // Pick best from BotCand and TopCand.
-  LLVM_DEBUG(dbgs() << "Top Cand: "; traceCandidate(TopCand);
-             dbgs() << "Bot Cand: "; traceCandidate(BotCand););
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", {
+    dbgs() << "Top Cand: "; traceCandidate(TopCand);
+    dbgs() << "Bot Cand: "; traceCandidate(BotCand);
+  });
   SchedCandidate Cand = BotPending ? TopCand : BotCand;
   SchedCandidate TryCand = BotPending ? BotCand : TopCand;
   PickedPending = BotPending && TopPending;
@@ -601,7 +606,7 @@ SUnit *GCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode,
     Cand.setBest(TryCand);
   }
 
-  LLVM_DEBUG(dbgs() << "Picking: "; traceCandidate(Cand););
+  DEBUG_WITH_TYPE("machine-scheduler-verbose", { dbgs() << "Picking: "; traceCandidate(Cand); });
 
   IsTopNode = Cand.AtTop;
   return Cand.SU;
@@ -1213,10 +1218,22 @@ void GCNScheduleDAGMILive::runSchedStages() {
       S.CollectedUse = false;
       RegionBegin = Region.first;
       RegionEnd = Region.second;
+
+#ifndef NDEBUG
+      // Temporarily disable debug output for non-matching blocks.
+      bool SavedDebugFlag = DebugFlag;
+      if (DebugOnlyBlock >= 0 &&
+          DebugOnlyBlock != (int)RegionBegin->getParent()->getNumber())
+        DebugFlag = false;
+#endif
+
       // Setup for scheduling the region and check whether it should be skipped.
       if (!Stage->initGCNRegion()) {
         Stage->advanceRegion();
         exitRegion();
+#ifndef NDEBUG
+        DebugFlag = SavedDebugFlag;
+#endif
         continue;
       }
 
@@ -1258,6 +1275,10 @@ void GCNScheduleDAGMILive::runSchedStages() {
       Stage->finalizeGCNRegion();
       Stage->advanceRegion();
       exitRegion();
+
+#ifndef NDEBUG
+      DebugFlag = SavedDebugFlag;
+#endif
     }
 
     Stage->finalizeGCNSchedStage();
