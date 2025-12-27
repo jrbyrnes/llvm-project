@@ -242,6 +242,9 @@ static cl::opt<std::string> SchedOnlyFunc("misched-only-func", cl::Hidden,
   cl::desc("Only schedule this function"));
 static cl::opt<unsigned> SchedOnlyBlock("misched-only-block", cl::Hidden,
                                         cl::desc("Only schedule this MBB#"));
+cl::opt<int> DebugOnlyBlock("misched-debug-only-block", cl::Hidden,
+                            cl::init(-1),
+                            cl::desc("Only emit debug output for this MBB#"));
 #endif // NDEBUG
 
 /// Avoid quadratic complexity in unusually large basic blocks by limiting the
@@ -865,13 +868,22 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
         Scheduler.exitRegion();
         continue;
       }
-      LLVM_DEBUG(dbgs() << "********** MI Scheduling **********\n");
-      LLVM_DEBUG(dbgs() << MF->getName() << ":" << printMBBReference(*MBB)
-                        << " " << MBB->getName() << "\n  From: " << *I
-                        << "    To: ";
-                 if (RegionEnd != MBB->end()) dbgs() << *RegionEnd;
-                 else dbgs() << "End\n";
-                 dbgs() << " RegionInstrs: " << NumRegionInstrs << '\n');
+
+#ifndef NDEBUG
+      bool SavedDebugFlag = DebugFlag;
+      if (DebugOnlyBlock >= 0 && DebugOnlyBlock != (int)MBB->getNumber())
+        DebugFlag = false;
+#endif
+
+      LLVM_DEBUG({
+        dbgs() << "********** MI Scheduling **********\n";
+        dbgs() << MF->getName() << ":" << printMBBReference(*MBB)
+               << " " << MBB->getName() << "\n  From: " << *I
+               << "    To: ";
+        if (RegionEnd != MBB->end()) dbgs() << *RegionEnd;
+        else dbgs() << "End\n";
+        dbgs() << " RegionInstrs: " << NumRegionInstrs << '\n';
+      });
       if (DumpCriticalPathLength) {
         errs() << MF->getName();
         errs() << ":%bb. " << MBB->getNumber();
@@ -884,6 +896,10 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
 
       // Close the current region.
       Scheduler.exitRegion();
+
+#ifndef NDEBUG
+      DebugFlag = SavedDebugFlag;
+#endif
     }
     Scheduler.finishBlock();
     // FIXME: Ideally, no further passes should rely on kill flags. However,

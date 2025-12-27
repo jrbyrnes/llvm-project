@@ -61,6 +61,117 @@ static cl::opt<bool> IgnoreVALU(
   cl::desc("Whether or not to ignore VALU unit when balancing HW resoiurces."),
   cl::init(true));
 
+static cl::opt<bool> AvoidEXP(
+  "amdgpu-avoid-exp-final-islot", cl::Hidden,
+  cl::desc("Whether or not to try avoiding putting v_exp in final I slot of WMMA."),
+  cl::init(true));
+
+InstructionFlavor llvm::classifyFlavor(const MachineInstr *MI,
+                                       const SIInstrInfo *SII) {
+  if (!MI || MI->isDebugInstr())
+    return InstructionFlavor::Other;
+
+  unsigned Opc = MI->getOpcode();
+
+  // Check for specific opcodes first.
+
+  if (Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
+      Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
+      Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
+      Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
+      Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
+      Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
+      Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
+      Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250)
+    return InstructionFlavor::DMA;
+
+  if (Opc == AMDGPU::ATOMIC_FENCE ||
+      Opc == AMDGPU::S_WAIT_ASYNCCNT ||
+      Opc == AMDGPU::S_WAIT_TENSORCNT ||
+      Opc == AMDGPU::S_BARRIER_WAIT ||
+      Opc == AMDGPU::S_BARRIER_SIGNAL_IMM)
+    return InstructionFlavor::Fence;
+
+  if (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
+      Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64_gfx1250)
+    return InstructionFlavor::CVT4Cycle;
+
+  // Check instruction categories.
+
+  if (SII->isMFMAorWMMA(*MI))
+    return InstructionFlavor::WMMA;
+
+  if (SII->isTRANS(*MI))
+    return InstructionFlavor::TRANS32;
+
+  if (SII->isVALU(*MI))
+    return InstructionFlavor::SingleCycleVALU;
+
+  if (SII->isDS(*MI))
+    return InstructionFlavor::DS;
+
+  if (SII->isFLAT(*MI) || SII->isFLATGlobal(*MI) || SII->isFLATScratch(*MI))
+    return InstructionFlavor::VMEM;
+
+  if (SII->isSALU(*MI))
+    return InstructionFlavor::SALU;
+
+  return InstructionFlavor::Other;
+}
+
+static unsigned getFlavorCycles(const MachineInstr *MI, InstructionFlavor F,
+                                const SIInstrInfo *SII) {
+  // WMMA: hardcoded to 8 cycles for now (gfx1250)
+  // Note: Adding this to getRepeatRate() causes regressions elsewhere.
+  if (F == InstructionFlavor::WMMA)
+    return 8;
+
+  return SII->getRepeatRate(*MI);
+}
+
+void RegionMixInfo::dumpMix(raw_ostream &OS, bool Detailed) const {
+  OS << "Instruction Mix:\n";
+  for (unsigned I = 0; I < NumFlavors; ++I) {
+    InstructionFlavor F = static_cast<InstructionFlavor>(I);
+    unsigned Total = getTotalCount(F);
+    if (Total == 0)
+      continue;
+    OS << "  " << getFlavorName(F) << ": " << Total;
+    if (Detailed)
+      OS << " (cycles: " << getTotalCycles(F) << ")";
+    OS << "\n";
+  }
+}
+
+void RegionMixInfo::dumpReadyPending(raw_ostream &OS) const {
+  OS << "Ready: ";
+  bool First = true;
+  for (unsigned I = 0; I < NumFlavors; ++I) {
+    InstructionFlavor F = static_cast<InstructionFlavor>(I);
+    unsigned Ready = getReadyCount(F);
+    if (Ready == 0)
+      continue;
+    if (!First)
+      OS << ", ";
+    First = false;
+    OS << Ready << " " << getFlavorName(F);
+  }
+  OS << "\nBlocked: ";
+  First = true;
+  for (unsigned I = 0; I < NumFlavors; ++I) {
+    InstructionFlavor F = static_cast<InstructionFlavor>(I);
+    unsigned Blocked = getPendingCount(F);
+    if (Blocked == 0)
+      continue;
+    if (!First)
+      OS << ", ";
+    First = false;
+    unsigned RemCycles = getRemainingCycles(F);
+    OS << Blocked << " " << getFlavorName(F) << "(" << RemCycles << "c)";
+  }
+  OS << "\n";
+}
+
 AMDGPUMLSchedStrategy::AMDGPUMLSchedStrategy(const MachineSchedContext *C)
     : GCNSchedStrategy(C) {
   SchedStages.push_back(GCNSchedStageID::ILPInitialSchedule);
@@ -181,6 +292,9 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     }
   }
 
+  InstructionFlavor Flavor = classifyFlavor(MI, SII);
+  MixInfo.markScheduled(SU, Flavor);
+
   GCNSchedStrategy::schedNode(SU, IsTopNode);
 }
 
@@ -190,6 +304,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
   SchedMFMA.clear();
   SchedTDM.clear();
   SchedEXP.clear();
+  MixInfo.reset();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
@@ -214,6 +329,11 @@ void AMDGPUMLSchedStrategy::collectUse() {
     }
 
     auto MI = SU.getInstr();
+
+    InstructionFlavor Flavor = classifyFlavor(MI, SII);
+    unsigned FlavorCycles = getFlavorCycles(MI, Flavor, SII);
+    MixInfo.addSU(&SU, Flavor, FlavorCycles);
+
     if (SII->isDS(*MI) && MI->mayLoad()) {
       PrevDSR = I;
     }
@@ -225,10 +345,11 @@ void AMDGPUMLSchedStrategy::collectUse() {
     }
     I++;
 
-    unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
-
-    if (LongLatVALU > 1) {
-      HWUInfo[9].insert(&SU, LongLatVALU);
+    if (!SII->isMFMAorWMMA(*MI)) {
+      unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
+      if (LongLatVALU > 1) {
+        HWUInfo[9].insert(&SU, LongLatVALU);
+      }
     }
   }
 
@@ -250,6 +371,7 @@ void AMDGPUMLSchedStrategy::collectUse() {
     HWUInfo[5].reset();
   }
 
+  LLVM_DEBUG(dumpRegionSummary());
 }
 
 static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
@@ -266,6 +388,55 @@ static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo) {
     // Default to HardwareUnitInfo order
     return A.Idx < B.Idx;
   });
+}
+
+void AMDGPUMLSchedStrategy::dumpRegionSummary() {
+  MachineBasicBlock *BB = DAG->begin()->getParent();
+  dbgs() << "\n=== Region: " << DAG->MF.getName() << " BB"
+         << BB->getNumber() << " (" << DAG->SUnits.size() << " SUs) ===\n";
+
+  MixInfo.dumpMix(dbgs(), /*Detailed=*/true);
+
+  dbgs() << "\nHWUI Resource Pressure (sorted):\n";
+  SmallVector<HardwareUnitInfo, 8> SortedHWUI = HWUInfo;
+  sortResources(SortedHWUI);
+  for (auto &HWUI : SortedHWUI) {
+    if (HWUI.getTotalCycles() == 0)
+      continue;
+    const MCProcResourceDesc *Res = HWUI.getProcRes();
+    StringRef Name = Res ? Res->Name : "???";
+    dbgs() << "  [" << HWUI.Idx << "] " << Name << ": "
+           << HWUI.getTotalCycles() << " cycles, " << HWUI.size() << " instrs\n";
+  }
+  dbgs() << "\n";
+}
+
+void AMDGPUMLSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
+                                            SchedCandidate &Cand) {
+  const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
+  unsigned Cycle = IsTopNode ? Top.getCurrCycle() : Bot.getCurrCycle();
+
+  dbgs() << "=== Pick @ Cycle " << Cycle << " ===\n";
+
+  MixInfo.updateReadyCounts();
+  MixInfo.dumpReadyPending(dbgs());
+
+  InstructionFlavor Flavor = classifyFlavor(SU->getInstr(), SII);
+  dbgs() << "Picked: SU(" << SU->NodeNum << ") ";
+  SU->getInstr()->print(dbgs(), /*IsStandalone=*/true, /*SkipOpers=*/false,
+                        /*SkipDebugLoc=*/true);
+  dbgs() << " [" << getFlavorName(Flavor) << "]\n";
+
+  dbgs() << "  Reason: ";
+  if (LastAMDGPUReason != AMDGPUSchedReason::None)
+    dbgs() << getReasonName(LastAMDGPUReason);
+  else if (Cand.Reason != NoCand)
+    dbgs() << GenericSchedulerBase::getReasonStr(Cand.Reason);
+  else
+    dbgs() << "Unknown";
+  dbgs() << "\n\n";
+
+  LastAMDGPUReason = AMDGPUSchedReason::None;
 }
 
 static std::optional<unsigned> getMSBs(const MachineOperand &MO,
@@ -930,24 +1101,28 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                       SchedEXP, false)) {
       if (PreRALog) { errs() << "ValuCoexec\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
       if (PreRALog) { errs() << "CritResource\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        false)) {
-                                        if (PreRALog) { errs() << "CritResourceDep\n";}
+      if (PreRALog) { errs() << "CritResourceDep\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        false)) {
-                                       if (PreRALog) {errs() << "CritResourceDep Async\n";}
+      if (PreRALog) {errs() << "CritResourceDep Async\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
   }
@@ -1081,6 +1256,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                       SchedEXP, false)) {
       if (PreRALog) { errs() << "VALUCoexec\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
     }
 
@@ -1095,18 +1271,21 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
 
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false)) {
       if (PreRALog) { errs() << "CritResource\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                       false)) {
-                                      if (PreRALog) {  errs() << "CritResourceDep\n";}
+      if (PreRALog) {  errs() << "CritResourceDep\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                       false)) {
-                                        if (PreRALog) { errs() << "CritResourceDep Async\n";}
+      if (PreRALog) { errs() << "CritResourceDep Async\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
@@ -1259,6 +1438,7 @@ SUnit *AMDGPUMLSchedStrategy::pickNode(bool &IsTopNode) {
   }
   bool PickedPending;
   SUnit *SU;
+  SchedCandidate *PickedCand = nullptr;
   do {
     PickedPending = false;
     if (RegionPolicy.OnlyTopDown) {
@@ -1271,6 +1451,7 @@ SUnit *AMDGPUMLSchedStrategy::pickNode(bool &IsTopNode) {
                           /*IsBottomUp=*/false);
         assert(TopCand.Reason != NoCand && "failed to find a candidate");
         SU = TopCand.SU;
+        PickedCand = &TopCand;
       }
       IsTopNode = true;
     } else if (RegionPolicy.OnlyBottomUp) {
@@ -1283,12 +1464,16 @@ SUnit *AMDGPUMLSchedStrategy::pickNode(bool &IsTopNode) {
                           /*IsBottomUp=*/true);
         assert(BotCand.Reason != NoCand && "failed to find a candidate");
         SU = BotCand.SU;
+        PickedCand = &BotCand;
       }
       IsTopNode = false;
     } else {
       SU = pickNodeBidirectional(IsTopNode, PickedPending);
+      PickedCand = IsTopNode ? &TopCand : &BotCand;
     }
   } while (SU->isScheduled);
+
+  LLVM_DEBUG(if (PickedCand) dumpPickSummary(SU, IsTopNode, *PickedCand));
 
   if (PickedPending) {
     unsigned ReadyCycle = IsTopNode ? SU->TopReadyCycle : SU->BotReadyCycle;
@@ -1353,6 +1538,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                       SchedEXP, true)) {
       if (PostRALog) {errs() << "VALUCoexec\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
     }
 
@@ -1360,18 +1546,21 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
 
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true)) {
       if (PostRALog) { errs() << "CritResource\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        true)) {
-                                        if (PostRALog) { errs() << "CritResourceDep\n";}
+      if (PostRALog) { errs() << "CritResourceDep\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        true)) {
-                                        if (PostRALog) { errs() << "CritResourceDepAsync\n";}
+      if (PostRALog) { errs() << "CritResourceDepAsync\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
@@ -1460,24 +1649,28 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
                                       SchedEXP, true)) {
       if (PostRALog) {errs() << "Coexec\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
     }
 
     sortResources(HWUInfo);
     if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true)) {
       if (PostRALog) {errs() << "CritResource\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
                                        true)) {
-                                        if (PostRALog) {errs() << "CritResourceDep\n";}
+      if (PostRALog) {errs() << "CritResourceDep\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
                                        true)) {
-                                       if (PostRALog) { errs() << "CritResourceDep Async\n";}
+      if (PostRALog) { errs() << "CritResourceDep Async\n";}
+      LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
   }
@@ -1501,8 +1694,6 @@ void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   auto MI = SU->getInstr();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
-
-
     if (SII->isMFMAorWMMA(*MI)) {
       SchedMFMA.push_back(SU);
     }
@@ -1518,6 +1709,9 @@ void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
       SchedTDM.push_back(SU);
     }
 
+  InstructionFlavor Flavor = classifyFlavor(MI, SII);
+  MixInfo.markScheduled(SU, Flavor);
+
   PostGenericScheduler::schedNode(SU, IsTopNode);
 }
 
@@ -1529,6 +1723,7 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
   SchedMFMA.clear();
   SchedTDM.clear();
   SchedEXP.clear();
+  MixInfo.reset();
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   for (auto &HWUI : HWUInfo) {
@@ -1553,6 +1748,11 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
     }
 
     auto MI = SU.getInstr();
+
+    InstructionFlavor Flavor = classifyFlavor(MI, SII);
+    unsigned FlavorCycles = getFlavorCycles(MI, Flavor, SII);
+    MixInfo.addSU(&SU, Flavor, FlavorCycles);
+
     if (SII->isDS(*MI) && MI->mayLoad()) {
       PrevDSR = I;
     }
@@ -1564,10 +1764,13 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
     }
     I++;
 
-    unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
-
-    if (LongLatVALU > 1) {
-      HWUInfo[9].insert(&SU, LongLatVALU);
+    // Insert long-latency VALU into HWUInfo[9], but skip WMMA/MFMA since
+    // those are already inserted via the sched model resource loop above.
+    if (!SII->isMFMAorWMMA(*MI)) {
+      unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
+      if (LongLatVALU > 1) {
+        HWUInfo[9].insert(&SU, LongLatVALU);
+      }
     }
   }
 
@@ -1590,6 +1793,8 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
   HWUInfo[4].reset();
   if (IgnoreVALU)
     HWUInfo[7].reset();
+
+  LLVM_DEBUG(dumpRegionSummary());
 }
 
 unsigned AMDGPUMLPostSchedStrategy::getHWUICyclesForInst(
@@ -1687,6 +1892,55 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
   }
 }
 
+void AMDGPUMLPostSchedStrategy::dumpRegionSummary() {
+  MachineBasicBlock *BB = DAG->begin()->getParent();
+  dbgs() << "\n=== PostRA Region: " << DAG->MF.getName() << " BB"
+         << BB->getNumber() << " (" << DAG->SUnits.size() << " SUs) ===\n";
+
+  MixInfo.dumpMix(dbgs(), /*Detailed=*/true);
+
+  dbgs() << "\nHWUI Resource Pressure (sorted):\n";
+  SmallVector<HardwareUnitInfo, 8> SortedHWUI = HWUInfo;
+  sortResources(SortedHWUI);
+  for (auto &HWUI : SortedHWUI) {
+    if (HWUI.getTotalCycles() == 0)
+      continue;
+    const MCProcResourceDesc *Res = HWUI.getProcRes();
+    StringRef Name = Res ? Res->Name : "???";
+    dbgs() << "  [" << HWUI.Idx << "] " << Name << ": "
+           << HWUI.getTotalCycles() << " cycles, " << HWUI.size() << " instrs\n";
+  }
+  dbgs() << "\n";
+}
+
+void AMDGPUMLPostSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
+                                                SchedCandidate &Cand) {
+  const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
+  unsigned Cycle = IsTopNode ? Top.getCurrCycle() : Bot.getCurrCycle();
+
+  dbgs() << "=== PostRA Pick @ Cycle " << Cycle << " ===\n";
+
+  MixInfo.updateReadyCounts();
+  MixInfo.dumpReadyPending(dbgs());
+
+  InstructionFlavor Flavor = classifyFlavor(SU->getInstr(), SII);
+  dbgs() << "Picked: SU(" << SU->NodeNum << ") ";
+  SU->getInstr()->print(dbgs(), /*IsStandalone=*/true, /*SkipOpers=*/false,
+                        /*SkipDebugLoc=*/true);
+  dbgs() << " [" << getFlavorName(Flavor) << "]\n";
+
+  dbgs() << "  Reason: ";
+  if (LastAMDGPUReason != AMDGPUSchedReason::None)
+    dbgs() << getReasonName(LastAMDGPUReason);
+  else if (Cand.Reason != NoCand)
+    dbgs() << GenericSchedulerBase::getReasonStr(Cand.Reason);
+  else
+    dbgs() << "Unknown";
+  dbgs() << "\n\n";
+
+  LastAMDGPUReason = AMDGPUSchedReason::None;
+}
+
 /// Pick the next node to schedule.
 SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
   if (!CollectedUse)
@@ -1698,6 +1952,7 @@ SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
     return nullptr;
   }
   SUnit *SU;
+  SchedCandidate *PickedCand = nullptr;
   if (RegionPolicy.OnlyBottomUp) {
     SU = pickOnlyChoice(Top, SchedModel);
     if (!SU) {
@@ -1709,6 +1964,7 @@ SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
       pickNodeFromQueue(Bot, BotCand, IsPending);
       assert(BotCand.Reason != NoCand && "failed to find a candidate");
       SU = BotCand.SU;
+      PickedCand = &BotCand;
     }
     IsTopNode = false;
   } else if (RegionPolicy.OnlyTopDown) {
@@ -1724,13 +1980,17 @@ SUnit *AMDGPUMLPostSchedStrategy::pickNode(bool &IsTopNode) {
       assert(TopCand.Reason != NoCand && "failed to find a candidate");
 
       SU = TopCand.SU;
+      PickedCand = &TopCand;
     }
     IsTopNode = true;
 
   } else {
     SU = pickNodeBidirectional(IsTopNode, IsPending);
+    PickedCand = IsTopNode ? &TopCand : &BotCand;
   }
   assert(!SU->isScheduled && "SUnit scheduled twice.");
+
+  LLVM_DEBUG(if (PickedCand) dumpPickSummary(SU, IsTopNode, *PickedCand));
 
   if (IsPending) {
     unsigned ReadyCycle = IsTopNode ? SU->TopReadyCycle : SU->BotReadyCycle;
