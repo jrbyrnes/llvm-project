@@ -953,10 +953,13 @@ void trackWMMACoExec(InstClass IC, const StallSources &S,
 
       if (IsISlot && S.CoExec == 0) {
         Metrics.ISlotTotal++;
-        if (IC == InstClass::VALU || IC == InstClass::TRANS)
+        if (IC == InstClass::VALU || IC == InstClass::TRANS) {
           Metrics.ISlotUsedByVALU++;
-        else
+        } else {
+          if (VerboseSimulation)
+            dbgs() << "  WMMA ISlot wasted on non-VALU instruction\n";
           Metrics.ISlotWastedOnNonVALU++;
+        }
       }
     }
   }
