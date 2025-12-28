@@ -2775,19 +2775,19 @@ bool SchedBoundary::checkHazard(SUnit *SU) {
 // Find the unscheduled node in ReadySUs with the highest latency.
 unsigned SchedBoundary::
 findMaxLatency(ArrayRef<SUnit*> ReadySUs) {
-  SUnit *LateSU = nullptr;
+  //SUnit *LateSU = nullptr;
   unsigned RemLatency = 0;
   for (SUnit *SU : ReadySUs) {
     unsigned L = getUnscheduledLatency(SU);
     if (L > RemLatency) {
       RemLatency = L;
-      LateSU = SU;
+      //LateSU = SU;
     }
   }
-  if (LateSU) {
-    LLVM_DEBUG(dbgs() << Available.getName() << " RemLatency SU("
-                      << LateSU->NodeNum << ") " << RemLatency << "c\n");
-  }
+  //if (LateSU) {
+  //  LLVM_DEBUG(dbgs() << Available.getName() << " RemLatency SU("
+  //                    << LateSU->NodeNum << ") " << RemLatency << "c\n");
+  //}
   return RemLatency;
 }
 
