@@ -99,11 +99,22 @@ namespace FlavorGroups {
 /// than the generic CandReason enum for debugging purposes.
 enum class AMDGPUSchedReason : uint8_t {
   None,
-  WMMACoexec,         // tryVALUCoexecSlot chose based on WMMA coexecution
-  CritResourceBalance,// tryCriticalResource chose based on resource pressure
-  CritResourceDep,    // tryCriticalResourceDependency chose based on enabling
-  ShadowMixDefer,     // Deferred instruction waiting for shadow mix
-  ShadowMixEnable,    // Prioritized to enable shadow mix
+  WMMACoexec,              // tryVALUCoexecSlot chose based on WMMA coexecution
+  CritResourceBalance,     // tryCriticalResource chose based on resource pressure
+  CritResourceDep,         // tryCriticalResourceDependency chose based on enabling
+  // Shadow Mix: defer until shadow-filling instructions ready
+  ShadowDeferWMMA,         // Deferred WMMA waiting for co-exec (VALU/DS)
+  ShadowDeferTRANS32,      // Deferred TRANS32 waiting for VALU
+  // Shadow Priority: prefer long-latency so short ones fill shadow
+  ShadowPriorityWMMAOverDS,    // Prefer WMMA over DS (DS fills shadow)
+  ShadowPriorityWMMAOverSALU,  // Prefer WMMA over SALU (SALU fills shadow)
+  ShadowPriorityCVTOverDS,     // Prefer CVT over DS
+  ShadowPriorityCVTOverSALU,   // Prefer CVT over SALU
+  ShadowPriorityTRANS32OverVALU, // Prefer TRANS32 over 1c VALU
+  ShadowPreferVALU1cOverSALUForTRANS, // Prefer VALU1c over SALU for TRANS shadow
+  // Shadow Mix: prefer instruction that enables co-exec candidates
+  ShadowEnableDirect,      // Directly enables needed co-exec flavor
+  ShadowEnableLookahead,   // On path to enabling co-exec via lookahead
   NUM_REASONS
 };
 
@@ -113,8 +124,16 @@ inline StringRef getReasonName(AMDGPUSchedReason R) {
   case AMDGPUSchedReason::WMMACoexec:        return "WMMACoexec";
   case AMDGPUSchedReason::CritResourceBalance: return "CritResource";
   case AMDGPUSchedReason::CritResourceDep:   return "CritResourceDep";
-  case AMDGPUSchedReason::ShadowMixDefer:    return "ShadowDefer";
-  case AMDGPUSchedReason::ShadowMixEnable:   return "ShadowEnable";
+  case AMDGPUSchedReason::ShadowDeferWMMA:   return "ShadowDeferWMMA";
+  case AMDGPUSchedReason::ShadowDeferTRANS32: return "ShadowDeferTRANS32";
+  case AMDGPUSchedReason::ShadowPriorityWMMAOverDS:   return "ShadowWMMA>DS";
+  case AMDGPUSchedReason::ShadowPriorityWMMAOverSALU: return "ShadowWMMA>SALU";
+  case AMDGPUSchedReason::ShadowPriorityCVTOverDS:    return "ShadowCVT>DS";
+  case AMDGPUSchedReason::ShadowPriorityCVTOverSALU:  return "ShadowCVT>SALU";
+  case AMDGPUSchedReason::ShadowPriorityTRANS32OverVALU: return "ShadowTRANS32>VALU";
+  case AMDGPUSchedReason::ShadowPreferVALU1cOverSALUForTRANS: return "ShadowVALU>SALU(TRANS)";
+  case AMDGPUSchedReason::ShadowEnableDirect:    return "ShadowEnableDirect";
+  case AMDGPUSchedReason::ShadowEnableLookahead: return "ShadowEnableLookahead";
   case AMDGPUSchedReason::NUM_REASONS:       return "???";
   }
   llvm_unreachable("Unknown AMDGPUSchedReason");
