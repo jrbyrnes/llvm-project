@@ -3068,6 +3068,11 @@ void SchedBoundary::bumpNode(SUnit *SU) {
       }
     }
   }
+  if (HazardRec->isEnabled()) {
+    unsigned StallCount = HazardRec->getStallCount(SU);
+    NextCycle = std::max(CurrCycle + StallCount, NextCycle);
+  }
+
   // Update ExpectedLatency and DependentLatency.
   unsigned &TopLatency = isTop() ? ExpectedLatency : DependentLatency;
   unsigned &BotLatency = isTop() ? DependentLatency : ExpectedLatency;
@@ -3126,10 +3131,6 @@ void SchedBoundary::bumpNode(SUnit *SU) {
     bumpCycle(++NextCycle);
   }
   LLVM_DEBUG(dumpScheduledState());
-
-  if (HazardRec->isEnabled()) {
-    HazardRec->RefreshState(SU);
-  }
 }
 
 /// Release pending ready nodes in to the available queue. This makes them
