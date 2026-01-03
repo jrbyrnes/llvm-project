@@ -79,11 +79,12 @@ static cl::opt<unsigned> ShadowMixWMMAMinVALU1c(
   cl::init(1));
 
 static cl::opt<unsigned> ShadowMixWMMAMinDS(
-  "amdgpu-shadow-mix-wmma-min-ds", cl::Hidden,
-  cl::desc("Minimum number of ready DS (LDS load/store) instructions required "
-           "before scheduling a WMMA instruction. Setting to 0 disables "
-           "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
-  cl::init(3));
+    "amdgpu-shadow-mix-wmma-min-ds", cl::Hidden,
+    cl::desc(
+        "Minimum number of ready DS (LDS load/store) instructions required "
+        "before scheduling a WMMA instruction. Setting to 0 disables "
+        "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
+    cl::init(2));
 
 static cl::opt<unsigned> ShadowMixWMMAMinSALU(
   "amdgpu-shadow-mix-wmma-min-salu", cl::Hidden,
@@ -152,10 +153,11 @@ static cl::opt<bool> ShadowDeferTRANS32(
   cl::init(true));
 
 static cl::opt<unsigned> ShadowMixTRANS32MinVALU1c(
-  "amdgpu-shadow-mix-trans32-min-valu1c", cl::Hidden,
-  cl::desc("Minimum 1-cycle VALU instructions ready before scheduling TRANS32 "
-           "(when -amdgpu-shadow-defer-trans32 enabled)."),
-  cl::init(0));
+    "amdgpu-shadow-mix-trans32-min-valu1c", cl::Hidden,
+    cl::desc(
+        "Minimum 1-cycle VALU instructions ready before scheduling TRANS32 "
+        "(when -amdgpu-shadow-defer-trans32 enabled)."),
+    cl::init(1));
 
 static cl::opt<bool> ShadowPreferVALU1cOverSALUForTRANS(
   "amdgpu-shadow-prefer-valu-over-salu-for-trans", cl::Hidden,
@@ -698,10 +700,18 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
   }
 
   unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
-  if (LongLatVALU > 1 && SchedMFMA.size()) {
-    auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
-    unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
-    ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+  if (LongLatVALU > 1 && (SchedMFMA.size() || SchedEXP.size())) {
+    if (SchedMFMA.size()) {
+      auto PrevMFMA = SchedMFMA[SchedMFMA.size() - 1];
+      unsigned PrevMFMAIssue = PrevMFMA->TopReadyCycle;
+      ReadyCycle = std::max(PrevMFMAIssue + PrevMFMA->Latency, ReadyCycle);
+    }
+
+    if (SchedEXP.size()) {
+      auto PrevEXP = SchedEXP[SchedEXP.size() - 1];
+      unsigned PrevEXPIssue = PrevEXP->TopReadyCycle;
+      ReadyCycle = std::max(PrevEXPIssue + 2, ReadyCycle);
+    }
   }
 
   if (IsPostRA) {

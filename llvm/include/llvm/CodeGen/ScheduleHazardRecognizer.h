@@ -66,11 +66,11 @@ public:
   /// set to an initialized state.
   virtual void Reset() {}
 
-  virtual void RefreshState(SUnit *) {}
-
   /// EmitInstruction - This callback is invoked when an instruction is
   /// emitted, to advance the hazard state.
   virtual void EmitInstruction(SUnit *) {}
+
+  virtual unsigned getStallCount(SUnit *) { return 0; }
 
   /// This overload will be used when the hazard recognizer is being used
   /// by a non-scheduling pass, which does not use SUnits.
