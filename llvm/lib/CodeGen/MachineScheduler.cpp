@@ -2965,17 +2965,6 @@ unsigned SchedBoundary::countResource(const MCSchedClassDesc *SC, unsigned PIdx,
 
 /// Move the boundary of scheduled code by one SUnit.
 void SchedBoundary::bumpNode(SUnit *SU) {
-  // Update the reservation table.
-  if (HazardRec->isEnabled()) {
-    if (!isTop() && SU->isCall) {
-      // Calls are scheduled with their preceding instructions. For bottom-up
-      // scheduling, clear the pipeline state before emitting.
-      HazardRec->Reset();
-    }
-    HazardRec->EmitInstruction(SU);
-    // Scheduling an instruction may have made pending instructions available.
-    CheckPending = true;
-  }
 
   // checkHazard should prevent scheduling multiple instructions per cycle that
   // exceed the issue width.
@@ -3080,6 +3069,11 @@ void SchedBoundary::bumpNode(SUnit *SU) {
       }
     }
   }
+  if (HazardRec->isEnabled()) {
+    unsigned StallCount = HazardRec->getStallCount(SU);
+    NextCycle = std::max(CurrCycle + StallCount, NextCycle);
+  }
+
   // Update ExpectedLatency and DependentLatency.
   unsigned &TopLatency = isTop() ? ExpectedLatency : DependentLatency;
   unsigned &BotLatency = isTop() ? DependentLatency : ExpectedLatency;
@@ -3102,6 +3096,18 @@ void SchedBoundary::bumpNode(SUnit *SU) {
     IsResourceLimited =
         checkResourceLimit(SchedModel->getLatencyFactor(), getCriticalCount(),
                            getScheduledLatency(), true);
+
+  // Update the reservation table.
+  if (HazardRec->isEnabled()) {
+    if (!isTop() && SU->isCall) {
+      // Calls are scheduled with their preceding instructions. For bottom-up
+      // scheduling, clear the pipeline state before emitting.
+      HazardRec->Reset();
+    }
+    HazardRec->EmitInstruction(SU);
+    // Scheduling an instruction may have made pending instructions available.
+    CheckPending = true;
+  }
 
   // Update CurrMOps after calling bumpCycle to handle stalls, since bumpCycle
   // resets CurrMOps. Loop to handle instructions with more MOps than issue in
@@ -3126,10 +3132,6 @@ void SchedBoundary::bumpNode(SUnit *SU) {
     bumpCycle(++NextCycle);
   }
   LLVM_DEBUG(dumpScheduledState());
-
-  if (HazardRec->isEnabled()) {
-    HazardRec->RefreshState(SU);
-  }
 }
 
 /// Release pending ready nodes in to the available queue. This makes them

@@ -124,23 +124,6 @@ bool GCNHazardRecognizer::isWMMAPipelineHazard() {
   return WMMAPipelineState.size() == 3;
 }
 
-void GCNHazardRecognizer::RefreshState(SUnit *SU) {
-  auto &MI = *SU->getInstr();
-
-  updateTRANS32State(MI, true);
-  updateCVTState(MI, true);
-  updateSSrcState(MI, true);
-  if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
-    return;
-
-  updateWMMAPipelineState(MI);
-  if (!WMMAPipelineState.empty()) {
-    PendingWMMAScaleValuTailStall = 0;
-    WMMAPipelineState.erase(WMMAPipelineState.begin());
-    return;
-  }
-}
-
 unsigned GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const {
   // No hazard if pipeline is empty.
   if (WMMAPipelineState.empty()) {
@@ -911,6 +894,10 @@ GCNHazardRecognizer::postRAGetHazardWaitStates(MachineInstr *MI) const {
       std::max(WaitStates, (unsigned)const_cast<GCNHazardRecognizer *>(this)
                                ->checkTRANSCoexecutionHazards(MI));
   return WaitStates;
+}
+
+unsigned GCNHazardRecognizer::getStallCount(SUnit *SU) {
+  return getHazardWaitStates(SU->getInstr());
 }
 
 unsigned GCNHazardRecognizer::getHazardWaitStates(MachineInstr *MI) const {

@@ -135,8 +135,6 @@ private:
   /// Update WMMA pipeline state when a WMMA instruction is emitted.
   void updateWMMAPipelineState(const MachineInstr &MI);
 
-  void RefreshState(SUnit *SU) override;
-
   /// Update TRANS32 state when an instruction is emitted.
   void updateTRANS32State(const MachineInstr &MI, bool SubOne = false);
 
@@ -304,6 +302,8 @@ public:
   void RecedeCycle() override;
   bool ShouldPreferAnother(SUnit *SU) override;
   void Reset() override;
+
+  unsigned getStallCount(SUnit *SU) override;
 };
 
 } // end namespace llvm
