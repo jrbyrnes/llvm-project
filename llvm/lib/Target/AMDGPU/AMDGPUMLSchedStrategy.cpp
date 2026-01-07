@@ -418,9 +418,6 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   HWUInfo.resize((int)InstructionFlavor::NUM_FLAVORS);
   HWUInfo[(int)InstructionFlavor::DMA].IsAsync = true;
 
-  HWUInfo[(int)InstructionFlavor::WMMA].IsIssueHideable = false;
-  HWUInfo[(int)InstructionFlavor::MultiCycleVALU].IsIssueHideable = false;
-
   for (unsigned I = 0; I < HWUInfo.size(); I++) {
     HWUInfo[I].setType(I);
   }
@@ -691,9 +688,6 @@ void AMDGPUMLSchedStrategy::collectUse() {
   }
 
   HWUInfo[(int)InstructionFlavor::DMA].IsAsync = true;
-
-  HWUInfo[(int)InstructionFlavor::WMMA].IsIssueHideable = false;
-  HWUInfo[(int)InstructionFlavor::MultiCycleVALU].IsIssueHideable = false;
 
   HWUInfo[(int)InstructionFlavor::WMMA].ProducesCoexecWindow = true;
   HWUInfo[(int)InstructionFlavor::MultiCycleVALU].ProducesCoexecWindow = true;
@@ -2598,9 +2592,6 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
 
   HWUInfo[(int)InstructionFlavor::DMA].IsAsync = true;
 
-  HWUInfo[(int)InstructionFlavor::WMMA].IsIssueHideable = false;
-  HWUInfo[(int)InstructionFlavor::MultiCycleVALU].IsIssueHideable = false;
-
   HWUInfo[(int)InstructionFlavor::WMMA].ProducesCoexecWindow = true;
   HWUInfo[(int)InstructionFlavor::MultiCycleVALU].ProducesCoexecWindow = true;
   HWUInfo[(int)InstructionFlavor::TRANS].ProducesCoexecWindow = true;
@@ -2699,9 +2690,6 @@ void AMDGPUMLPostSchedStrategy::initialize(ScheduleDAGMI *DAG) {
 
   HWUInfo.resize((int)InstructionFlavor::NUM_FLAVORS);
   HWUInfo[(int)InstructionFlavor::DMA].IsAsync = true;
-
-  HWUInfo[(int)InstructionFlavor::WMMA].IsIssueHideable = false;
-  HWUInfo[(int)InstructionFlavor::MultiCycleVALU].IsIssueHideable = false;
 
   for (unsigned I = 0; I < HWUInfo.size(); I++) {
     HWUInfo[I].setType(I);
