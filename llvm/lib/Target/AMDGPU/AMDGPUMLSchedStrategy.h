@@ -34,8 +34,7 @@ enum class InstructionFlavor : uint8_t {
   DMA,             // Tensor DMA operations
   Fence,           // Fences and waits
   Other,           // Everything else
-  NUM_FLAVORS,
-  LLVM_MARK_AS_BITMASK_ENUM(/* LargestFlag = */ NUM_FLAVORS)
+  NUM_FLAVORS
 };
 
 inline StringRef getFlavorName(InstructionFlavor F) {
@@ -263,7 +262,6 @@ public:
   // TODO -- handle this better.
   bool IsAsync = false;
   unsigned Idx;
-  bool IsIssueHideable = true;
   bool ProducesCoexecWindow = false;
   unsigned CoexecWindowSize = 0;
 
@@ -376,7 +374,6 @@ public:
     PrioritySUs.clear();
     TotalCycles = 0;
     IsAsync = false;
-    IsIssueHideable = true;
     Exposed = 0;
     RemainingExposed = 0;
     ProducesCoexecWindow = false;
@@ -388,7 +385,6 @@ public:
     errs() << "Count: " << AllSUs.size() << "\n";
     errs() << "TotalCycles: " << getTotalCycles() << "\n";
     errs() << "RemainingExposed: " << RemainingExposed << "\n";
-    errs() << "IsIssueHideable: " << IsIssueHideable << "\n";
     errs() << "ProducesCoexecWindow: " << ProducesCoexecWindow << "\n";
   }
 };
