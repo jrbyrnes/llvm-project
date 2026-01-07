@@ -292,8 +292,22 @@ unsigned GCNHazardRecognizer::checkCVTHazard(const MachineInstr &MI) const {
   }
 
   // TRANS32 can be followed by VALU or control instructions without stall
-  if (!SIInstrInfo::isVALU(MI))
-    return 0;
+  if (!SIInstrInfo::isVALU(MI)) {
+    const SIRegisterInfo *TRI = ST.getRegisterInfo();
+    const MachineRegisterInfo &MRI = MF.getRegInfo();
+    bool IsBadCopy = false;
+    if (MI.isCopy()) {
+      Register Dest = MI.getOperand(0).getReg();
+      if (Dest.isVirtual()) {
+        auto RC = MRI.getRegClass(Dest);
+        if (TRI->isVGPRClass(RC)) {
+          IsBadCopy = false; // true;
+        }
+      }
+    }
+    if (!IsBadCopy)
+      return 0;
+  }
 
   // Any other instruction requires a 1-cycle stall
   LLVM_DEBUG(dbgs() << "checkTRANS32Hazard: stall after TRANS32 for: " << MI);
@@ -351,7 +365,7 @@ void GCNHazardRecognizer::updateSSrcState(const MachineInstr &MI, bool SubOne) {
   bool UsesSGPR = false;
   const SIRegisterInfo *TRI = ST.getRegisterInfo();
   const MachineRegisterInfo &MRI = MF.getRegInfo();
-  
+
   for (auto &Op : MI.operands()) {
     if (!Op.isReg())
       continue;
@@ -373,10 +387,12 @@ void GCNHazardRecognizer::updateSSrcState(const MachineInstr &MI, bool SubOne) {
   }
 }
 
-void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
+void GCNHazardRecognizer::getWMMASlots(
+    const MachineInstr &MI, SmallVectorImpl<WMMASlotType> &WMMAPipeline) {
   if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
     return;
-  
+
+  WMMAPipeline.clear();
   unsigned Opc = MI.getOpcode();
 
   if (Opc == AMDGPU::V_WMMA_F32_16X16X32_BF16_w32_threeaddr ||
@@ -387,18 +403,18 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_BF16_16X16X32_BF16_w32_twoaddr ||
       Opc == AMDGPU::V_WMMA_F16_16X16X32_F16_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_F16_16X16X32_F16_w32_twoaddr) {
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
     // We want behavior of ValuCoExec1 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec1);
     // We want behavior of ValuCoexec0 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
     return;
   }
 
@@ -418,15 +434,15 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_F16_16X16X64_BF8_FP8_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_F16_16X16X64_FP8_BF8_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_F16_16X16X64_FP8_BF8_w32_threeaddr) {
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
     // We want behavior of ValuCoExec1 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec2);
     // We want behavior of ValuCoexec0 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
@@ -447,17 +463,17 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_F16_16X16X128_FP8_BF8_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_F16_16X16X128_FP8_BF8_w32_threeaddr) {
 
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
@@ -478,17 +494,17 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f4_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f8_f4_w32_twoaddr) {
     // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
@@ -524,31 +540,31 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_w32_twoaddr ||
       Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_w32_twoaddr) {
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec3);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoexecLastLdScale);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExecLdScale);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec3);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoexecLastLdScale);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExecLdScale);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
   if (Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f4_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_F32_16X16X128_F8F6F4_f4_f4_w32_twoaddr) {
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
     // We want behavior of ValuCoExec1 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec2);
     // We want behavior of ValuCoexec0 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
@@ -556,15 +572,15 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_SCALE16_F32_16X16X128_F8F6F4_f4_f4_w32_twoaddr ||
       Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_w32_twoaddr) {
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
     // We want behavior of ValuCoExec1 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExecLdScale);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExecLdScale);
     // We want behavior of ValuCoexec0 here
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
@@ -572,36 +588,47 @@ void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
       Opc == AMDGPU::V_WMMA_F32_32X16X128_F4_w32_twoaddr) {
 
     // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec2);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec2);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
 
   if (Opc == AMDGPU::V_WMMA_SCALE_F32_32X16X128_F4_w32_threeaddr ||
       Opc == AMDGPU::V_WMMA_SCALE_F32_32X16X128_F4_w32_twoaddr) {
     // Hardcode pipeline for v_wmma_scale_f32_16x16x128_f8f6f4
-    WMMAPipelineState.clear();
-    WMMAPipelineState.append(1, WMMASlotType::Execute);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec0);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::MemCoExec1);
-    WMMAPipelineState.append(1, WMMASlotType::ValuCoExecLdScale);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked0);
-    WMMAPipelineState.append(1, WMMASlotType::ValuBlocked1);
+    WMMAPipeline.clear();
+    WMMAPipeline.append(1, WMMASlotType::Execute);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec0);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::MemCoExec1);
+    WMMAPipeline.append(1, WMMASlotType::ValuCoExecLdScale);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked0);
+    WMMAPipeline.append(1, WMMASlotType::ValuBlocked1);
     return;
   }
+}
+
+void GCNHazardRecognizer::updateWMMAPipelineState(const MachineInstr &MI) {
+  if (!AMDGPU::isGFX1250(ST) || !TII.isXDLWMMA(MI))
+    return;
+
+  getWMMASlots(MI, WMMAPipelineState);
+}
+
+bool GCNHazardRecognizer::inVALUShadow() {
+  return CyclesUntilVALU || CyclesUntilTRANS32 || WMMAPipelineState.size();
 }
 
 void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
@@ -2937,7 +2964,7 @@ int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
   // is a VALU). Refer to SPG 4.6.12.1. "Requirements for WMMA data hazards" for
   // numbers, which depends on the category of the first WMMA.
   const int WMMAWaitStates[] = {5, 9, 3, 5};
-  const int VALUWaitStates[] = {4, 8, 2, 4};
+  const int VALUWaitStates[] = {4, 3, 2, 4};
   unsigned Category = 0;
 
   auto IsWMMAHazardFn = [MI, TII, TRI, &Category, this](const MachineInstr &I) {

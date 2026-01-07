@@ -69,6 +69,10 @@ public:
 
   bool isWMMAPipelineHazard();
 
+  bool inVALUShadow();
+  void getWMMASlots(const MachineInstr &MI,
+                    SmallVectorImpl<WMMASlotType> &WMMAPipelineState);
+
 private:
   // Operating mode determines which hazards are checked and whether fixes are applied.
   OperatingMode Mode;
@@ -304,6 +308,8 @@ public:
   void Reset() override;
 
   unsigned getStallCount(SUnit *SU) override;
+
+  unsigned getTRANS32HazardState() { return CyclesUntilTRANS32; };
 };
 
 } // end namespace llvm
