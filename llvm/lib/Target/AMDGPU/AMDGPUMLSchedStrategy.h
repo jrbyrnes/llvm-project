@@ -24,25 +24,28 @@ namespace llvm {
 //===----------------------------------------------------------------------===//
 
 enum class InstructionFlavor : uint8_t {
-  WMMA,           // WMMA/MFMA matrix operations
-  SingleCycleVALU,// Single-cycle VALU (not TRANS32, not multi-cycle CVT)
-  TRANS32,        // Transcendental ops (v_exp, v_log, etc.) - 2 cycles
-  CVT4Cycle,      // 4-cycle CVT instructions (v_cvt_scalef32_pk8_fp8_f32)
-  VMEM,           // FLAT/GLOBAL memory operations
-  DS,             // LDS/GDS operations
-  SALU,           // Scalar ALU
-  DMA,            // Tensor DMA operations
-  Fence,          // Fences and waits
-  Other,          // Everything else
-  NUM_FLAVORS
+  WMMA,            // WMMA/MFMA matrix operations
+  SingleCycleVALU, // Single-cycle VALU (not TRANS32, not multi-cycle CVT)
+  TRANS,           // Transcendental ops (v_exp, v_log, etc.) - 2 cycles
+  MultiCycleVALU,  // 4-cycle CVT instructions (v_cvt_scalef32_pk8_fp8_f32)
+  VMEM,            // FLAT/GLOBAL memory operations
+  DS,              // LDS/GDS operations
+  SALU,            // Scalar ALU
+  DMA,             // Tensor DMA operations
+  Fence,           // Fences and waits
+  Other,           // Everything else
+  NUM_FLAVORS,
+  LLVM_MARK_AS_BITMASK_ENUM(/* LargestFlag = */ NUM_FLAVORS)
 };
 
 inline StringRef getFlavorName(InstructionFlavor F) {
   switch (F) {
   case InstructionFlavor::WMMA:           return "WMMA";
   case InstructionFlavor::SingleCycleVALU:return "VALU(1c)";
-  case InstructionFlavor::TRANS32:        return "TRANS32(2c)";
-  case InstructionFlavor::CVT4Cycle:      return "CVT(4c)";
+  case InstructionFlavor::TRANS:
+    return "TRANS";
+  case InstructionFlavor::MultiCycleVALU:
+    return "VALU(Nc)";
   case InstructionFlavor::VMEM:           return "VMEM";
   case InstructionFlavor::DS:             return "DS";
   case InstructionFlavor::SALU:           return "SALU";
@@ -58,8 +61,10 @@ inline StringRef getFlavorShortName(InstructionFlavor F) {
   switch (F) {
   case InstructionFlavor::WMMA:           return "W";
   case InstructionFlavor::SingleCycleVALU:return "V";
-  case InstructionFlavor::TRANS32:        return "T";
-  case InstructionFlavor::CVT4Cycle:      return "C";
+  case InstructionFlavor::TRANS:
+    return "T";
+  case InstructionFlavor::MultiCycleVALU:
+    return "C";
   case InstructionFlavor::VMEM:           return "M";
   case InstructionFlavor::DS:             return "D";
   case InstructionFlavor::SALU:           return "S";
@@ -77,8 +82,8 @@ using FlavorGroup = SmallVector<InstructionFlavor, 4>;
 
 namespace FlavorGroups {
   inline FlavorGroup allVALU() {
-    return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS32,
-            InstructionFlavor::CVT4Cycle};
+    return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS,
+            InstructionFlavor::MultiCycleVALU};
   }
   inline FlavorGroup allMem() {
     return {InstructionFlavor::VMEM, InstructionFlavor::DS,
@@ -245,22 +250,25 @@ public:
 
 class HardwareUnitInfo {
 private:
-  const MCProcResourceDesc *ProcRes = nullptr;
   // Ideally these would be sorted on how much they enable a secondary resource,
   // but that creates a chicken and egg problem and compile time explosion.
   SmallSetVector<SUnit *, 16> PrioritySUs;
   SmallSetVector<SUnit *, 16> AllSUs;
   unsigned TotalCycles = 0;
+  InstructionFlavor Type;
+  unsigned Exposed = 0;
+  unsigned RemainingExposed = 0;
 
 public:
   // TODO -- handle this better.
   bool IsAsync = false;
   unsigned Idx;
+  bool IsIssueHideable = true;
+  bool ProducesCoexecWindow = false;
+  unsigned CoexecWindowSize = 0;
 
-  HardwareUnitInfo(const MCProcResourceDesc *Res) : ProcRes(Res) {};
   HardwareUnitInfo() {}
 
-  void setRes(const MCProcResourceDesc *Res) { ProcRes = Res; }
 
   unsigned size() { return AllSUs.size(); }
   SUnit *getTargetSU() { return *PrioritySUs.begin(); }
@@ -275,7 +283,25 @@ public:
   }
 
   unsigned getTotalCycles() { return TotalCycles; }
-  const MCProcResourceDesc *getProcRes() { return ProcRes; }
+
+  void setType(unsigned TheType) {
+    assert(TheType < (unsigned)InstructionFlavor::NUM_FLAVORS);
+    Type = (InstructionFlavor)(TheType);
+  }
+
+  InstructionFlavor getType() const { return Type; }
+
+  void setExposedCount(unsigned ExposedCount) {
+    Exposed = ExposedCount;
+    RemainingExposed = ExposedCount;
+  }
+
+  unsigned getRemainingExposed() { return RemainingExposed; }
+
+  void reduceRemainingExposed() {
+    if (RemainingExposed > 0)
+      --RemainingExposed;
+  }
 
   void insert(SUnit *SU, unsigned ReleaseAtCycle) {
     bool Inserted = AllSUs.insert(SU);
@@ -349,13 +375,21 @@ public:
     AllSUs.clear();
     PrioritySUs.clear();
     TotalCycles = 0;
+    IsAsync = false;
+    IsIssueHideable = true;
+    Exposed = 0;
+    RemainingExposed = 0;
+    ProducesCoexecWindow = false;
+    CoexecWindowSize = 0;
   }
 
   void print() {
-    errs() << "HWUI has TotalCycles: " << getTotalCycles() << "\nIt contains SUs:\n";
-    for (auto SU : AllSUs) {
-      SU->getInstr()->dump();
-    }
+    errs() << "HWUI: " << getFlavorName(Type) << "\n";
+    errs() << "Count: " << AllSUs.size() << "\n";
+    errs() << "TotalCycles: " << getTotalCycles() << "\n";
+    errs() << "RemainingExposed: " << RemainingExposed << "\n";
+    errs() << "IsIssueHideable: " << IsIssueHideable << "\n";
+    errs() << "ProducesCoexecWindow: " << ProducesCoexecWindow << "\n";
   }
 };
 
