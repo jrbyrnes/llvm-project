@@ -1371,11 +1371,8 @@ int GCNHazardRecognizer::getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) 
   auto GetXDLWaitStates = [this](const MachineInstr *MI) -> unsigned {
     assert(MI);
 
-    if (TII.isXDLWMMA(*MI))  {
-      unsigned Cycles =  TSchedModel.computeInstrLatency(MI);
-      // No hazard if intervening WMMA has more than 5 cycles.
-      return (Cycles >= 5) ? Cycles : 0;
-    }
+    if (TII.isXDLWMMA(*MI))
+      return TSchedModel.computeInstrLatency(MI);
 
     return 0;
   };
