@@ -309,8 +309,10 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
         }
       }
 
-      unsigned Cutoff = std::max((unsigned)4, RegionCount);
+      unsigned Cutoff = std::min((unsigned)4, RegionCount);
       for (unsigned I = 0; I < Cutoff; I++) {
+        if (I > RegionStarts.size())
+          break;
         MachineBasicBlock::iterator Begin = RegionStarts[I]->getIterator();
 
         MachineBasicBlock::iterator End = Begin;
