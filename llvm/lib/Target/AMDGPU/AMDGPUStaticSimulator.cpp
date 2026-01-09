@@ -711,13 +711,15 @@ bool handleMSBSet(InstClass IC, GPUSimState &State, BlockMetrics &Metrics,
   // Apply outcome
   Metrics.NumInstructions++;
   Metrics.NumMSBSet++;
-  if (Outcome == MSBSetOutcome::Exposed) {
-    if (IsMasked) {
+  bool ShouldCare = Outcome == MSBSetOutcome::Exposed;
+  if (Outcome == MSBSetOutcome::Exposed || true) {
+    ShouldCare &= !IsMasked;
+    if (IsMasked && false) {
       Metrics.NumMSBSetMasked++;
     } else {
       Metrics.NumMSBSetExposed++;
       State.advanceCycle(1);
-      if (State.inWMMAWindow()) {
+      if (State.inWMMAWindow() && ShouldCare) {
         Metrics.StallCoExec++;
         Metrics.CoExecMissOther++;
       }
@@ -881,6 +883,11 @@ StallSources computeStallSources(
   S.MemFIFO = FIFOStall;
   if (State.CurrentCycle + FIFOStall > IssueCycle)
     IssueCycle = State.CurrentCycle + FIFOStall;
+
+
+  if (MI.getOpcode() == AMDGPU::S_SET_VGPR_MSB || MI.getOpcode() == AMDGPU::S_SET_VGPR_MSB_gfx12) {
+    S.Unit++;
+  }
 
   return S;
 }

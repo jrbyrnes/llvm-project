@@ -50,6 +50,12 @@ static cl::opt<bool>
                                         "MFMA in GCNPreRAOptimizations stage."),
                                cl::init(true));
 
+static cl::opt<bool>
+    EnableSetMSBHints("amdgpu-hints-for-msb", cl::Hidden,
+                               cl::desc("Enable Anti-Hints for "
+                                        "MFMA in GCNPreRAOptimizations stage."),
+                               cl::init(true));
+
 namespace {
 
 class GCNPreRAOptimizationsImpl {
@@ -254,6 +260,87 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   TRI = ST.getRegisterInfo();
 
   bool Changed = false;
+
+  if (EnableSetMSBHints) {
+      MachineCycleInfo CI;
+      RegisterClassInfo RegClassInfo;
+      CI.compute(MF);
+      RegClassInfo.runOnMachineFunction(MF);
+      unsigned RegionCount = 0;
+      SmallVector<MachineInstr *, 4> RegionStarts;
+      SmallVector<MachineInstr *, 4> RegionEnds;
+      for (auto &MBB : MF) {
+        auto Cycle = CI.getCycle(&MBB);
+        if (!Cycle)
+          continue;
+
+
+        unsigned Counter = 0;
+        unsigned VOP3pCount = 0;
+        unsigned Threshold = 15;
+        bool InRegion = false;
+
+        MachineInstr *TempStart = nullptr;
+        for (auto &MI : MBB) {
+          bool IsWMMA = TII->isMFMAorWMMA(MI);
+          if (IsWMMA) {
+            Counter = 0;
+            VOP3pCount = 0;
+            if (InRegion) {
+              RegionEnds.push_back(&MI);
+              InRegion = false;
+            }
+            TempStart = nullptr;
+            continue;
+          }
+          
+          ++Counter;
+          if (TII->isVOP3P(MI) || MI.getOpcode() == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64) {
+            ++VOP3pCount;
+          }
+          if (Counter == 1) {
+            TempStart = &MI;
+          }
+          if (!InRegion && Counter >= Threshold && VOP3pCount >= 5) {
+            InRegion = true;
+            ++RegionCount;
+            RegionStarts.push_back(TempStart);
+          }
+        }
+      }
+
+      unsigned Cutoff = std::max((unsigned)4, RegionCount);
+      for (unsigned I = 0; I < Cutoff; I++) {
+        MachineBasicBlock::iterator Begin = RegionStarts[I]->getIterator();
+
+        MachineBasicBlock::iterator End = Begin;
+        if (RegionEnds.size() == RegionStarts.size())
+          End = RegionEnds[I]->getIterator();
+        else
+          End = Begin->getParent()->end();
+        for (; Begin != End; ++Begin) {
+          auto &MI = *Begin;
+          if (!TII->isVALU(MI))
+            continue;
+          
+          for (auto &Op : MI.operands()) {
+            if (!Op.isReg())
+              continue;
+            if (Op.getReg().isPhysical())
+              continue;
+            auto Order = RegClassInfo.getOrder(MF.getRegInfo().getRegClass(Op.getReg()));
+
+            unsigned WindowSize = Order.size() / 4;
+
+            for (auto W = WindowSize * I; W < (WindowSize * (I + 1)); W++)  {
+              MRI->addRegAllocationHint(Op.getReg(), Order[W]);
+            }
+            break;
+          }
+        }
+      }
+
+  }
 
   // Add RA anti-hints to reduce MFMA hazard NOPs
   if (EnableAntiHintsForMFMARegs) {
