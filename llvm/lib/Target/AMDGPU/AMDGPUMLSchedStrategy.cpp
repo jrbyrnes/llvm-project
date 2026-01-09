@@ -193,6 +193,14 @@ static cl::opt<bool> ShadowMixRules(
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
     cl::init(false));
 
+
+static cl::opt<unsigned> ShadowMixWMMAMinWMMA(
+  "amdgpu-shadow-mix-wmma-min-wmma", cl::Hidden,
+  cl::desc("Minimum number of ready WMMA instructions required "
+           "before attempting to free up coexecution instructionsn. Setting to 0 disables "
+           "WMMA check."),
+  cl::init(2));
+
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
 //===----------------------------------------------------------------------===//
@@ -1423,11 +1431,13 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
   unsigned ReadyVALU1c = MixInfo.getReadyCount(InstructionFlavor::SingleCycleVALU);
   unsigned ReadyDS = MixInfo.getReadyCount(InstructionFlavor::DS);
   unsigned ReadySALU = MixInfo.getReadyCount(InstructionFlavor::SALU);
+  unsigned ReadyWMMA = MixInfo.getReadyCount(InstructionFlavor::WMMA);
 
   // FIXME: should these values be determined by calculateHiddenLatency
   unsigned RequiredVALU1c = ShadowMixWMMAMinVALU1c;
   unsigned RequiredDS = ShadowMixWMMAMinDS;
   unsigned RequiredSALU = ShadowMixWMMAMinSALU;
+  unsigned RequiredWMMA = ShadowMixWMMAMinWMMA;
 
   InstructionFlavor TryFlavor = classifyFlavor(TryCand.SU->getInstr(), SII);
   InstructionFlavor CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
@@ -1450,6 +1460,8 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
   bool HaveEnoughDS = (RequiredDS == 0) || (ReadyDS >= RequiredDS);
   bool HaveEnoughSALU = (RequiredSALU == 0) || (ReadySALU >= RequiredSALU);
   bool HaveEnoughCoexec = HaveEnoughVALU1c && HaveEnoughDS && HaveEnoughSALU;
+  bool HaveEnoughWMMA = (RequiredWMMA == 0) || (ReadyWMMA >= RequiredWMMA);
+  //errs() << "HaveEnoughWMMA: " << HaveEnoughWMMA << "\n";
 
   // Helper lambda for shadow priority decisions
   auto preferFirst = [&](bool TryIsFirst, AMDGPUSchedReason Reason,
@@ -1522,12 +1534,13 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
             "VALU1c", "SALU");
     }
   }
-  // Rule 4: If we have enough co-exec candidates, no further intervention needed
-  if (HaveEnoughCoexec)
+
+  // Rule 4a: If we have enough co-exec candidates, no further intervention needed
+  if (HaveEnoughCoexec && HaveEnoughWMMA)
     return false;
 
   // Rule 5: Defer WMMA if not enough co-exec candidates ready
-  if (TryIsWMMA != CandIsWMMA) {
+  if (!HaveEnoughCoexec && TryIsWMMA != CandIsWMMA) {
     // Prefer the non-WMMA candidate
     if (TryIsWMMA) {
       // Cand is non-WMMA, prefer it
@@ -1550,7 +1563,7 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
   }
 
   // Rule 5b: Defer TRANS32 if not enough VALU ready (optional)
-  if (ShadowDeferTRANS32 && TryIsTRANS32 != CandIsTRANS32) {
+  if (ShadowDeferTRANS32 && HaveEnoughWMMA &&  TryIsTRANS32 != CandIsTRANS32) {
     unsigned RequiredForTRANS = ShadowMixTRANS32MinVALU1c;
     if (ReadyVALU1c < RequiredForTRANS) {
       // Prefer the non-TRANS32 candidate
@@ -1574,20 +1587,23 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
   }
 
   // Both are WMMA or both are non-WMMA
-  if (TryIsWMMA && CandIsWMMA) {
+  /*if (!HaveEnoughCoexec && TryIsWMMA && CandIsWMMA) {
     // Both WMMA - no preference, but we shouldn't schedule either yet
     // This will be handled by other heuristics or we'll stall
     return false;
-  }
+  }*/
 
   // Rule 6: Neither is WMMA, prefer the one that enables more co-exec candidates
   // Check which flavor we're short on and prioritize enabling that
-  InstructionFlavor NeededFlavor = InstructionFlavor::SingleCycleVALU;
-  if (!HaveEnoughDS && HaveEnoughVALU1c) {
-    NeededFlavor = InstructionFlavor::DS;
-  } else if (!HaveEnoughVALU1c && !HaveEnoughDS) {
-    // Short on both - prioritize VALU since it fills more co-exec slots
+  InstructionFlavor NeededFlavor = InstructionFlavor::WMMA;
+  if (HaveEnoughWMMA) {
     NeededFlavor = InstructionFlavor::SingleCycleVALU;
+    if (!HaveEnoughDS && HaveEnoughVALU1c) {
+      NeededFlavor = InstructionFlavor::DS;
+    } else if (!HaveEnoughVALU1c && !HaveEnoughDS) {
+      // Short on both - prioritize VALU since it fills more co-exec slots
+      NeededFlavor = InstructionFlavor::SingleCycleVALU;
+    }
   }
 
   // First check direct enablement (O(succs) - cheap)

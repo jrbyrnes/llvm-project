@@ -8,8 +8,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Dict
 
 ROOT = "/home/jeff/source/llvm_emu/llvm-project"
-BASE_LL = "/home/jeff/work/tickets/566006/blockScaleTemp/xfer8/no_debug.ll"
-OUTPUT_S = "/home/jeff/work/tickets/566006/blockScaleTemp/xfer8/res.s"
+BASE_LL = "/home/jeff//work/tickets/572967/no_debug.ll"
+OUTPUT_S = "/home/jeff//work/tickets/572967/res.s"
 
 _DEFAULT_LLC = os.path.join(ROOT, "build", "bin", "llc")
 LLC = os.environ.get("LLC", _DEFAULT_LLC if os.path.exists(_DEFAULT_LLC) else "llc")
@@ -101,9 +101,10 @@ def run_trial(params: Dict[str, Any], output_s: str = OUTPUT_S):
         f"-amdgpu-shadow-mix-trans32-min-valu1c={params['shadow_mix_trans32_min_valu1c']}",
         f"-amdgpu-shadow-prefer-valu-over-salu-for-trans={'true' if params['shadow_prefer_valu_over_salu_for_trans'] else 'false'}",
         f"-amdgpu-resource-priority-coexec-producer={'true' if params['resource_priority_coexec_producer'] else 'false'}",
-	f"-amdgpu-resource-priority-coexec-windows-size={'true' if params['resource_priority_coexec_windows_size'] else 'false'}",
-	f"-amdgpu-resource-priority-coexec-exposed-cycles={'true' if params['resource_priority_coexec_exposed_cycles'] else 'false'}",
+	    f"-amdgpu-resource-priority-coexec-windows-size={'true' if params['resource_priority_coexec_windows_size'] else 'false'}",
+	    f"-amdgpu-resource-priority-coexec-exposed-cycles={'true' if params['resource_priority_coexec_exposed_cycles'] else 'false'}",
         f"-amdgpu-use-shadow-mix-rules={'true' if params['use_shadow_mix_rules'] else 'false'}",
+        f"-amdgpu-shadow-mix-wmma-min-wmma={params['shadow_mix_wmma_min_wmma']}",
     ]
     rc, out, err = run_cmd(llc_cmd)
     if rc != 0:
@@ -162,10 +163,11 @@ def sample_params():
         "shadow_defer_trans32": random.choice([True, False]),
         "shadow_mix_trans32_min_valu1c": random.randint(0, 4),
         "shadow_prefer_valu_over_salu_for_trans": random.choice([True, False]),
-	"resource_priority_coexec_exposed_cycles": random.choice([True, False]),
-	"resource_priority_coexec_windows_size": random.choice([True, False]),
-	"resource_priority_coexec_producer": random.choice([True, False]),
+	    "resource_priority_coexec_exposed_cycles": random.choice([True, False]),
+	    "resource_priority_coexec_windows_size": random.choice([True, False]),
+	    "resource_priority_coexec_producer": random.choice([True, False]),
         "use_shadow_mix_rules": random.choice([True, False]),
+        "shadow_mix_wmma_min_wmma": random.randint(0, 6),
     }
 
 
@@ -200,6 +202,7 @@ BEST_SEED = {
     "resource_priority_coexec_windows_size": True,
     "resource_priority_coexec_producer": True,
     "use_shadow_mix_rules": False,
+    "shadow_mix_wmma_min_wmma": 0,
 }
 
 
@@ -243,6 +246,7 @@ def sample_local(base: Dict[str, Any]):
         "resource_priority_coexec_windows_size": base["resource_priority_coexec_windows_size"] if random.random() < 0.85 else (not base["resource_priority_coexec_windows_size"]),
         "resource_priority_coexec_producer": base["resource_priority_coexec_producer"] if random.random() < 0.85 else (not base["resource_priority_coexec_producer"]),
         "use_shadow_mix_rules": base["use_shadow_mix_rules"] if random.random() < 0.85 else (not base["use_shadow_mix_rules"]),
+        "shadow_mix_wmma_min_wmma": clamp(base["shadow_mix_wmma_min_wmma"] + random.randint(-1, 1), 0, 8),
 
     }
 
@@ -279,7 +283,8 @@ def build_llc_cmd(p: Dict[str, Any], output_file: str = "res.s", input_file: str
         f"-amdgpu-resource-priority-coexec-producer={'true' if p['resource_priority_coexec_producer'] else 'false'} "
         f"-amdgpu-resource-priority-coexec-windows-size={'true' if p['resource_priority_coexec_windows_size'] else 'false'} "
         f"-amdgpu-resource-priority-coexec-exposed-cycles={'true' if p['resource_priority_coexec_exposed_cycles'] else 'false'} "
-        f"-amdgpu-use-shadow-mix-rules={'true' if p['use_shadow_mix_rules'] else 'false'}"
+        f"-amdgpu-use-shadow-mix-rules={'true' if p['use_shadow_mix_rules'] else 'false'} "
+        f"-amdgpu-shadow-mix-wmma-min-wmma={p['shadow_mix_wmma_min_wmma']}"
     )
 
 
@@ -325,7 +330,7 @@ def main(argv=None):
                 "shadow_mix_lookahead_depth,shadow_mix_max_blocking_cost,shadow_mix_max_candidates,"
                 "shadow_priority_wmma_over_ds,shadow_priority_wmma_over_salu,shadow_priority_cvt_over_ds,shadow_priority_cvt_over_salu,"
                 "shadow_priority_trans32_over_valu1c,shadow_defer_trans32,shadow_mix_trans32_min_valu1c,shadow_prefer_valu_over_salu_for_trans,"
-                "resource_priority_coexec_exposed_cycles,resource_priority_coexec_windows_size,resource_priority_coexec_producer,use_shadow_mix_rules\n"
+                "resource_priority_coexec_exposed_cycles,resource_priority_coexec_windows_size,resource_priority_coexec_producer,use_shadow_mix_rules,shadow_mix_wmma_min_wmma\n"
             )
 
     def log_row(i, res):
@@ -340,8 +345,8 @@ def main(argv=None):
             f"{p['shadow_mix_wmma_min_valu1c']},{p['shadow_mix_wmma_min_ds']},{p['shadow_mix_wmma_min_salu']},"
             f"{p['shadow_mix_lookahead_depth']},{p['shadow_mix_max_blocking_cost']},{p['shadow_mix_max_candidates']},"
             f"{p['shadow_priority_wmma_over_ds']},{p['shadow_priority_wmma_over_salu']},{p['shadow_priority_cvt_over_ds']},{p['shadow_priority_cvt_over_salu']},"
-            f"{p['shadow_priority_trans32_over_valu1c']},{p['shadow_defer_trans32']},{p['shadow_mix_trans32_min_valu1c']},{p['shadow_prefer_valu_over_salu_for_trans']}"
-            f"{p['resource_priority_coexec_exposed_cycles']},{p['resource_priority_coexec_windows_size']},{p['resource_priority_coexec_producer']},{p['use_shadow_mix_rules']}\n"
+            f"{p['shadow_priority_trans32_over_valu1c']},{p['shadow_defer_trans32']},{p['shadow_mix_trans32_min_valu1c']},{p['shadow_prefer_valu_over_salu_for_trans']},"
+            f"{p['resource_priority_coexec_exposed_cycles']},{p['resource_priority_coexec_windows_size']},{p['resource_priority_coexec_producer']},{p['use_shadow_mix_rules']},{p['shadow_mix_wmma_min_wmma']}\n"
         )
 
     def process_result(idx: int, params: Dict[str, Any], result: Dict[str, Any]):
