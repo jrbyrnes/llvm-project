@@ -21,6 +21,11 @@ using namespace llvm;
 
 #define DEBUG_TYPE "amdgpu-insert-delay-alu"
 
+static cl::opt<bool> EnableInsertDelayALU(
+    "amdgpu-enable-insert-delay-alu", cl::Hidden,
+    cl::desc("Whether or not to enable insertion of s_delay_alu instructions."),
+    cl::init(false));
+
 namespace {
 
 class AMDGPUInsertDelayAlu {
@@ -462,7 +467,7 @@ public:
     LLVM_DEBUG(dbgs() << "AMDGPUInsertDelayAlu running on " << MF.getName()
                       << "\n");
     ST = &MF.getSubtarget<GCNSubtarget>();
-    if (!ST->hasDelayAlu())
+    if (!ST->hasDelayAlu() || !EnableInsertDelayALU)
       return false;
 
     SII = ST->getInstrInfo();
