@@ -11217,6 +11217,18 @@ unsigned SIInstrInfo::getRepeatRate(const MachineInstr &MI) const {
       Opc == AMDGPU::V_CVT_SCALE_PK16_F32_FP6_e64)
     return 8;
 
+  // V_CVT_SCALE_PK8 instructions: 4 cycle occupancy
+  if (Opc == AMDGPU::V_CVT_SCALE_PK8_F16_FP8_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_BF16_FP8_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_F16_BF8_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_BF16_BF8_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_F32_FP8_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_F32_BF8_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_F16_FP4_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_BF16_FP4_e64 ||
+      Opc == AMDGPU::V_CVT_SCALE_PK8_F32_FP4_e64)
+    return 4;
+
   if (Opc == AMDGPU::V_CVT_SCALEF32_PK8_BF8_BF16_e64 ||
       Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_BF16_e64 ||
       Opc == AMDGPU::V_CVT_SCALEF32_PK8_BF8_F16_e64 ||
