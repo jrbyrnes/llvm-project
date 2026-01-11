@@ -63,7 +63,7 @@ static cl::opt<bool> VerboseSimulation(
 static cl::opt<bool> EnableScoreboard(
     "amdgpu-static-sim-scoreboard",
     cl::desc("Enable register scoreboard for RAW detection without s_delay_alu"),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 /// Check if enabled via cl::opt or AMDGPU_ENABLE_STATIC_SIM env var.
 static bool isStaticSimulatorEnabled() {
