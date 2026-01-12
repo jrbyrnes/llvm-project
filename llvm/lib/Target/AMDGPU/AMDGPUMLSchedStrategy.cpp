@@ -886,6 +886,8 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   unsigned ReadyCycle = SU->TopReadyCycle;
   auto *MI = SU->getInstr();
+  const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
+
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   if (SII->isDS(*MI) && MI->mayLoad()) {
@@ -899,6 +901,14 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
       unsigned LastDSRIssue = SchedDSR[SchedDSR.size() - 1]->TopReadyCycle;
       // TODO -- should be release at cycle.
       ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
+    }
+
+    for (auto Pred : SU->Preds) {
+      auto PredSU = Pred.getSUnit();
+      if (SII->isVALU(*PredSU->getInstr())) {
+        ReadyCycle =
+          std::max(ReadyCycle, PredSU->TopReadyCycle + ST.getVDstThreshold(DAG->MF));
+      }
     }
   }
 
