@@ -73,6 +73,8 @@ public:
   bool inVALUShadow();
   void getWMMASlots(const MachineInstr &MI,
                     SmallVectorImpl<WMMASlotType> &WMMAPipelineState);
+  
+  unsigned getWaitStatesBetween(MachineInstr *Begin, MachineInstr *End) const;
 
 private:
   // Operating mode determines which hazards are checked and whether fixes are applied.
