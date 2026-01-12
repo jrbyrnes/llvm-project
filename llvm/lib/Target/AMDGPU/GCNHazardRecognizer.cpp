@@ -72,8 +72,10 @@ GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF,
   RunLdsBranchVmemWARHazardFixup = shouldRunLdsBranchVmemWARHazardFixup(MF, ST);
 }
 
+
 GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF)
     : GCNHazardRecognizer(MF, OperatingMode::HazardRecognizerMode) {}
+
 
 void GCNHazardRecognizer::preRAReset() {
   WMMAPipelineState.clear();
@@ -937,6 +939,57 @@ unsigned GCNHazardRecognizer::getHazardWaitStates(MachineInstr *MI) const {
     WaitStates = std::max(WaitStates, postRAGetHazardWaitStates(MI));
 
   return WaitStates;
+}
+
+unsigned GCNHazardRecognizer::getWaitStatesBetween(MachineInstr *Begin, MachineInstr *End) const {
+  if (!isPreRA() && !isPostRA())
+    return 0;
+
+  unsigned CycleCount = 0;
+
+  MachineBasicBlock *MBB = Begin->getParent();
+  if (MBB != End->getParent())
+    return 0;
+
+  auto I = Begin->getIterator();
+  auto E = End->getIterator();
+
+  unsigned MFMACycles = 0;
+  unsigned LongLatCycles = 0;
+  unsigned ExpCycles = 0;
+
+  for (; I != E; ++I) {
+    if (TII.isMFMAorWMMA(*I)) {
+      CycleCount += MFMACycles ? MFMACycles : 1;
+      MFMACycles = 7;
+      continue;
+    }
+    if (TII.isEXP(*I)) {
+      CycleCount += ExpCycles ? ExpCycles : 1;
+      ExpCycles = 1;
+      continue;
+    }
+    if (TII.isVALU(*I) && TII.getRepeatRate(*I) > 1) {
+      CycleCount += LongLatCycles ? LongLatCycles : 1;
+      LongLatCycles = TII.getRepeatRate(*I);
+      continue;
+    }
+    if (MFMACycles)
+      --MFMACycles;
+    
+    if (ExpCycles)
+      --ExpCycles;
+    
+    if (LongLatCycles)
+      --LongLatCycles;
+
+    ++CycleCount;
+  }
+
+  return CycleCount;
+  
+
+
 }
 
 unsigned GCNHazardRecognizer::PreEmitNoopsCommon(MachineInstr *MI) {
