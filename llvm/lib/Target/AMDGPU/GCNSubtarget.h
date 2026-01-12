@@ -941,6 +941,8 @@ public:
   // on supported architectures.
   unsigned getNSAThreshold(const MachineFunction &MF) const;
 
+  unsigned getVDstThreshold(const MachineFunction &MF) const;
+
   // \returns true if the subtarget has a hazard requiring an "s_nop 0"
   // instruction before "s_sendmsg sendmsg(MSG_DEALLOC_VGPRS)".
   bool requiresNopBeforeDeallocVGPRs() const { return !HasGFX1250Insts; }

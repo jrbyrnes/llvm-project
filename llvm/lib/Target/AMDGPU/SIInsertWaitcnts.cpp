@@ -25,6 +25,7 @@
 
 #include "AMDGPU.h"
 #include "GCNSubtarget.h"
+#include "GCNHazardRecognizer.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIMachineFunctionInfo.h"
 #include "Utils/AMDGPUBaseInfo.h"
@@ -45,6 +46,8 @@ using namespace llvm;
 using namespace llvm::AMDGPU;
 
 #define DEBUG_TYPE "si-insert-waitcnts"
+
+bool DebugVDst = false;
 
 DEBUG_COUNTER(ForceExpCounter, DEBUG_TYPE "-forceexp",
               "Force emit s_waitcnt expcnt(0) instrs");
@@ -517,6 +520,13 @@ public:
   InstCounterType SmemAccessCounter;
   InstCounterType MaxCounter;
   bool IsExpertMode = false;
+
+  bool shouldFlushVDst(MachineInstr &MI);
+
+  DenseMap<Register, MachineInstr *> VALUWrites;
+  DenseMap<Register, MachineInstr *> VALUReads;
+
+  std::unique_ptr<GCNHazardRecognizer> HazardRec;
 
 private:
   DenseMap<const Value *, MachineBasicBlock *> SLoadAddresses;
@@ -2215,6 +2225,98 @@ bool WaitcntGeneratorGFX12Plus::createNewWaitcnt(
   return Modified;
 }
 
+/// \returns true if the callee inserts an s_waitcnt 0 on function entry.
+static bool callWaitsOnFunctionEntry(const MachineInstr &MI) {
+  // Currently all conventions wait, but this may not always be the case.
+  //
+  // TODO: If IPRA is enabled, and the callee is isSafeForNoCSROpt, it may make
+  // senses to omit the wait and do it in the caller.
+  return true;
+}
+
+/// \returns true if the callee is expected to wait for any outstanding waits
+/// before returning.
+static bool callWaitsOnFunctionReturn(const MachineInstr &MI) { return true; }
+
+
+
+bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
+  if (!TII->isDS(MI))
+    return false;
+  unsigned Waits = 60;
+  MachineInstr *LastRead = nullptr;
+  MachineInstr *LastWrite = nullptr;
+  MachineInstr *RAWWrite = nullptr;
+  MachineInstr *MinInstr = nullptr;
+  for (auto &Op : MI.operands()) {
+    if (!Op.isReg())
+      continue;
+    
+    const bool IsVGPR = TRI->isVectorRegister(*MRI, Op.getReg());
+    if (!IsVGPR)
+      continue;
+    
+    auto TheReg = Op.getReg();
+
+    if (TRI->regsOverlap(TheReg, AMDGPU::EXEC))
+      continue;
+
+    if (Op.isDef()) {
+      if (VALUReads.contains(Op.getReg())) {
+        LastRead = VALUReads[TheReg];
+        if (LastRead->getParent() != MI.getParent())
+          LastRead = &*MI.getParent()->begin();
+        unsigned TempWaits = HazardRec->getWaitStatesBetween(LastRead, &MI);
+        Waits = std::min(TempWaits, Waits);
+        if (Waits == TempWaits) {
+          if (DebugVDst)
+            errs() << "WAR\n";
+          MinInstr = LastRead;
+        }
+      }
+      if (VALUWrites.contains(Op.getReg())) {
+        LastWrite = VALUWrites[TheReg];
+        if (LastWrite->getParent() != MI.getParent())
+          LastWrite = &*MI.getParent()->begin();
+        unsigned TempWaits = HazardRec->getWaitStatesBetween(LastWrite, &MI);
+        Waits = std::min(TempWaits, Waits);
+        if (Waits == TempWaits) {
+          if (DebugVDst)
+            errs() << "WAW\n";
+          MinInstr = LastWrite;
+        }
+      }
+    }
+
+    if (Op.isUse()) {
+      RAWWrite = VALUWrites[TheReg];
+      if (RAWWrite->getParent() != MI.getParent())
+        RAWWrite = &*MI.getParent()->begin();
+      unsigned TempWaits = HazardRec->getWaitStatesBetween(RAWWrite, &MI);
+        Waits = std::min(TempWaits, Waits);
+        if (Waits == TempWaits) {
+          if (DebugVDst)
+            errs() << "RAW\n";
+          MinInstr = RAWWrite;
+        }
+    }
+  }
+
+  if  (Waits < ST->getVDstThreshold(*MI.getMF())) {
+    if (DebugVDst)
+      errs() << "Insufficient waits: " << Waits << "\n";
+
+    if (MinInstr && DebugVDst) {
+      errs() << "MinInstr: \n";
+      MinInstr->dump();
+    }
+    return false;
+  }
+
+  return true;
+
+}
+
 ///  Generate s_waitcnt instruction to be placed before cur_Inst.
 ///  Instructions of a given type are returned in order,
 ///  but instructions of different types can complete out of order.
@@ -2398,6 +2500,15 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
         if (!Op.isReg())
           continue;
 
+        if (TII->isVALU(MI)) {
+          if (Op.isDef()) {
+            VALUWrites[Op.getReg()] = &MI;
+          }
+          else {
+            VALUReads[Op.getReg()] = &MI;
+          }
+        }
+
         // If the instruction does not read tied source, skip the operand.
         if (Op.isTied() && Op.isUse() && TII->doesNotReadTiedSource(MI))
           continue;
@@ -2484,6 +2595,12 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   // expert scheduling mode.
   if (TII->isVALU(MI))
     Wait.VaVdst = ~0u;
+  
+  if (TII->isDS(MI)) {
+    if (shouldFlushVDst(MI)) {
+      Wait.VaVdst = ~0u;
+    }
+  }
 
   // Since the translation for VMEM addresses occur in-order, we can apply the
   // XCnt if the current instruction is of VMEM type and has a memory
@@ -3310,6 +3427,9 @@ bool SIInsertWaitcnts::run(MachineFunction &MF) {
   TRI = &TII->getRegisterInfo();
   MRI = &MF.getRegInfo();
   const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+
+  HazardRec = std::make_unique<GCNHazardRecognizer>(MF, GCNHazardRecognizer::OperatingMode::PostRA);
+
 
   AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST->getCPU());
 
