@@ -47,7 +47,7 @@ using namespace llvm::AMDGPU;
 
 #define DEBUG_TYPE "si-insert-waitcnts"
 
-bool DebugVDst = false;
+bool DebugVDst = true;
 
 DEBUG_COUNTER(ForceExpCounter, DEBUG_TYPE "-forceexp",
               "Force emit s_waitcnt expcnt(0) instrs");
@@ -2439,20 +2439,32 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
       continue;
 
     if (Op.isDef()) {
-      if (VALUReads.contains(Op.getReg())) {
-        LastRead = VALUReads[TheReg];
-        if (LastRead->getParent() != MI.getParent())
-          LastRead = &*MI.getParent()->begin();
-        unsigned TempWaits = HazardRec->getWaitStatesBetween(LastRead, &MI);
-        Waits = std::min(TempWaits, Waits);
-        if (Waits == TempWaits) {
-          if (DebugVDst)
-            errs() << "WAR\n";
-          MinInstr = LastRead;
+      //if (VALUReads.contains(Op.getReg())) {
+
+      for (auto Entry : VALUReads) {
+        auto CandReg = Entry.first;
+        if (!TRI->regsOverlap(CandReg, Op.getReg()))
+          continue;
+
+          LastRead = VALUReads[CandReg];
+          if (LastRead->getParent() != MI.getParent())
+            LastRead = &*MI.getParent()->begin();
+          unsigned TempWaits = HazardRec->getWaitStatesBetween(LastRead, &MI);
+          Waits = std::min(TempWaits, Waits);
+          if (Waits == TempWaits) {
+            if (DebugVDst)
+              errs() << "WAR\n";
+            MinInstr = LastRead;
+          }
         }
-      }
-      if (VALUWrites.contains(Op.getReg())) {
-        LastWrite = VALUWrites[TheReg];
+      //}
+      //if (VALUWrites.contains(Op.getReg())) {
+      for (auto Entry : VALUWrites) {
+        auto CandReg = Entry.first;
+        if (!TRI->regsOverlap(CandReg, Op.getReg()))
+          continue;
+
+        LastWrite = VALUWrites[CandReg];
         if (LastWrite->getParent() != MI.getParent())
           LastWrite = &*MI.getParent()->begin();
         unsigned TempWaits = HazardRec->getWaitStatesBetween(LastWrite, &MI);
@@ -2462,11 +2474,17 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
             errs() << "WAW\n";
           MinInstr = LastWrite;
         }
-      }
+        }
+      //}
     }
 
     if (Op.isUse()) {
-      RAWWrite = VALUWrites[TheReg];
+      for (auto Entry : VALUWrites) {
+      auto CandReg = Entry.first;
+      if (!TRI->regsOverlap(CandReg, Op.getReg()))
+        continue;
+
+      RAWWrite = VALUWrites[CandReg];
       if (RAWWrite->getParent() != MI.getParent())
         RAWWrite = &*MI.getParent()->begin();
       unsigned TempWaits = HazardRec->getWaitStatesBetween(RAWWrite, &MI);
@@ -2476,6 +2494,7 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
             errs() << "RAW\n";
           MinInstr = RAWWrite;
         }
+      }
     }
   }
 
@@ -2486,6 +2505,8 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
     if (MinInstr && DebugVDst) {
       errs() << "MinInstr: \n";
       MinInstr->dump();
+      errs() << "DS: \n";
+      MI.dump();
     }
     return false;
   }
@@ -2774,9 +2795,12 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   if (TII.isVALU(MI))
     Wait.set(VA_VDST, ~0u);
   
+  unsigned OldVDst = Wait.VaVdst;
+  bool Flushed = false;
   if (TII->isDS(MI)) {
     if (shouldFlushVDst(MI)) {
       Wait.set(VA_VDST, ~0u);
+      Flushed = true;
     }
   }
 
@@ -2811,8 +2835,12 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   if (ForceEmitZeroLoadFlag && Wait.get(LOAD_CNT) != ~0u)
     Wait.set(LOAD_CNT, 0);
 
-  return generateWaitcnt(Wait, MI.getIterator(), *MI.getParent(), ScoreBrackets,
+  auto Ret = generateWaitcnt(Wait, MI.getIterator(), *MI.getParent(), ScoreBrackets,
                          OldWaitcntInstr);
+  if (Flushed)
+    Wait.VaVdst = OldVDst;
+  
+  return Ret;
 }
 
 bool SIInsertWaitcnts::generateWaitcnt(AMDGPU::Waitcnt Wait,
@@ -3836,6 +3864,9 @@ bool SIInsertWaitcnts::run() {
   bool Repeat;
   do {
     Repeat = false;
+    VALUWrites.clear();
+    VALUReads.clear();
+
 
     for (auto BII = BlockInfos.begin(), BIE = BlockInfos.end(); BII != BIE;
          ++BII) {
