@@ -955,11 +955,16 @@ unsigned GCNHazardRecognizer::getWaitStatesBetween(MachineInstr *Begin, MachineI
   auto I = Begin->getIterator();
   auto E = End->getIterator();
 
+  if (!I.isValid() || !E.isValid())
+    return 0;
+
   unsigned MFMACycles = 0;
   unsigned LongLatCycles = 0;
   unsigned ExpCycles = 0;
 
   for (; I != E; ++I) {
+    if (!I.isValid())
+      return 0;
     if (TII.isMFMAorWMMA(*I)) {
       CycleCount += MFMACycles ? MFMACycles : 1;
       MFMACycles = 7;
