@@ -122,6 +122,21 @@ static cl::opt<unsigned> MaxHints(
     cl::desc("Maximum number of hints to emit per MachineFunction (0 = unlimited)"),
     cl::init(0), cl::Hidden);
 
+static cl::opt<bool> DumpLanePressureTimeline(
+    "amdgpu-pre-ra-dump-lane-pressure",
+    cl::desc("Dump lane-weighted VGPR live pressure timeline per MBB (LiveIntervals + SlotIndexes)"),
+    cl::init(false), cl::Hidden);
+
+static cl::opt<unsigned> DumpLanePressureBucketSize(
+    "amdgpu-pre-ra-dump-lane-pressure-bucket",
+    cl::desc("Bucket size (in non-debug instructions) for lane pressure timeline dump"),
+    cl::init(1), cl::Hidden);
+
+static cl::opt<bool> DumpLanePressureLoopsOnly(
+    "amdgpu-pre-ra-dump-lane-pressure-loops-only",
+    cl::desc("Only dump lane pressure for MBBs that are inside a loop"),
+    cl::init(true), cl::Hidden);
+
 namespace {
 
 /// Cluster of vregs that should prefer the same VGPR block.
@@ -216,6 +231,7 @@ public:
 
 private:
   LiveIntervals *LIS = nullptr;
+  SlotIndexes *Indexes = nullptr;
   MachineRegisterInfo *MRI = nullptr;
   const SIRegisterInfo *TRI = nullptr;
   const SIInstrInfo *TII = nullptr;
@@ -297,6 +313,8 @@ private:
   void allocateClusterMembers(MSBCluster &C,
                               SmallVectorImpl<std::pair<Register, MCPhysReg>> &Allocated);
   MCPhysReg tryAllocateToBlock(Register VReg, unsigned Block);
+
+  void dumpLanePressureTimelineForMBB(const MachineBasicBlock &MBB) const;
   void rollbackAllocations(ArrayRef<std::pair<Register, MCPhysReg>> ToRollback,
                            unsigned Block);
   BatchResult tryAllocateBatch(ArrayRef<MSBCluster *> Batch, unsigned Block);
@@ -1402,6 +1420,7 @@ bool AMDGPUPreRAAlloc::runOnMachineFunction(MachineFunction &MF) {
   TII = ST->getInstrInfo();
   MRI = &MF.getRegInfo();
   LIS = &getAnalysis<LiveIntervalsWrapperPass>().getLIS();
+  Indexes = &getAnalysis<SlotIndexesWrapperPass>().getSI();
   VRM = &getAnalysis<VirtRegMapWrapperLegacy>().getVRM();
   Matrix = &getAnalysis<LiveRegMatrixWrapperLegacy>().getLRM();
   MLI = &getAnalysis<MachineLoopInfoWrapperPass>().getLI();
@@ -1439,6 +1458,17 @@ bool AMDGPUPreRAAlloc::runOnMachineFunction(MachineFunction &MF) {
   }
 
   LLVM_DEBUG(dbgs() << "  Hints: " << HintsEmitted << "\n");
+
+  if (DumpLanePressureTimeline && Indexes && LIS) {
+    dbgs() << "\n  === Lane-weighted VGPR live pressure timeline (pre-RA, SlotIndexes-based) ===\n";
+    dbgs() << "  Note: timeline is by instruction order (not cycles). Bucket="
+           << std::max(1u, (unsigned)DumpLanePressureBucketSize) << "\n";
+    for (const MachineBasicBlock &MBB : MF) {
+      if (DumpLanePressureLoopsOnly && !MLI->getLoopFor(&MBB))
+        continue;
+      dumpLanePressureTimelineForMBB(MBB);
+    }
+  }
   return MadeChanges;
 }
 
@@ -1666,6 +1696,132 @@ void AMDGPUPreRAAlloc::analyzeMSBExposures() const {
            << MaxTo << " (" << MaxCount << " occurrences)\n";
     dbgs() << "  Suggestion: Try -amdgpu-preallocator-default-ds-read-block="
            << MaxTo << " or improve anchoring\n";
+  }
+}
+
+void AMDGPUPreRAAlloc::dumpLanePressureTimelineForMBB(
+    const MachineBasicBlock &MBB) const {
+  if (!Indexes || !LIS || !MRI || !TRI)
+    return;
+
+  const unsigned Bucket = std::max(1u, (unsigned)DumpLanePressureBucketSize);
+  SlotIndex MBBStart = Indexes->getMBBStartIdx(&MBB);
+  SlotIndex MBBEnd = Indexes->getMBBEndIdx(&MBB);
+
+  SmallVector<const MachineInstr *, 128> Instrs;
+  SmallVector<SlotIndex, 128> InstrIdx;
+  Instrs.reserve(MBB.size());
+  InstrIdx.reserve(MBB.size());
+
+  for (const MachineInstr &MI : MBB) {
+    if (MI.isDebugInstr() || MI.isMetaInstruction())
+      continue;
+    Instrs.push_back(&MI);
+    InstrIdx.push_back(Indexes->getInstructionIndex(MI));
+  }
+
+  if (Instrs.empty())
+    return;
+
+  DenseSet<Register> VRegsInBlock;
+  for (const MachineInstr *MI : Instrs) {
+    for (const MachineOperand &MO : MI->operands()) {
+      if (!MO.isReg())
+        continue;
+      Register R = MO.getReg();
+      if (!R.isVirtual())
+        continue;
+      if (!TRI->isVGPR(*MRI, R))
+        continue;
+      VRegsInBlock.insert(R);
+    }
+  }
+
+  struct Event {
+    SlotIndex Idx;
+    int Block; // 0..3, or 4=unknown
+    int Delta; // +/- lanes
+  };
+
+  SmallVector<Event, 256> Events;
+  Events.reserve(VRegsInBlock.size() * 2);
+
+  for (Register R : VRegsInBlock) {
+    if (!LIS->hasInterval(R))
+      continue;
+    const LiveInterval &LI = LIS->getInterval(R);
+    unsigned Size = getRegSizeInLanes(R);
+    if (Size == 0)
+      continue;
+
+    int B = getAnchoredBlock(R);
+    if (B < 0 || B > 3)
+      B = 4;
+
+    // Add events for any segment that overlaps this MBB's slot range.
+    for (const LiveRange::Segment &S : LI.segments) {
+      SlotIndex A = std::max(S.start, MBBStart);
+      SlotIndex E = std::min(S.end, MBBEnd);
+      if (!(A < E))
+        continue;
+      Events.push_back({A, B, (int)Size});
+      Events.push_back({E, B, -(int)Size});
+    }
+  }
+
+  if (Events.empty())
+    return;
+
+  llvm::sort(Events, [](const Event &A, const Event &B) {
+    if (A.Idx != B.Idx)
+      return A.Idx < B.Idx;
+    // Apply adds before removes at the same index for more intuitive "live-at" printing.
+    return A.Delta > B.Delta;
+  });
+
+  dbgs() << "\n  -- MBB " << MBB.getNumber();
+  if (MBB.getBasicBlock())
+    dbgs() << " (" << MBB.getBasicBlock()->getName() << ")";
+  dbgs() << " --\n";
+
+  // Active lane pressure per predicted block (0..3) and unknown (4).
+  int Active[5] = {0, 0, 0, 0, 0};
+  unsigned EIdx = 0;
+
+  auto applyEventsUpTo = [&](SlotIndex Idx) {
+    while (EIdx < Events.size() && !(Idx < Events[EIdx].Idx)) {
+      int B = Events[EIdx].Block;
+      Active[B] += Events[EIdx].Delta;
+      if (Active[B] < 0)
+        Active[B] = 0; // Defensive against weird segments / rounding.
+      ++EIdx;
+    }
+  };
+
+  auto totalActive = [&]() -> int {
+    return Active[0] + Active[1] + Active[2] + Active[3] + Active[4];
+  };
+
+  // Bucket the instruction stream and report peak pressure in each bucket.
+  for (unsigned I = 0; I < Instrs.size(); I += Bucket) {
+    int Peak[5] = {0, 0, 0, 0, 0};
+    int PeakTotal = 0;
+
+    unsigned EndI = std::min<unsigned>(Instrs.size(), I + Bucket);
+    for (unsigned J = I; J < EndI; ++J) {
+      applyEventsUpTo(InstrIdx[J]);
+      int Tot = totalActive();
+      PeakTotal = std::max(PeakTotal, Tot);
+      for (int B = 0; B < 5; ++B)
+        Peak[B] = std::max(Peak[B], Active[B]);
+    }
+
+    const MachineInstr *ShowMI = Instrs[I];
+    dbgs() << "    [" << I << "-" << (EndI - 1) << "] "
+           << "peak_lanes total=" << PeakTotal
+           << " b0=" << Peak[0] << " b1=" << Peak[1] << " b2=" << Peak[2]
+           << " b3=" << Peak[3] << " u=" << Peak[4] << " | ";
+    ShowMI->print(dbgs());
   }
 }
 
