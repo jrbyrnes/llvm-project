@@ -50,6 +50,10 @@ static cl::opt<bool>
                                         "MFMA in GCNPreRAOptimizations stage."),
                                cl::init(true));
 
+static cl::opt<bool>
+    EnableAntiHintsForVAVDST("amdgpu-anti-hints-for-va-vdst", cl::Hidden,
+                             cl::init(true));
+
 namespace {
 
 class GCNPreRAOptimizationsImpl {
@@ -391,6 +395,85 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
                   MRI->addRegAllocationAntiHints(CandidateReg, EXPReg);
                   MRI->addRegAllocationAntiHints(EXPReg, CandidateReg);
                 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Add anti-hints to reduce VA_VDST hazards between VALU sources and
+  // DS_LOAD.
+  if (EnableAntiHintsForVAVDST && ST.getGeneration() >= AMDGPUSubtarget::GFX12) {
+    constexpr unsigned LookbackWindow = 30;
+
+    for (const MachineBasicBlock &MBB : MF) {
+      SmallVector<Register, 64> RecentVALUSrcs;
+
+      for (const MachineInstr &MI : MBB) {
+        if (MI.isDebugInstr())
+          continue;
+
+        unsigned Opc = MI.getOpcode();
+
+        if (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
+            Opc == AMDGPU::V_CVT_SCALEF32_PK8_BF8_F32_e64 ||
+            TII->isWMMA(MI)) {
+          for (const MachineOperand &MO : MI.uses()) {
+            if (!MO.isReg() || !MO.getReg().isVirtual())
+              continue;
+            Register Reg = MO.getReg();
+            const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+            if (TRI->hasVGPRs(RC) && TRI->getRegSizeInBits(*RC) >= 64) {
+              if (!llvm::is_contained(RecentVALUSrcs, Reg)) {
+                RecentVALUSrcs.push_back(Reg);
+                if (RecentVALUSrcs.size() > LookbackWindow)
+                  RecentVALUSrcs.erase(RecentVALUSrcs.begin());
+              }
+            }
+          }
+          continue;
+        }
+
+        if (Opc == AMDGPU::V_PK_ADD_F32 || Opc == AMDGPU::V_PK_MUL_F32 ||
+            Opc == AMDGPU::V_MAXIMUM3_F32_e64) {
+          for (const MachineOperand &MO : MI.uses()) {
+            if (!MO.isReg() || !MO.getReg().isVirtual())
+              continue;
+            Register Reg = MO.getReg();
+            const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+            if (TRI->hasVGPRs(RC) && TRI->getRegSizeInBits(*RC) <= 64) {
+              if (!llvm::is_contained(RecentVALUSrcs, Reg)) {
+                RecentVALUSrcs.push_back(Reg);
+                if (RecentVALUSrcs.size() > LookbackWindow)
+                  RecentVALUSrcs.erase(RecentVALUSrcs.begin());
+              }
+            }
+          }
+          continue;
+        }
+
+        if (Opc == AMDGPU::DS_LOAD_TR8_B64 || Opc == AMDGPU::DS_LOAD_TR16_B128) {
+          if (RecentVALUSrcs.empty())
+            continue;
+
+          for (const MachineOperand &MO : MI.defs()) {
+            if (!MO.isReg() || !MO.getReg().isVirtual())
+              continue;
+            Register DSDestReg = MO.getReg();
+            const TargetRegisterClass *RC = MRI->getRegClass(DSDestReg);
+            if (!TRI->hasVGPRs(RC) || !LIS->hasInterval(DSDestReg))
+              continue;
+
+            SlotIndex DSDestStart = LIS->getInterval(DSDestReg).beginIndex();
+
+            for (Register VALUSrcReg : RecentVALUSrcs) {
+              if (VALUSrcReg == DSDestReg || !LIS->hasInterval(VALUSrcReg))
+                continue;
+              if (!LIS->getInterval(VALUSrcReg).liveAt(DSDestStart)) {
+                MRI->addRegAllocationAntiHints(DSDestReg, VALUSrcReg);
+                MRI->addRegAllocationAntiHints(VALUSrcReg, DSDestReg);
               }
             }
           }
