@@ -46,7 +46,7 @@ using namespace llvm;
 
 #define DEBUG_TYPE "si-insert-waitcnts"
 
-bool DebugVDst = true;
+bool DebugVDst = false;
 
 DEBUG_COUNTER(ForceExpCounter, DEBUG_TYPE "-forceexp",
               "Force emit s_waitcnt expcnt(0) instrs");

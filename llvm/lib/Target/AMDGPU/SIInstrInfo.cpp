@@ -11073,6 +11073,10 @@ unsigned SIInstrInfo::getRepeatRate(const MachineInstr &MI) const {
     return 1;
 
   unsigned Opc = MI.getOpcode();
+  if (Opc == AMDGPU::V_PERMLANE16_SWAP_B32_e32) {
+    return 2;
+  }
+
   if (Opc == AMDGPU::V_EXP_F32_e32 || Opc == AMDGPU::V_EXP_F32_e64 ||
       Opc == AMDGPU::V_LOG_F32_e32 || Opc == AMDGPU::V_LOG_F32_e64 ||
       Opc == AMDGPU::V_RCP_F32_e32 || Opc == AMDGPU::V_RCP_F32_e64 ||
