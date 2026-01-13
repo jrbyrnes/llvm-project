@@ -408,7 +408,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   // Add anti-hints to reduce VA_VDST hazards between VALU sources and
   // DS_LOAD.
   if (EnableAntiHintsForVAVDST && ST.getGeneration() >= AMDGPUSubtarget::GFX12) {
-    constexpr unsigned LookbackWindow = 30;
+    constexpr unsigned LookbackWindow = 40;
 
     for (const MachineBasicBlock &MBB : MF) {
       SmallVector<Register, 64> RecentVALUSrcs;
@@ -419,6 +419,22 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
 
         unsigned Opc = MI.getOpcode();
 
+        if (TII->isVALU(MI)) {
+          for (const MachineOperand &MO : MI.uses()) {
+            if (!MO.isReg() || !MO.getReg().isVirtual())
+              continue;
+            Register Reg = MO.getReg();
+            const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+            if (TRI->hasVGPRs(RC)) {
+              if (!llvm::is_contained(RecentVALUSrcs, Reg)) {
+                RecentVALUSrcs.push_back(Reg);
+                if (RecentVALUSrcs.size() > LookbackWindow)
+                  RecentVALUSrcs.erase(RecentVALUSrcs.begin());
+              }
+            }
+          }
+        }
+/*
         if (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
             Opc == AMDGPU::V_CVT_SCALEF32_PK8_BF8_F32_e64 ||
             TII->isWMMA(MI)) {
@@ -455,7 +471,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           }
           continue;
         }
-
+*/
         if (Opc == AMDGPU::DS_LOAD_TR8_B64 || Opc == AMDGPU::DS_LOAD_TR16_B128) {
           if (RecentVALUSrcs.empty())
             continue;
