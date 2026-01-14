@@ -408,7 +408,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   // Add anti-hints to reduce VA_VDST hazards between VALU sources and
   // DS_LOAD.
   if (EnableAntiHintsForVAVDST && ST.getGeneration() >= AMDGPUSubtarget::GFX12) {
-    constexpr unsigned LookbackWindow = 40;
+    constexpr unsigned LookbackWindow = 32;
 
     for (const MachineBasicBlock &MBB : MF) {
       SmallVector<Register, 64> RecentVALUSrcs;
@@ -434,7 +434,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
             }
           }
         }
-/*
+
         if (Opc == AMDGPU::V_CVT_SCALEF32_PK8_FP8_F32_e64 ||
             Opc == AMDGPU::V_CVT_SCALEF32_PK8_BF8_F32_e64 ||
             TII->isWMMA(MI)) {
@@ -471,8 +471,9 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           }
           continue;
         }
-*/
-        if (Opc == AMDGPU::DS_LOAD_TR8_B64 || Opc == AMDGPU::DS_LOAD_TR16_B128) {
+
+        if (Opc == AMDGPU::DS_LOAD_TR8_B64 || Opc == AMDGPU::DS_LOAD_TR16_B128 ||
+            Opc == AMDGPU::DS_READ_B128 || Opc == AMDGPU::DS_READ_B128_gfx9) {
           if (RecentVALUSrcs.empty())
             continue;
 
@@ -481,18 +482,14 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
               continue;
             Register DSDestReg = MO.getReg();
             const TargetRegisterClass *RC = MRI->getRegClass(DSDestReg);
-            if (!TRI->hasVGPRs(RC) || !LIS->hasInterval(DSDestReg))
+            if (!TRI->hasVGPRs(RC))
               continue;
 
-            SlotIndex DSDestStart = LIS->getInterval(DSDestReg).beginIndex();
-
             for (Register VALUSrcReg : RecentVALUSrcs) {
-              if (VALUSrcReg == DSDestReg || !LIS->hasInterval(VALUSrcReg))
+              if (VALUSrcReg == DSDestReg)
                 continue;
-              if (!LIS->getInterval(VALUSrcReg).liveAt(DSDestStart)) {
-                MRI->addRegAllocationAntiHints(DSDestReg, VALUSrcReg);
-                MRI->addRegAllocationAntiHints(VALUSrcReg, DSDestReg);
-              }
+              MRI->addRegAllocationAntiHints(DSDestReg, VALUSrcReg);
+              MRI->addRegAllocationAntiHints(VALUSrcReg, DSDestReg);
             }
           }
         }
