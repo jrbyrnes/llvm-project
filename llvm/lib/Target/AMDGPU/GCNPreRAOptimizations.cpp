@@ -54,6 +54,10 @@ static cl::opt<bool>
     EnableAntiHintsForVAVDST("amdgpu-anti-hints-for-va-vdst", cl::Hidden,
                              cl::init(true));
 
+static cl::opt<unsigned> VAVDSTLookbackWindow(
+    "amdgpu-va-vdst-lookback-window", cl::Hidden,
+    cl::desc("Lookback window for VA_VDST anti-hints"), cl::init(32));
+
 namespace {
 
 class GCNPreRAOptimizationsImpl {
@@ -406,7 +410,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   // Add anti-hints to reduce VA_VDST hazards between VALU sources and
   // DS_LOAD.
   if (EnableAntiHintsForVAVDST && ST.getGeneration() >= AMDGPUSubtarget::GFX12) {
-    constexpr unsigned LookbackWindow = 32;
+    const unsigned LookbackWindow = VAVDSTLookbackWindow;
 
     for (const MachineBasicBlock &MBB : MF) {
       SmallVector<Register, 64> RecentVALUSrcs;
