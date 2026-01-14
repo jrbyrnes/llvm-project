@@ -2906,40 +2906,79 @@ static bool isCoexecutableVALUInst(const MachineInstr &MI) {
          !SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI); // What else?
 }
 
+static unsigned getXDLWMMAIssueSlots(const MachineInstr &MI,
+                                    const SIInstrInfo *TII) {
+  assert(TII && "Missing SIInstrInfo");
+  StringRef Name = TII->getName(MI.getOpcode());
+
+  // NOTE: This is intentionally a hardcoded mapping. The number of I slots is
+  // a low-level architectural detail; do not attempt to derive it from the
+  // scheduling model.
+
+  // 8 I slots.
+  if (Name.contains("_IU8") || Name.contains("_IU4"))
+    return 8;
+
+  // 1 or 3 I slots depending on whether SRCA or SRCB is interpreted as f8.
+  if (Name.contains("F8F6F4")) {
+    const MachineOperand *AFmt =
+        TII->getNamedOperand(MI, AMDGPU::OpName::matrix_a_fmt);
+    const MachineOperand *BFmt =
+        TII->getNamedOperand(MI, AMDGPU::OpName::matrix_b_fmt);
+    if (AFmt && BFmt && AFmt->isImm() && BFmt->isImm()) {
+      const bool HasF8 =
+          AFmt->getImm() <= AMDGPU::WMMA::MATRIX_FMT_BF8 ||
+          BFmt->getImm() <= AMDGPU::WMMA::MATRIX_FMT_BF8;
+      return HasF8 ? 3 : 1;
+    }
+    // Be conservative if formats are not available.
+    return 3;
+  }
+
+  const bool HasFP8OrBF8 = Name.contains("_FP8") || Name.contains("_BF8");
+
+  // 3 I slots.
+  if (HasFP8OrBF8 && Name.contains("_128_"))
+    return 3;
+
+  // This is treated as 3 I slots per SISchedule.td comment.
+  if (Name.contains("_32X16X128_F4"))
+    return 3;
+
+  // 1 I slot.
+  if (HasFP8OrBF8 && Name.contains("_64_"))
+    return 1;
+
+  // 4 I slots (F16/BF16 matrix inputs). Note that FP8/BF8 WMMA opcodes often
+  // also contain "F16"/"F32" (accumulator/output type), so only treat these as
+  // 4-slot when they are not FP8/BF8.
+  if (!HasFP8OrBF8 && (Name.contains("_BF16") || Name.contains("_F16")))
+    return 4;
+
+  // Unknown / not covered.
+  return 0;
+}
+
 static bool IsWMMAHazardInstInCategory(const MachineInstr &MI,
                                        const SIInstrInfo *TII, unsigned Latency,
                                        unsigned Category) {
-  assert(TII->isXDLWMMA(MI) && (Latency == 4 || Latency == 8) &&
-         "Handle me if the xdl wmma instruction latency changes");
+  (void)Latency;
+  assert(TII->isXDLWMMA(MI) && "Expected an XDL WMMA/SWMMAC instruction");
+
+  const unsigned Slots = getXDLWMMAIssueSlots(MI, TII);
 
   switch (Category) {
-  case 0: // Dense WMMA Instructions:
-          //   WMMA_*F16, WMMA_*BF16
-          //   WMMA_*FP8FP8
-          //   WMMA_*FP8BF8
-          //   WMMA_*BF8FP8
-          //   WMMA_*BF8BF8
-          //   WMMA_*F8F6F4 if SRCA & SRCB != F8
-    return Latency == 4 && SIInstrInfo::isWMMA(MI);
+  case 0: // 1 I slot.
+    return Slots == 1;
 
-  case 1: // Dense WMMA Instructions:
-          //   WMMA_IU8
-          //   WMMA_IU4
-          //   WMMA_*F8F6F4 if SRCA OR SRCB == F8
-    return Latency == 8 && SIInstrInfo::isWMMA(MI);
+  case 1: // 3 I slots.
+    return Slots == 3;
 
-  case 2: // Dense SWMMAC Instructions
-          //   SWMMAC_*F16, SWMMAC_*BF16,
-          //   SWMMAC_*FP8FP8
-          //   SWMMAC_*BF8FP8
-          //   SWMMAC_*FP8BF8
-          //   SWMMAC_*BF8BF8
-    return Latency == 4 && SIInstrInfo::isSWMMAC(MI);
+  case 2: // 4 I slots.
+    return Slots == 4;
 
-  case 3: // Sparse WMMA Instructions:
-          //   SWMMAC_IU8
-          //   SWMMAC_IU4
-    return Latency == 8 && SIInstrInfo::isSWMMAC(MI);
+  case 3: // 8 I slots.
+    return Slots == 8;
   default:
     break;
   } // end switch.
@@ -3018,9 +3057,10 @@ int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
   // be in between the first WMMA and the second instruction to cover the hazard
   // (WMMAWaitStates if the second is also a WMMA, VALUWaitStates if the second
   // is a VALU). Refer to SPG 4.6.12.1. "Requirements for WMMA data hazards" for
-  // numbers, which depends on the category of the first WMMA.
-  const int WMMAWaitStates[] = {5, 9, 3, 5};
-  const int VALUWaitStates[] = {4, 3, 2, 4};
+  // numbers, which depends on the I-slot category of the first WMMA.
+  // Categories map to issue slots: {1, 3, 4, 8}.
+  const int WMMAWaitStates[] = {2, 4, 5, 5};
+  const int VALUWaitStates[] = {1, 3, 4, 4};
   unsigned Category = 0;
 
   auto IsWMMAHazardFn = [MI, TII, TRI, &Category, this](const MachineInstr &I) {
