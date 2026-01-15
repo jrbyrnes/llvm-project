@@ -158,6 +158,7 @@ private:
   MachineBasicBlock::instr_iterator
   handleClause(MachineBasicBlock::instr_iterator I);
 
+
   /// Handle S_SETREG_IMM32_B32 targeting MODE register. On certain hardware,
   /// this instruction clobbers VGPR MSB bits[12:19], so we need to restore
   /// the current mode. \returns true if the instruction was modified or a
@@ -167,6 +168,13 @@ private:
   /// Update bits[12:19] of the imm operand in S_SETREG_IMM32_B32 to contain
   /// the VGPR MSB mode value. \returns true if the immediate was changed.
   bool updateSetregModeImm(MachineInstr &MI, int64_t ModeValue);
+
+  /// Check if an instruction \p I is immediately after another program state
+  /// instruction which it cannot coissue with. If so, insert before that
+  /// instruction to encourage more coissuing.
+  MachineBasicBlock::instr_iterator
+  handleCoissue(MachineBasicBlock::instr_iterator I);
+
 };
 
 bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
@@ -196,6 +204,7 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   }
 
   I = handleClause(I);
+  I = handleCoissue(I);
   MostRecentModeSet = BuildMI(*MBB, I, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
                           .addImm(NewMode.encode() | OldModeBits);
 
@@ -383,6 +392,30 @@ bool AMDGPULowerVGPREncoding::handleSetregMode(MachineInstr &MI) {
                               TII->get(AMDGPU::S_SET_VGPR_MSB))
                           .addImm(ModeValue);
   return true;
+
+MachineBasicBlock::instr_iterator
+AMDGPULowerVGPREncoding::handleCoissue(MachineBasicBlock::instr_iterator I) {
+  if (I.isEnd())
+    return I;
+
+  if (I == I->getParent()->begin())
+    return I;
+
+  MachineBasicBlock::instr_iterator Prev = std::prev(I);
+  auto isProgramStateSALU = [this](MachineInstr *MI) {
+    return TII->isBarrier(MI->getOpcode()) || TII->isWaitcnt(MI->getOpcode()) ||
+           SIInstrInfo::isProgramStateSALU(*MI);
+  };
+
+  if (!isProgramStateSALU(&*Prev))
+    return I;
+
+  while (!Prev.isEnd() && (Prev != Prev->getParent()->begin()) &&
+         isProgramStateSALU(&*Prev)) {
+    --Prev;
+  }
+  // We have to return the next instruction because we insert before the result
+  return std::next(Prev);
 }
 
 bool AMDGPULowerVGPREncoding::run(MachineFunction &MF) {
