@@ -72,8 +72,9 @@ static cl::opt<unsigned> VaVdstMultiplier(
 
 static cl::opt<unsigned> SQCToISLatency(
     "amdgpu-static-sim-sqc-is-latency",
-    cl::desc("SQC to IS (Instruction Store) cache line fetch latency in cycles"),
-    cl::init(24), cl::Hidden);
+    cl::desc(
+        "SQC to IS (Instruction Store) cache line fetch latency in cycles"),
+    cl::init(26), cl::Hidden);
 
 static cl::opt<bool> EnableISCacheModel(
     "amdgpu-static-sim-is-cache",

@@ -412,6 +412,9 @@ protected:
 
   void collectUse();
 
+  bool IsPrologue = false;
+  bool IsEpilogue = false;
+
   unsigned getHWUICyclesForInst(SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle);
 
   bool tryPendingCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
@@ -457,6 +460,9 @@ protected:
   RegionMixInfo MixInfo;
 
   AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
+
+  bool IsPrologue = false;
+  bool IsEpilogue = false;
 
   void dumpRegionSummary();
 
