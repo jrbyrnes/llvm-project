@@ -26,37 +26,36 @@ static cl::opt<unsigned> ResourcesToBalance(
     cl::init(90));
 
 static cl::opt<unsigned>
-    DSLatency("amdgpu-ds-latency", cl::Hidden,
-              cl::desc("Latency of DS_LOAD for resource usage."), cl::init(58));
-
-static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(2));
+                   cl::init(0));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
-                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(46));
+                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(48));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(43));
+    cl::init(33));
 
 static cl::opt<unsigned>
     DSLatencyForFence("amdgpu-ds-fence-latency", cl::Hidden,
                       cl::desc("Hazard latency between DS_LOAD and FENCE."),
-                      cl::init(56));
+                      cl::init(60));
 
 static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
                                     cl::init(10));
+static cl::opt<unsigned>
+    DSLatency("amdgpu-ds-latency", cl::Hidden,
+              cl::desc("Latency of DS_LOAD for resource usage."), cl::init(53));
 
 static cl::opt<bool> IgnoreVALU(
     "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
     cl::desc(
         "Whether or not to ignore VALU unit when balancing HW resoiurces."),
-    cl::init(false));
+    cl::init(true));
 
 static cl::opt<bool> AvoidEXP(
   "amdgpu-avoid-exp-final-islot", cl::Hidden,
@@ -84,14 +83,14 @@ static cl::opt<unsigned> ShadowMixWMMAMinDS(
         "Minimum number of ready DS (LDS load/store) instructions required "
         "before scheduling a WMMA instruction. Setting to 0 disables "
         "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
-    cl::init(2));
+    cl::init(1));
 
 static cl::opt<unsigned> ShadowMixWMMAMinSALU(
   "amdgpu-shadow-mix-wmma-min-salu", cl::Hidden,
   cl::desc("Minimum number of ready SALU instructions required "
            "before scheduling a WMMA instruction. Setting to 0 disables "
            "SALU check. SALU can fill WMMA co-exec slots."),
-  cl::init(2));
+  cl::init(0));
 
 static cl::opt<unsigned> ShadowMixLookaheadDepth(
     "amdgpu-shadow-mix-lookahead-depth", cl::Hidden,
@@ -99,7 +98,7 @@ static cl::opt<unsigned> ShadowMixLookaheadDepth(
              "co-execution candidates. Higher values find more opportunities "
              "but increase compile time. 0 disables lookahead (direct enable "
              "only)."),
-    cl::init(5));
+    cl::init(8));
 
 static cl::opt<unsigned> ShadowMixMaxBlockingCost(
     "amdgpu-shadow-mix-max-blocking-cost", cl::Hidden,
@@ -107,7 +106,7 @@ static cl::opt<unsigned> ShadowMixMaxBlockingCost(
         "Maximum number of blocking instructions acceptable when searching "
         "for pending co-execution candidates. Targets with higher cost are "
         "ignored as too expensive to reach."),
-    cl::init(11));
+    cl::init(13));
 
 static cl::opt<unsigned> ShadowMixMaxVisited(
   "amdgpu-shadow-mix-max-visited", cl::Hidden,
@@ -119,14 +118,14 @@ static cl::opt<unsigned> ShadowMixMaxCandidates(
   "amdgpu-shadow-mix-max-candidates", cl::Hidden,
   cl::desc("Maximum number of pending candidates to examine during lookahead. "
            "Limits compile time when many pending instructions exist."),
-  cl::init(15));
+  cl::init(13));
 
 // Shadow priority rules: prefer long-latency instruction so short ones fill shadow.
 // These are toggleable for debugging the increasingly specific heuristics.
 static cl::opt<bool> ShadowPriorityWMMAOverDS(
     "amdgpu-shadow-priority-wmma-over-ds", cl::Hidden,
     cl::desc("Prefer WMMA over DS when both ready (DS fills WMMA shadow)."),
-    cl::init(false));
+    cl::init(true));
 
 static cl::opt<bool> ShadowPriorityWMMAOverSALU(
     "amdgpu-shadow-priority-wmma-over-salu", cl::Hidden,
@@ -136,7 +135,7 @@ static cl::opt<bool> ShadowPriorityWMMAOverSALU(
 static cl::opt<bool> ShadowPriorityCVTOverDS(
   "amdgpu-shadow-priority-cvt-over-ds", cl::Hidden,
   cl::desc("Prefer CVT over DS when both ready (DS fills CVT shadow)."),
-  cl::init(true));
+  cl::init(false));
 
 static cl::opt<bool> ShadowPriorityCVTOverSALU(
   "amdgpu-shadow-priority-cvt-over-salu", cl::Hidden,
