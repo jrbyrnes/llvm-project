@@ -1308,6 +1308,8 @@ void recordInstruction(const MachineInstr &MI, const InstTiming &T,
     unsigned Occupancy = State.startWMMAWindow(MI, TII, WMMAStartCycle);
     Metrics.WMMAWindowCycles += Occupancy;
 
+    Metrics.TotalWMMAOccupancy += Occupancy;
+
     // For scaled WMMA: scale read updates VALU state
     if (Stalls.IsScaledWMMA) {
       // Scale read at CurrentCycle occupies VALU for 1 cycle
@@ -1810,7 +1812,6 @@ BlockMetrics analyzeBlock(MachineBasicBlock &MBB, const SIInstrInfo &TII,
 
   return Metrics;
 }
-
 //===----------------------------------------------------------------------===//
 // Block Frequency Helpers
 //===----------------------------------------------------------------------===//
@@ -2215,6 +2216,11 @@ void KernelPerfReport::print(raw_ostream &OS, StringRef FuncName) const {
                 Raw.NumWaitcnt, Raw.NumFalseWaits);
   OS << formatv(";   WMMA windows: {0} | Co-executed: {1}\n",
                 Raw.WMMAWindowCycles, Raw.WMMACoExecUsed);
+  if (Raw.TotalWMMAOccupancy > 0) {
+    OS << formatv(";   WMMA efficiency: {0} / {1} cycles ({2:F0}%)\n",
+                  Raw.TotalWMMAOccupancy, Raw.TotalCycles,
+                  Raw.getWMMAEfficiency() * 100.0f);
+  }
   if (Raw.ISlotTotal > 0) {
     OS << formatv(";   I-slots: {0} used | {1} wasted on non-VALU ({2:F0}% VALU)\n",
                   Raw.ISlotTotal, Raw.ISlotWastedOnNonVALU,
@@ -2233,6 +2239,11 @@ void KernelPerfReport::print(raw_ostream &OS, StringRef FuncName) const {
   OS << formatv(";   WMMA windows: {0} | Co-executed: {1} ({2:F0}%)\n",
                 Scaled.WMMAWindowCycles, Scaled.WMMACoExecUsed,
                 CoExecEfficiency * 100.0f);
+  if (Scaled.TotalWMMAOccupancy > 0) {
+    OS << formatv(";   WMMA efficiency: {0} / {1} cycles ({2:F0}%)\n",
+                  Scaled.TotalWMMAOccupancy, Scaled.TotalCycles,
+                  Scaled.getWMMAEfficiency() * 100.0f);
+  }
   if (Scaled.ISlotTotal > 0) {
     OS << formatv(";   I-slots: {0} used | {1} wasted on non-VALU ({2:F0}% VALU)\n",
                   Scaled.ISlotTotal, Scaled.ISlotWastedOnNonVALU,

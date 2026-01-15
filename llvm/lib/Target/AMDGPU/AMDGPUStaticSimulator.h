@@ -659,6 +659,16 @@ struct BlockMetrics {
   unsigned ISlotUsedByVALU = 0;
   unsigned ISlotWastedOnNonVALU = 0;
 
+  unsigned TotalWMMAOccupancy = 0;
+
+  // WMMA efficiency: TotalWMMAOccupancy / TotalCycles
+  // What percentage of execution time is spent on WMMA work
+  float getWMMAEfficiency() const {
+    if (TotalCycles == 0)
+      return 0.0f;
+    return static_cast<float>(TotalWMMAOccupancy) / TotalCycles;
+  }
+
   /// Scale all metrics by a factor (for loop trip counts, branch probabilities)
   BlockMetrics operator*(float Factor) const {
     // Helper to scale and round (not truncate)
@@ -736,6 +746,7 @@ struct BlockMetrics {
     Result.ISlotTotal = scale(ISlotTotal);
     Result.ISlotUsedByVALU = scale(ISlotUsedByVALU);
     Result.ISlotWastedOnNonVALU = scale(ISlotWastedOnNonVALU);
+    Result.TotalWMMAOccupancy = scale(TotalWMMAOccupancy);
     return Result;
   }
 
@@ -815,6 +826,7 @@ struct BlockMetrics {
     Result.ISlotTotal = ISlotTotal + O.ISlotTotal;
     Result.ISlotUsedByVALU = ISlotUsedByVALU + O.ISlotUsedByVALU;
     Result.ISlotWastedOnNonVALU = ISlotWastedOnNonVALU + O.ISlotWastedOnNonVALU;
+    Result.TotalWMMAOccupancy = TotalWMMAOccupancy + O.TotalWMMAOccupancy;
     return Result;
   }
 
