@@ -364,6 +364,15 @@ void AMDGPUAsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
               formatv("  Speedup: {0:F2}x warm vs cold", Speedup).str(),
               false);
         }
+
+        // WMMA efficiency for blocks with WMMA instructions
+        if (M.TotalWMMAOccupancy > 0 && M.TotalCycles > 0) {
+          OutStreamer->emitRawComment(
+              formatv("  WMMA efficiency: {0} / {1} cycles ({2:F0}%)",
+                      M.TotalWMMAOccupancy, M.TotalCycles,
+                      M.getWMMAEfficiency() * 100.0f).str(),
+              false);
+        }
       }
     }
   }
