@@ -192,6 +192,362 @@ static cl::opt<bool> ShadowMixRules(
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
     cl::init(false));
 
+static cl::opt<unsigned> ResourcesToBalancePro(
+    "amdgpu-resource-balancing-pro", cl::Hidden,
+    cl::desc("Number of resources we will try to balance during scheduling."),
+    cl::init(90));
+
+static cl::opt<unsigned>
+    DSLatencySplitPro("amdgpu-ds-latency-split-pro", cl::Hidden,
+                      cl::desc("Latency between neighboring DS_LOAD."),
+                      cl::init(0));
+
+static cl::opt<unsigned>
+    DSLatencyFIFOPro("amdgpu-ds-fifo-latency-pro", cl::Hidden,
+                     cl::desc("Hazard latency DS_LOAD FIFO full."),
+                     cl::init(48));
+
+static cl::opt<unsigned> LatencyForSignalPro(
+    "amdgpu-signal-latency-pro", cl::Hidden,
+    cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
+    cl::init(33));
+
+static cl::opt<unsigned>
+    DSLatencyForFencePro("amdgpu-ds-fence-latency-pro", cl::Hidden,
+                         cl::desc("Hazard latency between DS_LOAD and FENCE."),
+                         cl::init(60));
+
+static cl::opt<unsigned> DSFIFOSizePro("amdgpu-ds-fifo-size-pro", cl::Hidden,
+                                       cl::desc("DS_LOAD FIFO size."),
+                                       cl::init(10));
+static cl::opt<unsigned>
+    DSLatencyPro("amdgpu-ds-latency-pro", cl::Hidden,
+                 cl::desc("Latency of DS_LOAD for resource usage."),
+                 cl::init(53));
+
+static cl::opt<bool> IgnoreVALUPro(
+    "amdgpu-ignore-valu-resource-balancing-pro", cl::Hidden,
+    cl::desc(
+        "Whether or not to ignore VALU unit when balancing HW resoiurces."),
+    cl::init(true));
+
+static cl::opt<bool>
+    AvoidEXPPro("amdgpu-avoid-exp-final-islot-pro", cl::Hidden,
+                cl::desc("Whether or not to try avoiding putting v_exp in "
+                         "final I slot of WMMA."),
+                cl::init(true));
+
+static cl::opt<bool> EnableShadowMixPro(
+    "amdgpu-shadow-mix-pro", cl::Hidden,
+    cl::desc("Enable shadow mix lookahead scheduling to ensure co-execution "
+             "opportunities (e.g., WMMA with VALU/DS) are available before "
+             "scheduling long-latency instructions."),
+    cl::init(true));
+
+static cl::opt<unsigned> ShadowMixWMMAMinVALU1cPro(
+    "amdgpu-shadow-mix-wmma-min-valu1c-pro", cl::Hidden,
+    cl::desc("Minimum number of ready single-cycle VALU instructions required "
+             "before scheduling a WMMA instruction. Setting to 0 disables "
+             "VALU check. WMMA has 8 co-execution slots that can be filled "
+             "with 1-cycle VALU, so 2 ensures interleaving opportunity."),
+    cl::init(3));
+
+static cl::opt<unsigned> ShadowMixWMMAMinDSPro(
+    "amdgpu-shadow-mix-wmma-min-ds-pro", cl::Hidden,
+    cl::desc(
+        "Minimum number of ready DS (LDS load/store) instructions required "
+        "before scheduling a WMMA instruction. Setting to 0 disables "
+        "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
+    cl::init(1));
+
+static cl::opt<unsigned> ShadowMixWMMAMinSALUPro(
+    "amdgpu-shadow-mix-wmma-min-salu-pro", cl::Hidden,
+    cl::desc("Minimum number of ready SALU instructions required "
+             "before scheduling a WMMA instruction. Setting to 0 disables "
+             "SALU check. SALU can fill WMMA co-exec slots."),
+    cl::init(0));
+
+static cl::opt<unsigned> ShadowMixLookaheadDepthPro(
+    "amdgpu-shadow-mix-lookahead-depth-pro", cl::Hidden,
+    cl::desc("Maximum dependency depth to search when looking for pending "
+             "co-execution candidates. Higher values find more opportunities "
+             "but increase compile time. 0 disables lookahead (direct enable "
+             "only)."),
+    cl::init(8));
+
+static cl::opt<unsigned> ShadowMixMaxBlockingCostPro(
+    "amdgpu-shadow-mix-max-blocking-cost-pro", cl::Hidden,
+    cl::desc(
+        "Maximum number of blocking instructions acceptable when searching "
+        "for pending co-execution candidates. Targets with higher cost are "
+        "ignored as too expensive to reach."),
+    cl::init(13));
+
+static cl::opt<unsigned> ShadowMixMaxVisitedPro(
+    "amdgpu-shadow-mix-max-visited-pro", cl::Hidden,
+    cl::desc("Maximum number of nodes to visit during blocking count BFS. "
+             "Limits compile time for large DAGs."),
+    cl::init(1000));
+
+static cl::opt<unsigned> ShadowMixMaxCandidatesPro(
+    "amdgpu-shadow-mix-max-candidates-pro", cl::Hidden,
+    cl::desc(
+        "Maximum number of pending candidates to examine during lookahead. "
+        "Limits compile time when many pending instructions exist."),
+    cl::init(13));
+
+// Shadow priority rules: prefer long-latency instruction so short ones fill
+// shadow. These are toggleable for debugging the increasingly specific
+// heuristics.
+static cl::opt<bool> ShadowPriorityWMMAOverDSPro(
+    "amdgpu-shadow-priority-wmma-over-ds-pro", cl::Hidden,
+    cl::desc("Prefer WMMA over DS when both ready (DS fills WMMA shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityWMMAOverSALUPro(
+    "amdgpu-shadow-priority-wmma-over-salu-pro", cl::Hidden,
+    cl::desc("Prefer WMMA over SALU when both ready (SALU fills WMMA shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityCVTOverDSPro(
+    "amdgpu-shadow-priority-cvt-over-ds-pro", cl::Hidden,
+    cl::desc("Prefer CVT over DS when both ready (DS fills CVT shadow)."),
+    cl::init(false));
+
+static cl::opt<bool> ShadowPriorityCVTOverSALUPro(
+    "amdgpu-shadow-priority-cvt-over-salu-pro", cl::Hidden,
+    cl::desc("Prefer CVT over SALU when both ready (SALU fills CVT shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityTRANS32OverVALU1cPro(
+    "amdgpu-shadow-priority-trans32-over-valu1c-pro", cl::Hidden,
+    cl::desc("Prefer TRANS32 (v_exp etc) over 1-cycle VALU when both ready "
+             "(VALU fills TRANS32 shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowDeferTRANS32Pro(
+    "amdgpu-shadow-defer-trans32-pro", cl::Hidden,
+    cl::desc(
+        "Defer TRANS32 instructions until enough VALU ready to fill shadow."),
+    cl::init(true));
+
+static cl::opt<unsigned> ShadowMixTRANS32MinVALU1cPro(
+    "amdgpu-shadow-mix-trans32-min-valu1c-pro", cl::Hidden,
+    cl::desc(
+        "Minimum 1-cycle VALU instructions ready before scheduling TRANS32 "
+        "(when -amdgpu-shadow-defer-trans32 enabled)."),
+    cl::init(0));
+
+static cl::opt<bool> ShadowPreferVALU1cOverSALUForTRANSPro(
+    "amdgpu-shadow-prefer-valu-over-salu-for-trans-pro", cl::Hidden,
+    cl::desc("When filling TRANS32 shadow, prefer VALU1c over SALU "
+             "(reserve SALU for WMMA/CVT shadows)."),
+    cl::init(true));
+
+// Flag seems universally beneficial, may make sense to delete
+static cl::opt<bool> ResourcePriorityToProducerPro(
+    "amdgpu-resource-priority-coexec-producer-pro", cl::Hidden,
+    cl::desc("When sorting critical resources, whether to give more priortiy "
+             "to coexecution producers over exposed latency."),
+    cl::init(true));
+
+// Flag seems universally beneficial, may make sense to delete
+static cl::opt<bool> ResourcePriorityCoexecWindowSizePro(
+    "amdgpu-resource-priority-coexec-windows-size-pro", cl::Hidden,
+    cl::desc(
+        "When sorting critical resources, whether to sort by window size."),
+    cl::init(true));
+
+// Flag seems universally beneficial, may make sense to delete
+static cl::opt<bool> ResourcePriorityExposedCyclesPro(
+    "amdgpu-resource-priority-coexec-exposed-cycles-pro", cl::Hidden,
+    cl::desc(
+        "When sorting critical resources, whether to sort by exposed cycles."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowMixRulesPro(
+    "amdgpu-use-shadow-mix-rules-pro", cl::Hidden,
+    cl::desc("Whether to use instruction type rules in tryShadowMix."),
+    cl::init(false));
+
+static cl::opt<unsigned> ResourcesToBalanceEpi(
+    "amdgpu-resource-balancing-epi", cl::Hidden,
+    cl::desc("Number of resources we will try to balance during scheduling."),
+    cl::init(75));
+
+static cl::opt<unsigned>
+    DSLatencySplitEpi("amdgpu-ds-latency-split-epi", cl::Hidden,
+                      cl::desc("Latency between neighboring DS_LOAD."),
+                      cl::init(0));
+
+static cl::opt<unsigned>
+    DSLatencyFIFOEpi("amdgpu-ds-fifo-latency-epi", cl::Hidden,
+                     cl::desc("Hazard latency DS_LOAD FIFO full."),
+                     cl::init(56));
+
+static cl::opt<unsigned> LatencyForSignalEpi(
+    "amdgpu-signal-latency-epi", cl::Hidden,
+    cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
+    cl::init(43));
+
+static cl::opt<unsigned>
+    DSLatencyForFenceEpi("amdgpu-ds-fence-latency-epi", cl::Hidden,
+                         cl::desc("Hazard latency between DS_LOAD and FENCE."),
+                         cl::init(52));
+
+static cl::opt<unsigned> DSFIFOSizeEpi("amdgpu-ds-fifo-size-epi", cl::Hidden,
+                                       cl::desc("DS_LOAD FIFO size."),
+                                       cl::init(9));
+static cl::opt<unsigned>
+    DSLatencyEpi("amdgpu-ds-latency-epi", cl::Hidden,
+                 cl::desc("Latency of DS_LOAD for resource usage."),
+                 cl::init(25));
+
+static cl::opt<bool> IgnoreVALUEpi(
+    "amdgpu-ignore-valu-resource-balancing-epi", cl::Hidden,
+    cl::desc(
+        "Whether or not to ignore VALU unit when balancing HW resoiurces."),
+    cl::init(false));
+
+static cl::opt<bool>
+    AvoidEXPEpi("amdgpu-avoid-exp-final-islot-epi", cl::Hidden,
+                cl::desc("Whether or not to try avoiding putting v_exp in "
+                         "final I slot of WMMA."),
+                cl::init(true));
+
+static cl::opt<bool> EnableShadowMixEpi(
+    "amdgpu-shadow-mix-epi", cl::Hidden,
+    cl::desc("Enable shadow mix lookahead scheduling to ensure co-execution "
+             "opportunities (e.g., WMMA with VALU/DS) are available before "
+             "scheduling long-latency instructions."),
+    cl::init(true));
+
+static cl::opt<unsigned> ShadowMixWMMAMinVALU1cEpi(
+    "amdgpu-shadow-mix-wmma-min-valu1c-epi", cl::Hidden,
+    cl::desc("Minimum number of ready single-cycle VALU instructions required "
+             "before scheduling a WMMA instruction. Setting to 0 disables "
+             "VALU check. WMMA has 8 co-execution slots that can be filled "
+             "with 1-cycle VALU, so 2 ensures interleaving opportunity."),
+    cl::init(3));
+
+static cl::opt<unsigned> ShadowMixWMMAMinDSEpi(
+    "amdgpu-shadow-mix-wmma-min-ds-epi", cl::Hidden,
+    cl::desc(
+        "Minimum number of ready DS (LDS load/store) instructions required "
+        "before scheduling a WMMA instruction. Setting to 0 disables "
+        "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
+    cl::init(2));
+
+static cl::opt<unsigned> ShadowMixWMMAMinSALUEpi(
+    "amdgpu-shadow-mix-wmma-min-salu-epi", cl::Hidden,
+    cl::desc("Minimum number of ready SALU instructions required "
+             "before scheduling a WMMA instruction. Setting to 0 disables "
+             "SALU check. SALU can fill WMMA co-exec slots."),
+    cl::init(3));
+
+static cl::opt<unsigned> ShadowMixLookaheadDepthEpi(
+    "amdgpu-shadow-mix-lookahead-depth-epi", cl::Hidden,
+    cl::desc("Maximum dependency depth to search when looking for pending "
+             "co-execution candidates. Higher values find more opportunities "
+             "but increase compile time. 0 disables lookahead (direct enable "
+             "only)."),
+    cl::init(8));
+
+static cl::opt<unsigned> ShadowMixMaxBlockingCostEpi(
+    "amdgpu-shadow-mix-max-blocking-cost-epi", cl::Hidden,
+    cl::desc(
+        "Maximum number of blocking instructions acceptable when searching "
+        "for pending co-execution candidates. Targets with higher cost are "
+        "ignored as too expensive to reach."),
+    cl::init(9));
+
+static cl::opt<unsigned> ShadowMixMaxVisitedEpi(
+    "amdgpu-shadow-mix-max-visited-epi", cl::Hidden,
+    cl::desc("Maximum number of nodes to visit during blocking count BFS. "
+             "Limits compile time for large DAGs."),
+    cl::init(1000));
+
+static cl::opt<unsigned> ShadowMixMaxCandidatesEpi(
+    "amdgpu-shadow-mix-max-candidates-epi", cl::Hidden,
+    cl::desc(
+        "Maximum number of pending candidates to examine during lookahead. "
+        "Limits compile time when many pending instructions exist."),
+    cl::init(16));
+
+// Shadow priority rules: prefer long-latency instruction so short ones fill
+// shadow. These are toggleable for debugging the increasingly specific
+// heuristics.
+static cl::opt<bool> ShadowPriorityWMMAOverDSEpi(
+    "amdgpu-shadow-priority-wmma-over-ds-epi", cl::Hidden,
+    cl::desc("Prefer WMMA over DS when both ready (DS fills WMMA shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityWMMAOverSALUEpi(
+    "amdgpu-shadow-priority-wmma-over-salu-epi", cl::Hidden,
+    cl::desc("Prefer WMMA over SALU when both ready (SALU fills WMMA shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityCVTOverDSEpi(
+    "amdgpu-shadow-priority-cvt-over-ds-epi", cl::Hidden,
+    cl::desc("Prefer CVT over DS when both ready (DS fills CVT shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityCVTOverSALUEpi(
+    "amdgpu-shadow-priority-cvt-over-salu-epi", cl::Hidden,
+    cl::desc("Prefer CVT over SALU when both ready (SALU fills CVT shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowPriorityTRANS32OverVALU1cEpi(
+    "amdgpu-shadow-priority-trans32-over-valu1c-epi", cl::Hidden,
+    cl::desc("Prefer TRANS32 (v_exp etc) over 1-cycle VALU when both ready "
+             "(VALU fills TRANS32 shadow)."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowDeferTRANS32Epi(
+    "amdgpu-shadow-defer-trans32-epi", cl::Hidden,
+    cl::desc(
+        "Defer TRANS32 instructions until enough VALU ready to fill shadow."),
+    cl::init(true));
+
+static cl::opt<unsigned> ShadowMixTRANS32MinVALU1cEpi(
+    "amdgpu-shadow-mix-trans32-min-valu1c-epi", cl::Hidden,
+    cl::desc(
+        "Minimum 1-cycle VALU instructions ready before scheduling TRANS32 "
+        "(when -amdgpu-shadow-defer-trans32 enabled)."),
+    cl::init(0));
+
+static cl::opt<bool> ShadowPreferVALU1cOverSALUForTRANSEpi(
+    "amdgpu-shadow-prefer-valu-over-salu-for-trans-epi", cl::Hidden,
+    cl::desc("When filling TRANS32 shadow, prefer VALU1c over SALU "
+             "(reserve SALU for WMMA/CVT shadows)."),
+    cl::init(true));
+
+// Flag seems universally beneficial, may make sense to delete
+static cl::opt<bool> ResourcePriorityToProducerEpi(
+    "amdgpu-resource-priority-coexec-producer-epi", cl::Hidden,
+    cl::desc("When sorting critical resources, whether to give more priortiy "
+             "to coexecution producers over exposed latency."),
+    cl::init(true));
+
+// Flag seems universally beneficial, may make sense to delete
+static cl::opt<bool> ResourcePriorityCoexecWindowSizeEpi(
+    "amdgpu-resource-priority-coexec-windows-size-epi", cl::Hidden,
+    cl::desc(
+        "When sorting critical resources, whether to sort by window size."),
+    cl::init(true));
+
+// Flag seems universally beneficial, may make sense to delete
+static cl::opt<bool> ResourcePriorityExposedCyclesEpi(
+    "amdgpu-resource-priority-coexec-exposed-cycles-epi", cl::Hidden,
+    cl::desc(
+        "When sorting critical resources, whether to sort by exposed cycles."),
+    cl::init(true));
+
+static cl::opt<bool> ShadowMixRulesEpi(
+    "amdgpu-use-shadow-mix-rules-epi", cl::Hidden,
+    cl::desc("Whether to use instruction type rules in tryShadowMix."),
+    cl::init(false));
+
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
 //===----------------------------------------------------------------------===//
@@ -756,9 +1112,17 @@ void AMDGPUMLSchedStrategy::collectUse() {
     FencedDSRLatency = std::max(DSLatency.getValue(), FencedDSRLatency);
   }
 
-  HWUInfo[(unsigned)InstructionFlavor::Other].reset();
+  if (DAG->SUnits.size()) {
+    MachineBasicBlock *MBB = DAG->SUnits.begin()->getInstr()->getParent();
+    IsPrologue = MBB->isEntryBlock();
+    IsEpilogue = MBB->isReturnBlock();
+  }
 
-  if (IgnoreVALU) {
+  HWUInfo[(unsigned)InstructionFlavor::Other].reset();
+  auto IgnoreVALUVal = IsPrologue   ? IgnoreVALUPro.getValue()
+                       : IsEpilogue ? IgnoreVALUEpi.getValue()
+                                    : IgnoreVALU.getValue();
+  if (IgnoreVALUVal) {
     HWUInfo[(unsigned)InstructionFlavor::SingleCycleVALU].reset();
     HWUInfo[(unsigned)InstructionFlavor::SALU].reset();
   }
@@ -772,55 +1136,70 @@ void AMDGPUMLSchedStrategy::collectUse() {
 }
 
 static void sortResources(SmallVectorImpl<HardwareUnitInfo> &HWUInfo,
-                          SchedBoundary *Zone) {
+                          SchedBoundary *Zone, bool IsPrologue,
+                          bool IsEpilogue) {
   // Highest priority should be first.
-  sort(HWUInfo, [](HardwareUnitInfo &A, HardwareUnitInfo &B) {
-    // Both are either exposed or unexposed, prefer exec window producer
-    if (ResourcePriorityToProducer) {
-      if (A.ProducesCoexecWindow != B.ProducesCoexecWindow)
-        return A.ProducesCoexecWindow;
+  sort(HWUInfo,
+       [IsPrologue, IsEpilogue](HardwareUnitInfo &A, HardwareUnitInfo &B) {
+         auto ResourcePriorityToProducerVal =
+             IsPrologue    ? ResourcePriorityToProducerPro.getValue()
+             : !IsEpilogue ? ResourcePriorityToProducer.getValue()
+                           : ResourcePriorityToProducerEpi.getValue();
+         auto ResourcePriorityCoexecWindowSizeVal =
+             IsPrologue    ? ResourcePriorityCoexecWindowSizePro.getValue()
+             : !IsEpilogue ? ResourcePriorityCoexecWindowSize.getValue()
+                           : ResourcePriorityCoexecWindowSizeEpi.getValue();
+         auto ResourcePriorityExposedCyclesVal =
+             IsPrologue    ? ResourcePriorityExposedCyclesPro.getValue()
+             : !IsEpilogue ? ResourcePriorityExposedCycles.getValue()
+                           : ResourcePriorityExposedCyclesEpi.getValue();
 
-      bool AIsExposed = A.getRemainingExposed() > 0;
-      bool BIsExposed = B.getRemainingExposed() > 0;
+         // Both are either exposed or unexposed, prefer exec window producer
+         if (ResourcePriorityToProducerVal) {
+           if (A.ProducesCoexecWindow != B.ProducesCoexecWindow)
+             return A.ProducesCoexecWindow;
 
-      if (AIsExposed != BIsExposed)
-        return AIsExposed;
-    }
+           bool AIsExposed = A.getRemainingExposed() > 0;
+           bool BIsExposed = B.getRemainingExposed() > 0;
 
-    else {
-      bool AIsExposed = A.getRemainingExposed() > 0;
-      bool BIsExposed = B.getRemainingExposed() > 0;
+           if (AIsExposed != BIsExposed)
+             return AIsExposed;
+         }
 
-      if (AIsExposed != BIsExposed)
-        return AIsExposed;
+         else {
+           bool AIsExposed = A.getRemainingExposed() > 0;
+           bool BIsExposed = B.getRemainingExposed() > 0;
 
-      if (A.ProducesCoexecWindow != B.ProducesCoexecWindow)
-        return A.ProducesCoexecWindow;
-    }
+           if (AIsExposed != BIsExposed)
+             return AIsExposed;
 
-    if (ResourcePriorityCoexecWindowSize) {
-      if (A.CoexecWindowSize != B.CoexecWindowSize) {
-        return A.CoexecWindowSize > B.CoexecWindowSize;
-      }
-    }
+           if (A.ProducesCoexecWindow != B.ProducesCoexecWindow)
+             return A.ProducesCoexecWindow;
+         }
 
-    if (ResourcePriorityExposedCycles)
-      // Give priority to the hardware unit with the most exposed cycles
-      if (A.getRemainingExposed() != B.getRemainingExposed())
-        return A.getRemainingExposed() > B.getRemainingExposed();
+         if (ResourcePriorityCoexecWindowSizeVal) {
+           if (A.CoexecWindowSize != B.CoexecWindowSize) {
+             return A.CoexecWindowSize > B.CoexecWindowSize;
+           }
+         }
 
-    // Less relevant tiebreakers
-    // Total cycles
-    if (A.getTotalCycles() != B.getTotalCycles())
-      return A.getTotalCycles() > B.getTotalCycles();
+         if (ResourcePriorityExposedCyclesVal)
+           // Give priority to the hardware unit with the most exposed cycles
+           if (A.getRemainingExposed() != B.getRemainingExposed())
+             return A.getRemainingExposed() > B.getRemainingExposed();
 
-    // In ties -- prefer the resource with longer latency instructions
-    if (A.size() != B.size())
-      return A.size() < B.size();
+         // Less relevant tiebreakers
+         // Total cycles
+         if (A.getTotalCycles() != B.getTotalCycles())
+           return A.getTotalCycles() > B.getTotalCycles();
 
-    // Default to HardwareUnitInfo order
-    return A.Idx < B.Idx;
-  });
+         // In ties -- prefer the resource with longer latency instructions
+         if (A.size() != B.size())
+           return A.size() < B.size();
+
+         // Default to HardwareUnitInfo order
+         return A.Idx < B.Idx;
+       });
 }
 
 void AMDGPUMLSchedStrategy::dumpRegionSummary() {
@@ -832,7 +1211,7 @@ void AMDGPUMLSchedStrategy::dumpRegionSummary() {
 
   dbgs() << "\nHWUI Resource Pressure (sorted):\n";
   SmallVector<HardwareUnitInfo, 8> SortedHWUI = HWUInfo;
-  sortResources(SortedHWUI, &Top);
+  sortResources(SortedHWUI, &Top, IsPrologue, IsEpilogue);
   for (auto &HWUI : SortedHWUI) {
     if (HWUI.getTotalCycles() == 0)
       continue;
@@ -892,7 +1271,8 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
                       const SmallVectorImpl<SUnit *> &SchedMFMA,
                       const SmallVectorImpl<SUnit *> &SchedDSR,
                       const SmallVectorImpl<SUnit *> &SchedTDM,
-                      const SmallVectorImpl<SUnit *> &SchedEXP, bool IsPostRA) {
+                      const SmallVectorImpl<SUnit *> &SchedEXP, bool IsPostRA,
+                      bool IsPrologue, bool IsEpilogue) {
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
   unsigned ReadyCycle = SU->TopReadyCycle;
   auto *MI = SU->getInstr();
@@ -901,16 +1281,25 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
 
   if (SII->isDS(*MI) && MI->mayLoad()) {
-    if (SchedDSR.size() >= DSFIFOSize) {
-      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSize;
+    auto DSFIFOSizeVal = IsPrologue    ? DSFIFOSizePro.getValue()
+                         : !IsEpilogue ? DSFIFOSize.getValue()
+                                       : DSFIFOSizeEpi.getValue();
+    if (SchedDSR.size() >= DSFIFOSizeVal) {
+      unsigned TopOfFIFO = SchedDSR.size() - DSFIFOSizeVal;
       unsigned TopOfFIFOIssue = SchedDSR[TopOfFIFO]->TopReadyCycle;
       // TODO -- should be release at cycle.
-      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFO, ReadyCycle);
+      auto DSLatencyFIFOVal = IsPrologue    ? DSLatencyFIFOPro.getValue()
+                              : !IsEpilogue ? DSLatencyFIFO.getValue()
+                                            : DSLatencyFIFOEpi.getValue();
+      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFOVal, ReadyCycle);
     }
     if (SchedDSR.size()) {
       unsigned LastDSRIssue = SchedDSR[SchedDSR.size() - 1]->TopReadyCycle;
       // TODO -- should be release at cycle.
-      ReadyCycle = std::max(LastDSRIssue + DSLatencySplit, ReadyCycle);
+      auto DSLatencySplitVal = IsPrologue    ? DSLatencySplitPro.getValue()
+                               : !IsEpilogue ? DSLatencySplit.getValue()
+                                             : DSLatencySplitEpi.getValue();
+      ReadyCycle = std::max(LastDSRIssue + DSLatencySplitVal, ReadyCycle);
     }
 
     for (auto Pred : SU->Preds) {
@@ -930,20 +1319,28 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
     auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
     if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+      auto LatencyForSignalVal = IsPrologue    ? LatencyForSignalPro.getValue()
+                                 : !IsEpilogue ? LatencyForSignal.getValue()
+                                               : LatencyForSignalEpi.getValue();
       ReadyCycle =
-          std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
+          std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignalVal);
     }
 
   }
 
   else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
             MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+    auto DSLatencyForFenceVal = IsPrologue    ? DSLatencyForFencePro.getValue()
+                                : !IsEpilogue ? DSLatencyForFence.getValue()
+                                              : DSLatencyForFenceEpi.getValue();
+
     if (SchedDSR.size()) {
       auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
       ReadyCycle =
-          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
-    } else {
-      ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
+          std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFenceVal);
+    } else if (!(IsPrologue || IsEpilogue)) {
+      // TODO: Can we detect CFG carried loads?
+      ReadyCycle = std::max(ReadyCycle, DSLatencyForFenceVal);
     }
   }
 
@@ -1082,11 +1479,11 @@ static bool tryAsyncPipe(GenericSchedulerBase::SchedCandidate &TryCand,
                          const SmallVectorImpl<SUnit *> &SchedDSR,
                          const SmallVectorImpl<SUnit *> &SchedTDM,
                          const SmallVectorImpl<SUnit *> &SchedEXP,
-                         bool IsPostRA) {
+                         bool IsPostRA, bool IsPrologue, bool IsEpilogue) {
 
   auto getStallCycles =
-      [&SchedTDM, &SchedDSR,
-       &Zone](GenericSchedulerBase::SchedCandidate &SchedCand) -> unsigned {
+      [&SchedTDM, &SchedDSR, &Zone, IsPrologue, IsEpilogue](
+          GenericSchedulerBase::SchedCandidate &SchedCand) -> unsigned {
     SUnit *SU = SchedCand.SU;
     unsigned ReadyCycle = SU->TopReadyCycle;
     unsigned CurrCycle = Zone->getCurrCycle();
@@ -1099,20 +1496,28 @@ static bool tryAsyncPipe(GenericSchedulerBase::SchedCandidate &TryCand,
       auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
       if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+        auto LatencyForSignalVal = IsPrologue ? LatencyForSignalPro.getValue()
+                                   : !IsEpilogue
+                                       ? LatencyForSignal.getValue()
+                                       : LatencyForSignalEpi.getValue();
         ReadyCycle =
-            std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignal);
+            std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignalVal);
       }
 
     }
 
     else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
               MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+      auto DSLatencyForFenceVal = IsPrologue ? DSLatencyForFencePro.getValue()
+                                  : !IsEpilogue
+                                      ? DSLatencyForFence.getValue()
+                                      : DSLatencyForFenceEpi.getValue();
       if (SchedDSR.size()) {
         auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
         ReadyCycle =
-            std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFence);
+            std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFenceVal);
       } else {
-        ReadyCycle = std::max(ReadyCycle, DSLatencyForFence.getValue());
+        ReadyCycle = std::max(ReadyCycle, DSLatencyForFenceVal);
       }
     }
     if (ReadyCycle > CurrCycle)
@@ -1163,17 +1568,18 @@ static bool tryAsyncPipe(GenericSchedulerBase::SchedCandidate &TryCand,
 }
 
 static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
-                               GenericSchedulerBase::SchedCandidate &Cand,
-                               SchedBoundary *Zone, ScheduleDAGInstrs *DAG,
-                               const TargetRegisterInfo *TRI,
-                               const SmallVectorImpl<SUnit *> &SchedMFMA,
-                               const SmallVectorImpl<SUnit *> &SchedDSR,
-                               const SmallVectorImpl<SUnit *> &SchedTDM,
-                               const SmallVectorImpl<SUnit *> &SchedEXP,
-                               bool IsPostRA) {
+                              GenericSchedulerBase::SchedCandidate &Cand,
+                              SchedBoundary *Zone, ScheduleDAGInstrs *DAG,
+                              const TargetRegisterInfo *TRI,
+                              const SmallVectorImpl<SUnit *> &SchedMFMA,
+                              const SmallVectorImpl<SUnit *> &SchedDSR,
+                              const SmallVectorImpl<SUnit *> &SchedTDM,
+                              const SmallVectorImpl<SUnit *> &SchedEXP,
+                              bool IsPostRA, bool IsPrologue, bool IsEpilogue) {
   GCNHazardRecognizer *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
-  int CoexecSlot = HazardRec->getWMMACoexecSlot(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, IsPostRA));
-
+  int CoexecSlot = HazardRec->getWMMACoexecSlot(getLatencyStallCycles(
+      TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
+      SchedTDM, SchedEXP, IsPostRA, IsPrologue, IsEpilogue));
 
   const SIInstrInfo *SII = reinterpret_cast<const SIInstrInfo *>(DAG->TII);
   GCNHazardRecognizer::WMMASlotType CurrentSlot = (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
@@ -1429,13 +1835,16 @@ static bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
 /// 7. Lookahead to find path to pending co-exec
 ///
 /// Returns true if a decision was made, sets Reason on the preferred candidate.
-static bool
-tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
-             GenericSchedulerBase::SchedCandidate &Cand,
-             SchedBoundary *Zone, RegionMixInfo &MixInfo,
-             const SIInstrInfo *SII, ScheduleDAGInstrs *DAG,
-             AMDGPUSchedReason &OutReason) {
-  if (!EnableShadowMix)
+static bool tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
+                         GenericSchedulerBase::SchedCandidate &Cand,
+                         SchedBoundary *Zone, RegionMixInfo &MixInfo,
+                         const SIInstrInfo *SII, ScheduleDAGInstrs *DAG,
+                         AMDGPUSchedReason &OutReason, bool IsPrologue,
+                         bool IsEpilogue) {
+  auto EnableShadowMixVal = IsPrologue    ? EnableShadowMixPro.getValue()
+                            : !IsEpilogue ? EnableShadowMix.getValue()
+                                          : EnableShadowMixEpi.getValue();
+  if (!EnableShadowMixVal)
     return false;
 
   MixInfo.updateReadyCounts();
@@ -1445,9 +1854,21 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
   unsigned ReadySALU = MixInfo.getReadyCount(InstructionFlavor::SALU);
 
   // FIXME: should these values be determined by calculateHiddenLatency
-  unsigned RequiredVALU1c = ShadowMixWMMAMinVALU1c;
-  unsigned RequiredDS = ShadowMixWMMAMinDS;
-  unsigned RequiredSALU = ShadowMixWMMAMinSALU;
+  auto ShadowMixWMMAMinVALU1cVal =
+      IsPrologue    ? ShadowMixWMMAMinVALU1cPro.getValue()
+      : !IsEpilogue ? ShadowMixWMMAMinVALU1c.getValue()
+                    : ShadowMixWMMAMinVALU1cEpi.getValue();
+  auto ShadowMixWMMAMinDSVal = IsPrologue    ? ShadowMixWMMAMinDSPro.getValue()
+                               : !IsEpilogue ? ShadowMixWMMAMinDS.getValue()
+                                             : ShadowMixWMMAMinDSEpi.getValue();
+  auto ShadowMixWMMAMinSALUVal = IsPrologue ? ShadowMixWMMAMinSALUPro.getValue()
+                                 : !IsEpilogue
+                                     ? ShadowMixWMMAMinSALU.getValue()
+                                     : ShadowMixWMMAMinSALUEpi.getValue();
+
+  unsigned RequiredVALU1c = ShadowMixWMMAMinVALU1cVal;
+  unsigned RequiredDS = ShadowMixWMMAMinDSVal;
+  unsigned RequiredSALU = ShadowMixWMMAMinSALUVal;
 
   InstructionFlavor TryFlavor = classifyFlavor(TryCand.SU->getInstr(), SII);
   InstructionFlavor CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
@@ -1490,12 +1911,40 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
     }
   };
 
-  if (ShadowMixRules) {
+  auto ShadowMixRulesVal = IsPrologue    ? ShadowMixRulesPro.getValue()
+                           : !IsEpilogue ? ShadowMixRules.getValue()
+                                         : ShadowMixRulesEpi.getValue();
+  if (ShadowMixRulesVal) {
+    auto ShadowPriorityWMMAOverDSVal =
+        IsPrologue    ? ShadowPriorityWMMAOverDSPro.getValue()
+        : !IsEpilogue ? ShadowPriorityWMMAOverDS.getValue()
+                      : ShadowPriorityWMMAOverDSEpi.getValue();
+    auto ShadowPriorityWMMAOverSALUVal =
+        IsPrologue    ? ShadowPriorityWMMAOverSALUPro.getValue()
+        : !IsEpilogue ? ShadowPriorityWMMAOverSALU.getValue()
+                      : ShadowPriorityWMMAOverSALUEpi.getValue();
+    auto ShadowPriorityCVTOverDSVal =
+        IsPrologue    ? ShadowPriorityCVTOverDSPro.getValue()
+        : !IsEpilogue ? ShadowPriorityCVTOverDS.getValue()
+                      : ShadowPriorityCVTOverDSEpi.getValue();
+    auto ShadowPriorityCVTOverSALUVal =
+        IsPrologue    ? ShadowPriorityCVTOverSALUPro.getValue()
+        : !IsEpilogue ? ShadowPriorityCVTOverSALU.getValue()
+                      : ShadowPriorityCVTOverSALUEpi.getValue();
+    auto ShadowPriorityTRANS32OverVALU1cVal =
+        IsPrologue    ? ShadowPriorityTRANS32OverVALU1cPro.getValue()
+        : !IsEpilogue ? ShadowPriorityTRANS32OverVALU1c.getValue()
+                      : ShadowPriorityTRANS32OverVALU1cEpi.getValue();
+    auto ShadowPreferVALU1cOverSALUForTRANSVal =
+        IsPrologue    ? ShadowPreferVALU1cOverSALUForTRANSPro.getValue()
+        : !IsEpilogue ? ShadowPreferVALU1cOverSALUForTRANS.getValue()
+                      : ShadowPreferVALU1cOverSALUForTRANSEpi.getValue();
+
     // Shadow Priority Rules: prefer long-latency so short ones fill shadow
     // slots. Each rule is independently toggleable for debugging.
 
     // Rule 1a: WMMA over DS
-    if (ShadowPriorityWMMAOverDS && TryIsWMMA != CandIsWMMA) {
+    if (ShadowPriorityWMMAOverDSVal && TryIsWMMA != CandIsWMMA) {
       if ((TryIsWMMA && CandIsDS) || (TryIsDS && CandIsWMMA))
         return preferFirst(TryIsWMMA,
                            AMDGPUSchedReason::ShadowPriorityWMMAOverDS, "WMMA",
@@ -1503,7 +1952,7 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     // Rule 1b: WMMA over SALU
-    if (ShadowPriorityWMMAOverSALU && TryIsWMMA != CandIsWMMA) {
+    if (ShadowPriorityWMMAOverSALUVal && TryIsWMMA != CandIsWMMA) {
       if ((TryIsWMMA && CandIsSALU) || (TryIsSALU && CandIsWMMA))
         return preferFirst(TryIsWMMA,
                            AMDGPUSchedReason::ShadowPriorityWMMAOverSALU,
@@ -1511,14 +1960,14 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     // Rule 2a: CVT over DS
-    if (ShadowPriorityCVTOverDS && TryIsCVT != CandIsCVT) {
+    if (ShadowPriorityCVTOverDSVal && TryIsCVT != CandIsCVT) {
       if ((TryIsCVT && CandIsDS) || (TryIsDS && CandIsCVT))
         return preferFirst(TryIsCVT, AMDGPUSchedReason::ShadowPriorityCVTOverDS,
                            "CVT", "DS");
     }
 
     // Rule 2b: CVT over SALU
-    if (ShadowPriorityCVTOverSALU && TryIsCVT != CandIsCVT) {
+    if (ShadowPriorityCVTOverSALUVal && TryIsCVT != CandIsCVT) {
       if ((TryIsCVT && CandIsSALU) || (TryIsSALU && CandIsCVT))
         return preferFirst(TryIsCVT,
                            AMDGPUSchedReason::ShadowPriorityCVTOverSALU, "CVT",
@@ -1526,7 +1975,7 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     // Rule 3: TRANS32 (v_exp etc) over 1-cycle VALU
-    if (ShadowPriorityTRANS32OverVALU1c && TryIsTRANS32 != CandIsTRANS32) {
+    if (ShadowPriorityTRANS32OverVALU1cVal && TryIsTRANS32 != CandIsTRANS32) {
       if ((TryIsTRANS32 && CandIsVALU1c) || (TryIsVALU1c && CandIsTRANS32))
         return preferFirst(TryIsTRANS32,
                            AMDGPUSchedReason::ShadowPriorityTRANS32OverVALU,
@@ -1535,7 +1984,7 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
 
     // Rule 3b: When filling TRANS32 shadow, prefer VALU1c over SALU
     // This reserves SALU for WMMA/CVT shadows where it's more valuable.
-    if (ShadowPreferVALU1cOverSALUForTRANS && TryIsVALU1c != CandIsVALU1c) {
+    if (ShadowPreferVALU1cOverSALUForTRANSVal && TryIsVALU1c != CandIsVALU1c) {
       if ((TryIsVALU1c && CandIsSALU) || (TryIsSALU && CandIsVALU1c))
         return preferFirst(
             TryIsVALU1c, AMDGPUSchedReason::ShadowPreferVALU1cOverSALUForTRANS,
@@ -1632,10 +2081,28 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
     }
   }
 
+  auto ShadowMixLookaheadDepthVal =
+      IsPrologue    ? ShadowMixLookaheadDepthPro.getValue()
+      : !IsEpilogue ? ShadowMixLookaheadDepth.getValue()
+                    : ShadowMixLookaheadDepthEpi.getValue();
+  auto ShadowMixMaxBlockingCostVal =
+      IsPrologue    ? ShadowMixMaxBlockingCostPro.getValue()
+      : !IsEpilogue ? ShadowMixMaxBlockingCost.getValue()
+                    : ShadowMixMaxBlockingCostEpi.getValue();
+  auto ShadowMixMaxVisitedVal = IsPrologue ? ShadowMixMaxVisitedPro.getValue()
+                                : !IsEpilogue
+                                    ? ShadowMixMaxVisited.getValue()
+                                    : ShadowMixMaxVisitedEpi.getValue();
+  auto ShadowMixMaxCandidatesVal =
+      IsPrologue    ? ShadowMixMaxCandidatesPro.getValue()
+      : !IsEpilogue ? ShadowMixMaxCandidates.getValue()
+                    : ShadowMixMaxCandidatesEpi.getValue();
+
   // Rule 7: Neither directly enables needed flavor - use lookahead
   auto [NearestTarget, Cost] = findNearestPendingByFlavor(
-      MixInfo, NeededFlavor, ShadowMixLookaheadDepth, ShadowMixMaxBlockingCost,
-      ShadowMixMaxVisited, ShadowMixMaxCandidates);
+      MixInfo, NeededFlavor, ShadowMixLookaheadDepthVal,
+      ShadowMixMaxBlockingCostVal, ShadowMixMaxVisitedVal,
+      ShadowMixMaxCandidatesVal);
 
   if (NearestTarget) {
     bool TryHelps = wouldHelpEnable(TryCand.SU, NearestTarget, DAG);
@@ -1663,12 +2130,11 @@ tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
   return false;
 }
 
-static bool
-tryCriticalResourceDependency(GenericSchedulerBase::SchedCandidate &TryCand,
-                               GenericSchedulerBase::SchedCandidate &Cand,
-                               SchedBoundary *Zone, bool IsAsync,
-                               const SmallVectorImpl<HardwareUnitInfo> &HWUInfo,
-                               ScheduleDAGInstrs *DAG, bool IsPostRA) {
+static bool tryCriticalResourceDependency(
+    GenericSchedulerBase::SchedCandidate &TryCand,
+    GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone,
+    bool IsAsync, const SmallVectorImpl<HardwareUnitInfo> &HWUInfo,
+    ScheduleDAGInstrs *DAG, bool IsPostRA, bool IsPrologue, bool IsEpilogue) {
 
   auto IsCandidateResource = [&HWUInfo](unsigned ResourceIdx) {
     // unsigned MaxAvailableLat =
@@ -1747,7 +2213,10 @@ tryCriticalResourceDependency(GenericSchedulerBase::SchedCandidate &TryCand,
     return false;
   }
 
-  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
+  auto ResourceToBalanceVal = IsPrologue    ? ResourcesToBalancePro.getValue()
+                              : !IsEpilogue ? ResourcesToBalance.getValue()
+                                            : ResourcesToBalanceEpi.getValue();
+  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourceToBalanceVal);
   unsigned CheckedResources = 0;
 
   for (unsigned I = 0; I < HWUInfo.size(); I++) {
@@ -1772,7 +2241,8 @@ static bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
                                 SchedBoundary *Zone,
                                 SmallVectorImpl<HardwareUnitInfo> &HWUInfo,
                                 ScheduleDAGInstrs *DAG, bool IsPostRA,
-                                RegionMixInfo &MixInfo) {
+                                RegionMixInfo &MixInfom, bool IsPrologue,
+                                bool IsEpilogue) {
   unsigned CandOp = Cand.SU->getInstr()->getOpcode();
   bool CandIsLoad = CandOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 || CandOp == AMDGPU::S_WAIT_TENSORCNT || CandOp == AMDGPU::S_BARRIER_WAIT || CandOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
   if (CandIsLoad) {
@@ -1788,7 +2258,10 @@ static bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
     return true;
   }
 
-  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourcesToBalance);
+  auto ResourceToBalanceVal = IsPrologue    ? ResourcesToBalancePro.getValue()
+                              : !IsEpilogue ? ResourcesToBalance.getValue()
+                                            : ResourcesToBalanceEpi.getValue();
+  unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourceToBalanceVal);
   unsigned CheckedResources = 0;
   for (unsigned I = 0; I < HWUInfo.size(); I++) {
     HardwareUnitInfo HWUI = HWUInfo[I];
@@ -1823,12 +2296,12 @@ static bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
-                                       IsPostRA)) {
+                                      IsPostRA, IsPrologue, IsEpilogue)) {
       return true;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
-                                       IsPostRA)) {
+                                      IsPostRA, IsPrologue, IsEpilogue)) {
       return true;
     }
 
@@ -1864,7 +2337,7 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
     if (tryAsyncPipe(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR,
-                     SchedTDM, SchedEXP, false)) {
+                     SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue)) {
       return TryCand.Reason != NoCand;
     }
   }
@@ -1886,21 +2359,25 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, false),
+                                      SchedEXP, false, IsPrologue, IsEpilogue),
                 getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
                                       TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, false),
+                                      SchedEXP, false, IsPrologue, IsEpilogue),
                 TryCand, Cand, Stall)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", {
-        unsigned TryStall = getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
-        unsigned CandStall = getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
+        unsigned TryStall = getLatencyStallCycles(
+            TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA,
+            SchedDSR, SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
+        unsigned CandStall = getLatencyStallCycles(
+            Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
+            SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
         dbgs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       });
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, false)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR,
+                          SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ValuCoexec\n");
       LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
@@ -1909,28 +2386,29 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     // Shadow Mix: Ensure sufficient VALU ready before scheduling WMMA.
     // This enables interleaved WMMA+VALU co-execution patterns.
     const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
-    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason)) {
+    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason,
+                     IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ShadowMix\n");
       return TryCand.Reason != NoCand;
     }
 
-    sortResources(HWUInfo, Zone);
-    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false,
-                            MixInfo)) {
+    sortResources(HWUInfo, Zone, IsPrologue, IsEpilogue);
+    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false, MixInfo,
+                            IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
-                                       false)) {
+                                      false, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
-                                       false)) {
+                                      false, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep Async\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
@@ -1955,73 +2433,6 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     return true;
   }
 
-  auto Cycle = CI.getCycle(TryCand.SU->getInstr()->getParent());
-
-  // TODO - we see RP problems in certain kernels if we remove this magic code.
-  // Understand the principles behind this and improve heuristics.
-  if (!Cycle) {
-    // Fall through to original instruction order.
-    bool CandIsBArrierSignal = Cand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
-    if (CandIsBArrierSignal) {
-      TryCand.Reason = RegCritical;
-      return true;
-    }
-
-
-    
-    bool TryCandIsBArrierSignal = TryCand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
-    if (TryCandIsBArrierSignal) {
-      Cand.Reason = RegCritical;
-      return true;
-    }
-
-
-    if ((CandIsBArrierSignal || TryCandIsBArrierSignal) && SchedTDM.size()) {
-      auto Prev = SchedTDM[SchedTDM.size() - 1];
-      auto PrevOp = Prev->getInstr()->getOpcode();
-      if (PrevOp == AMDGPU::ATOMIC_FENCE || PrevOp == AMDGPU::S_BARRIER_SIGNAL_IMM || PrevOp == AMDGPU::S_BARRIER_WAIT) {
-        if (CandIsBArrierSignal) {
-          Cand.Reason = RegCritical;
-          return true;
-        }
-        TryCand.Reason = RegCritical;
-        return true;
-      }
-
-      unsigned CurrCycle = Zone->getCurrCycle();
-      if (CandIsBArrierSignal) {
-        unsigned ReadyCycle = Cand.SU->TopReadyCycle;
-        if (CurrCycle - ReadyCycle >= 100) {
-          Cand.Reason = RegCritical;
-          return true;
-        }
-        TryCand.Reason = RegCritical;
-        return true;
-      }
-      if (TryCandIsBArrierSignal) {
-        unsigned ReadyCycle = TryCand.SU->TopReadyCycle;
-        if (CurrCycle -  ReadyCycle >= 100) {
-          TryCand.Reason = RegCritical;
-          return true;
-        }
-        Cand.Reason = RegCritical;
-        return true;
-      }
-
-
-    }
-
-
-    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
-        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
-      TryCand.Reason = NodeOrder;
-      return true;
-    }
-    return false;
-  }
-
-
-
   // Bias PhysReg Defs and copies to their uses and defined respectively.
   if (tryGreater(biasPhysReg(TryCand.SU, TryCand.AtTop),
                  biasPhysReg(Cand.SU, Cand.AtTop), TryCand, Cand, PhysReg)) {
@@ -2031,17 +2442,17 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
     if (tryAsyncPipe(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR,
-                     SchedTDM, SchedEXP, false)) {
+                     SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue)) {
       return TryCand.Reason != NoCand;
     }
   }
 
   // Avoid exceeding the target's limit.
-  if (DAG->isTrackingPressure() && tryPressure(TryCand.RPDelta.Excess,
-                                               Cand.RPDelta.Excess,
-                                               TryCand, Cand, RegExcess, TRI,
-                                               DAG->MF))
+  if (DAG->isTrackingPressure() &&
+      tryPressure(TryCand.RPDelta.Excess, Cand.RPDelta.Excess, TryCand, Cand,
+                  RegExcess, TRI, DAG->MF)) {
     return TryCand.Reason != NoCand;
+  }
 
   /*
   // Avoid increasing the max critical pressure in the scheduled region.
@@ -2057,26 +2468,51 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   // is a clear good pick on one boundary. Skip heuristics that are more
   // "tie-breaking" in nature.
 
+  // Keep clustered nodes together to encourage downstream peephole
+  // optimizations which may reduce resource requirements.
+  //
+  // This is a best effort to set things up for a post-RA pass. Optimizations
+  // like generating loads of multiple registers should ideally be done within
+  // the scheduler pass by combining the loads during DAG postprocessing.
+  /*
+  unsigned CandZoneCluster = getClusterID(Cand.AtTop);
+  unsigned TryCandZoneCluster = getClusterID(TryCand.AtTop);
+  bool CandIsClusterSucc =
+      isTheSameCluster(CandZoneCluster, Cand.SU->ParentClusterIdx);
+  bool TryCandIsClusterSucc =
+      isTheSameCluster(TryCandZoneCluster, TryCand.SU->ParentClusterIdx);
+
+  if (tryGreater(TryCandIsClusterSucc, CandIsClusterSucc, TryCand, Cand,
+                 Cluster)) {
+                 DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() <<
+  "Cluster\n"); return TryCand.Reason != NoCand;
+                 }
+  }*/
+
   if (SameBoundary) {
 
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, false),
+                                      SchedEXP, false, IsPrologue, IsEpilogue),
                 getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
                                       TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, false),
+                                      SchedEXP, false, IsPrologue, IsEpilogue),
                 TryCand, Cand, Stall)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", {
-        unsigned TryStall = getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
-        unsigned CandStall = getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM, SchedEXP, false);
+        unsigned TryStall = getLatencyStallCycles(
+            TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA,
+            SchedDSR, SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
+        unsigned CandStall = getLatencyStallCycles(
+            Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
+            SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
         dbgs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       });
       return TryCand.Reason != NoCand;
     }
 
     if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR,
-                          SchedTDM, SchedEXP, false)) {
+                          SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ValuCoexec\n");
       LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
@@ -2085,35 +2521,36 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
     // Shadow Mix: Ensure sufficient VALU ready before scheduling WMMA.
     // This enables interleaved WMMA+VALU co-execution patterns.
     const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
-    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason)) {
+    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason,
+                     IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ShadowMix\n");
       return TryCand.Reason != NoCand;
     }
 
-    sortResources(HWUInfo, Zone);
-    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false,
-                            MixInfo)) {
+    sortResources(HWUInfo, Zone, IsPrologue, IsEpilogue);
+    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false, MixInfo,
+                            IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
-    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false,
-                            MixInfo)) {
+    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, false, MixInfo,
+                            IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
-                                      false)) {
+                                      false, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
-                                      false)) {
+                                      false, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep Async\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
@@ -2130,8 +2567,9 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   // Avoid increasing the max critical pressure in the scheduled region.
   if (DAG->isTrackingPressure() &&
       tryPressure(TryCand.RPDelta.CriticalMax, Cand.RPDelta.CriticalMax,
-                  TryCand, Cand, RegCritical, TRI, DAG->MF))
+                  TryCand, Cand, RegCritical, TRI, DAG->MF)) {
     return TryCand.Reason != NoCand;
+  }
 
   // Keep clustered nodes together to encourage downstream peephole
   // optimizations which may reduce resource requirements.
@@ -2346,25 +2784,25 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, true),
+                                      SchedEXP, true, IsPrologue, IsEpilogue),
                 getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
                                       TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, true),
+                                      SchedEXP, true, IsPrologue, IsEpilogue),
                 TryCand, Cand, Stall)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", {
         unsigned TryStall = getLatencyStallCycles(
             TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA,
-            SchedDSR, SchedTDM, SchedEXP, false);
+            SchedDSR, SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
         unsigned CandStall = getLatencyStallCycles(
             Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
-            SchedTDM, SchedEXP, false);
+            SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
         dbgs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       });
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, true)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR,
+                          SchedTDM, SchedEXP, true, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ValuCoexec\n");
       LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
@@ -2373,27 +2811,29 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
     // Shadow Mix: Ensure sufficient VALU ready before scheduling WMMA.
     // This enables interleaved WMMA+VALU co-execution patterns.
     const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
-    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason)) {
+    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason,
+                     IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ShadowMix\n");
       return TryCand.Reason != NoCand;
     }
 
-    sortResources(HWUInfo, Zone);
-    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true, MixInfo)) {
+    sortResources(HWUInfo, Zone, IsPrologue, IsEpilogue);
+    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true, MixInfo,
+                            IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
-                                       true)) {
+                                      true, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
-                                       true)) {
+                                      true, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDepAsync\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
@@ -2458,31 +2898,30 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     return true;
   }
 
-
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
     // Prioritize instructions that read unbuffered resources by stall cycles.
     if (tryLess(getLatencyStallCycles(TryCand.SU, Zone->getCurrCycle(), Zone,
                                       DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, true),
+                                      SchedEXP, true, IsPrologue, IsEpilogue),
                 getLatencyStallCycles(Cand.SU, Zone->getCurrCycle(), Zone, DAG,
                                       TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, true),
+                                      SchedEXP, true, IsPrologue, IsEpilogue),
                 TryCand, Cand, Stall)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", {
         unsigned TryStall = getLatencyStallCycles(
             TryCand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA,
-            SchedDSR, SchedTDM, SchedEXP, false);
+            SchedDSR, SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
         unsigned CandStall = getLatencyStallCycles(
             Cand.SU, Zone->getCurrCycle(), Zone, DAG, TRI, SchedMFMA, SchedDSR,
-            SchedTDM, SchedEXP, false);
+            SchedTDM, SchedEXP, false, IsPrologue, IsEpilogue);
         dbgs() << "Stall, Try: " << TryStall << ", Cand: " << CandStall << "\n";
       });
       return TryCand.Reason != NoCand;
     }
 
-    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR, SchedTDM,
-                                      SchedEXP, true)) {
+    if (tryVALUCoexecSlot(TryCand, Cand, Zone, DAG, TRI, SchedMFMA, SchedDSR,
+                          SchedTDM, SchedEXP, true, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ValuCoexec\n");
       LastAMDGPUReason = AMDGPUSchedReason::WMMACoexec;
       return TryCand.Reason != NoCand;
@@ -2491,27 +2930,29 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
     // Shadow Mix: Ensure sufficient VALU ready before scheduling WMMA.
     // This enables interleaved WMMA+VALU co-execution patterns.
     const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
-    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason)) {
+    if (tryShadowMix(TryCand, Cand, Zone, MixInfo, SII, DAG, LastAMDGPUReason,
+                     IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "ShadowMix\n");
       return TryCand.Reason != NoCand;
     }
 
-    sortResources(HWUInfo, Zone);
-    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true, MixInfo)) {
+    sortResources(HWUInfo, Zone, IsPrologue, IsEpilogue);
+    if (tryCriticalResource(TryCand, Cand, Zone, HWUInfo, DAG, true, MixInfo,
+                            IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceBalance;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, false, HWUInfo, DAG,
-                                       true)) {
+                                      true, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
     }
 
     if (tryCriticalResourceDependency(TryCand, Cand, Zone, true, HWUInfo, DAG,
-                                       true)) {
+                                      true, IsPrologue, IsEpilogue)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResourceDep Async\n");
       LastAMDGPUReason = AMDGPUSchedReason::CritResourceDep;
       return TryCand.Reason != NoCand;
@@ -2657,6 +3098,12 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
     I++;
   }
 
+  if (DAG->SUnits.size()) {
+    MachineBasicBlock *MBB = DAG->SUnits.begin()->getInstr()->getParent();
+    IsPrologue = MBB->isEntryBlock();
+    IsEpilogue = MBB->isReturnBlock();
+  }
+
   unsigned MaxCycles = 0;
   if (FencedDSRCount) {
     for (auto HWUI : HWUInfo) {
@@ -2668,7 +3115,10 @@ void AMDGPUMLPostSchedStrategy::collectUse() {
   }
 
   HWUInfo[(unsigned)InstructionFlavor::Other].reset();
-  if (IgnoreVALU) {
+  auto IgnoreVALUVal = IsPrologue   ? IgnoreVALUPro.getValue()
+                       : IsEpilogue ? IgnoreVALUEpi.getValue()
+                                    : IgnoreVALU.getValue();
+  if (IgnoreVALUVal) {
     HWUInfo[(unsigned)InstructionFlavor::SingleCycleVALU].reset();
     HWUInfo[(unsigned)InstructionFlavor::SALU].reset();
   }
@@ -2694,7 +3144,7 @@ unsigned AMDGPUMLPostSchedStrategy::getHWUICyclesForInst(
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
   unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
   if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
-    Latency = DSLatency;
+    Latency = 8;
 
   return Latency;
 }
@@ -2779,7 +3229,7 @@ void AMDGPUMLPostSchedStrategy::dumpRegionSummary() {
 
   dbgs() << "\nHWUI Resource Pressure (sorted):\n";
   SmallVector<HardwareUnitInfo, 8> SortedHWUI = HWUInfo;
-  sortResources(SortedHWUI, &Top);
+  sortResources(SortedHWUI, &Top, IsPrologue, IsEpilogue);
   for (auto &HWUI : SortedHWUI) {
     if (HWUI.getTotalCycles() == 0)
       continue;
