@@ -1959,7 +1959,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
 
   // TODO - we see RP problems in certain kernels if we remove this magic code.
   // Understand the principles behind this and improve heuristics.
-  if (Cycle) {
+  if (!Cycle) {
     // Fall through to original instruction order.
     bool CandIsBArrierSignal = Cand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
     if (CandIsBArrierSignal) {
