@@ -429,6 +429,8 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
       DAG->MF, GCNHazardRecognizer::OperatingMode::PreRA);
 }
 
+
+// FIXME -- can we better consolodate pending + available?
 static bool shouldCheckPending(SchedBoundary &Zone,
                                const TargetSchedModel *SchedModel) {
   return true;
@@ -461,6 +463,11 @@ unsigned AMDGPUMLSchedStrategy::getHWUICyclesForInst(SUnit *SU, const SIInstrInf
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
                    Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
   unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
+  // FIXME -- harcoded?
+  // This is used to determine hardware unit balancing between LDS and other resources, if we use a high
+  // cycle count to more accurately reflect LDS latency, then we become LDS bound in most cases. The
+  // problem is that LDS latency is usually hidden across loops, whereas other latency (e.g. WMMA) are 
+  // not hidden in this way.
   if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
     Latency = 8;
 
@@ -483,6 +490,8 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
     dbgs() << "Scheduling: "; MI->dump();
     dbgs() << "\n\n";
   });
+  // FIXME - is this ProcResource loop correct? Can we just use it to maximize ReleaseAtCycle?
+  // Can we fold the ReleaseAtCycle logic into getHWUICYclesForInst?
   if (SchedModel && SchedModel->hasInstrSchedModel()) {
     unsigned ReleaseAtCycle = 0;
     const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
@@ -516,6 +525,7 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
 
     assert(FoundIt);
 
+    // TODO - explore if we should base this on coexec flavor
     if (SII->isMFMAorWMMA(*MI)) {
       SchedMFMA.push_back(SU);
     }
@@ -539,6 +549,7 @@ void AMDGPUMLSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   GCNSchedStrategy::schedNode(SU, IsTopNode);
 }
 
+// TODO - should this logic depend on the pipeline?
 static void calculateHiddenLatency(SmallVectorImpl<HardwareUnitInfo> &HWUI,
                                    GCNHazardRecognizer *HazardRec) {
   unsigned WMMACycles = HWUI[(int)InstructionFlavor::WMMA].getTotalCycles();
@@ -1945,11 +1956,10 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   }
 
   auto Cycle = CI.getCycle(TryCand.SU->getInstr()->getParent());
-  bool InCycle = true;
-  if (!Cycle)
-    InCycle = false;
 
-  if (!InCycle) {
+  // TODO - we see RP problems in certain kernels if we remove this magic code.
+  // Understand the principles behind this and improve heuristics.
+  if (Cycle) {
     // Fall through to original instruction order.
     bool CandIsBArrierSignal = Cand.SU->getInstr()->getOpcode() == AMDGPU::ATOMIC_FENCE;
     if (CandIsBArrierSignal) {
@@ -2584,7 +2594,7 @@ void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   PostGenericScheduler::schedNode(SU, IsTopNode);
 }
 
-
+// TODO -- is there a way to reduce code duplication?
 void AMDGPUMLPostSchedStrategy::collectUse() {
   CollectedUse = true;
   SchedDSR.clear();
