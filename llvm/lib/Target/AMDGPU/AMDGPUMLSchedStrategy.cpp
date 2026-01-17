@@ -373,27 +373,27 @@ static cl::opt<bool> ShadowMixRulesPro(
 static cl::opt<unsigned> ResourcesToBalanceEpi(
     "amdgpu-resource-balancing-epi", cl::Hidden,
     cl::desc("Number of resources we will try to balance during scheduling."),
-    cl::init(75));
+    cl::init(50));
 
 static cl::opt<unsigned>
     DSLatencySplitEpi("amdgpu-ds-latency-split-epi", cl::Hidden,
                       cl::desc("Latency between neighboring DS_LOAD."),
-                      cl::init(0));
+                      cl::init(1));
 
 static cl::opt<unsigned>
     DSLatencyFIFOEpi("amdgpu-ds-fifo-latency-epi", cl::Hidden,
                      cl::desc("Hazard latency DS_LOAD FIFO full."),
-                     cl::init(56));
+                     cl::init(36));
 
 static cl::opt<unsigned> LatencyForSignalEpi(
     "amdgpu-signal-latency-epi", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(43));
+    cl::init(58));
 
 static cl::opt<unsigned>
     DSLatencyForFenceEpi("amdgpu-ds-fence-latency-epi", cl::Hidden,
                          cl::desc("Hazard latency between DS_LOAD and FENCE."),
-                         cl::init(52));
+                         cl::init(63));
 
 static cl::opt<unsigned> DSFIFOSizeEpi("amdgpu-ds-fifo-size-epi", cl::Hidden,
                                        cl::desc("DS_LOAD FIFO size."),
@@ -401,19 +401,19 @@ static cl::opt<unsigned> DSFIFOSizeEpi("amdgpu-ds-fifo-size-epi", cl::Hidden,
 static cl::opt<unsigned>
     DSLatencyEpi("amdgpu-ds-latency-epi", cl::Hidden,
                  cl::desc("Latency of DS_LOAD for resource usage."),
-                 cl::init(25));
+                 cl::init(69));
 
 static cl::opt<bool> IgnoreVALUEpi(
     "amdgpu-ignore-valu-resource-balancing-epi", cl::Hidden,
     cl::desc(
         "Whether or not to ignore VALU unit when balancing HW resoiurces."),
-    cl::init(false));
+    cl::init(true));
 
 static cl::opt<bool>
     AvoidEXPEpi("amdgpu-avoid-exp-final-islot-epi", cl::Hidden,
                 cl::desc("Whether or not to try avoiding putting v_exp in "
                          "final I slot of WMMA."),
-                cl::init(true));
+                cl::init(false));
 
 static cl::opt<bool> EnableShadowMixEpi(
     "amdgpu-shadow-mix-epi", cl::Hidden,
@@ -428,7 +428,7 @@ static cl::opt<unsigned> ShadowMixWMMAMinVALU1cEpi(
              "before scheduling a WMMA instruction. Setting to 0 disables "
              "VALU check. WMMA has 8 co-execution slots that can be filled "
              "with 1-cycle VALU, so 2 ensures interleaving opportunity."),
-    cl::init(3));
+    cl::init(2));
 
 static cl::opt<unsigned> ShadowMixWMMAMinDSEpi(
     "amdgpu-shadow-mix-wmma-min-ds-epi", cl::Hidden,
@@ -436,14 +436,14 @@ static cl::opt<unsigned> ShadowMixWMMAMinDSEpi(
         "Minimum number of ready DS (LDS load/store) instructions required "
         "before scheduling a WMMA instruction. Setting to 0 disables "
         "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
-    cl::init(2));
+    cl::init(6));
 
 static cl::opt<unsigned> ShadowMixWMMAMinSALUEpi(
     "amdgpu-shadow-mix-wmma-min-salu-epi", cl::Hidden,
     cl::desc("Minimum number of ready SALU instructions required "
              "before scheduling a WMMA instruction. Setting to 0 disables "
              "SALU check. SALU can fill WMMA co-exec slots."),
-    cl::init(3));
+    cl::init(2));
 
 static cl::opt<unsigned> ShadowMixLookaheadDepthEpi(
     "amdgpu-shadow-mix-lookahead-depth-epi", cl::Hidden,
@@ -451,7 +451,7 @@ static cl::opt<unsigned> ShadowMixLookaheadDepthEpi(
              "co-execution candidates. Higher values find more opportunities "
              "but increase compile time. 0 disables lookahead (direct enable "
              "only)."),
-    cl::init(8));
+    cl::init(9));
 
 static cl::opt<unsigned> ShadowMixMaxBlockingCostEpi(
     "amdgpu-shadow-mix-max-blocking-cost-epi", cl::Hidden,
@@ -459,7 +459,7 @@ static cl::opt<unsigned> ShadowMixMaxBlockingCostEpi(
         "Maximum number of blocking instructions acceptable when searching "
         "for pending co-execution candidates. Targets with higher cost are "
         "ignored as too expensive to reach."),
-    cl::init(9));
+    cl::init(17));
 
 static cl::opt<unsigned> ShadowMixMaxVisitedEpi(
     "amdgpu-shadow-mix-max-visited-epi", cl::Hidden,
@@ -472,7 +472,7 @@ static cl::opt<unsigned> ShadowMixMaxCandidatesEpi(
     cl::desc(
         "Maximum number of pending candidates to examine during lookahead. "
         "Limits compile time when many pending instructions exist."),
-    cl::init(16));
+    cl::init(7));
 
 // Shadow priority rules: prefer long-latency instruction so short ones fill
 // shadow. These are toggleable for debugging the increasingly specific
@@ -485,7 +485,7 @@ static cl::opt<bool> ShadowPriorityWMMAOverDSEpi(
 static cl::opt<bool> ShadowPriorityWMMAOverSALUEpi(
     "amdgpu-shadow-priority-wmma-over-salu-epi", cl::Hidden,
     cl::desc("Prefer WMMA over SALU when both ready (SALU fills WMMA shadow)."),
-    cl::init(true));
+    cl::init(false));
 
 static cl::opt<bool> ShadowPriorityCVTOverDSEpi(
     "amdgpu-shadow-priority-cvt-over-ds-epi", cl::Hidden,
@@ -507,14 +507,14 @@ static cl::opt<bool> ShadowDeferTRANS32Epi(
     "amdgpu-shadow-defer-trans32-epi", cl::Hidden,
     cl::desc(
         "Defer TRANS32 instructions until enough VALU ready to fill shadow."),
-    cl::init(true));
+    cl::init(false));
 
 static cl::opt<unsigned> ShadowMixTRANS32MinVALU1cEpi(
     "amdgpu-shadow-mix-trans32-min-valu1c-epi", cl::Hidden,
     cl::desc(
         "Minimum 1-cycle VALU instructions ready before scheduling TRANS32 "
         "(when -amdgpu-shadow-defer-trans32 enabled)."),
-    cl::init(0));
+    cl::init(1));
 
 static cl::opt<bool> ShadowPreferVALU1cOverSALUForTRANSEpi(
     "amdgpu-shadow-prefer-valu-over-salu-for-trans-epi", cl::Hidden,
@@ -534,7 +534,7 @@ static cl::opt<bool> ResourcePriorityCoexecWindowSizeEpi(
     "amdgpu-resource-priority-coexec-windows-size-epi", cl::Hidden,
     cl::desc(
         "When sorting critical resources, whether to sort by window size."),
-    cl::init(true));
+    cl::init(false));
 
 // Flag seems universally beneficial, may make sense to delete
 static cl::opt<bool> ResourcePriorityExposedCyclesEpi(
@@ -546,7 +546,7 @@ static cl::opt<bool> ResourcePriorityExposedCyclesEpi(
 static cl::opt<bool> ShadowMixRulesEpi(
     "amdgpu-use-shadow-mix-rules-epi", cl::Hidden,
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
-    cl::init(false));
+    cl::init(true));
 
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
