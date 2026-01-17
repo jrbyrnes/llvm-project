@@ -235,7 +235,7 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
   static cl::opt<bool> EnableNoNaNsFPMath(
       "enable-no-nans-fp-math",
       cl::desc("Enable FP math optimizations that assume no NaNs"),
-      cl::init(false));
+      cl::init(true));
   CGBINDOPT(EnableNoNaNsFPMath);
 
   static cl::opt<bool> EnableNoSignedZerosFPMath(
@@ -296,7 +296,7 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
 
   static cl::opt<FPOpFusion::FPOpFusionMode> FuseFPOps(
       "fp-contract", cl::desc("Enable aggressive formation of fused FP ops"),
-      cl::init(FPOpFusion::Standard),
+      cl::init(FPOpFusion::Fast),
       cl::values(
           clEnumValN(FPOpFusion::Fast, "fast",
                      "Fuse FP ops whenever profitable"),
