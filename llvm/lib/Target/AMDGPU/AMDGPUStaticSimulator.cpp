@@ -53,7 +53,7 @@ using namespace llvm::AMDGPU;
 static cl::opt<bool> EnableStaticSimulator(
     "amdgpu-enable-static-simulator",
     cl::desc("Enable static performance simulator for AMDGPU kernels"),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 static cl::opt<bool> VerboseSimulation(
     "amdgpu-static-sim-verbose",
