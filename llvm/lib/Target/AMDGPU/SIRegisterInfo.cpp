@@ -4366,6 +4366,40 @@ bool SIRegisterInfo::getRegAllocationHints(Register VirtReg,
     }
     return false;
   }
+  case AMDGPURI::MSBBlock0:
+  case AMDGPURI::MSBBlock1:
+  case AMDGPURI::MSBBlock2:
+  case AMDGPURI::MSBBlock3: {
+    // MSB block-partitioned allocation hint (gfx1250+).
+    // Reorder Order[] so all regs in the preferred block come first.
+    if (!ST.hasGFX1250Insts())
+      break;
+
+    const TargetRegisterClass *RC = MRI.getRegClass(VirtReg);
+    if (!hasVGPRs(RC))
+      break;
+
+    unsigned PreferredBlock = AMDGPURI::getMSBBlockFromHint(Hint.first);
+    SmallVector<MCPhysReg, 64> PreferredRegs, OtherRegs;
+    for (MCPhysReg PhysReg : Order) {
+      if (MRI.isReserved(PhysReg))
+        continue;
+      unsigned Block = getHWRegIndex(PhysReg) / 256;
+      if (Block == PreferredBlock)
+        PreferredRegs.push_back(PhysReg);
+      else
+        OtherRegs.push_back(PhysReg);
+    }
+
+    Hints.append(PreferredRegs);
+    Hints.append(OtherRegs);
+
+    LLVM_DEBUG(dbgs() << "  MSBBlock" << PreferredBlock << " hint for "
+                      << printReg(VirtReg, this) << ": "
+                      << PreferredRegs.size() << " preferred, "
+                      << OtherRegs.size() << " other\n");
+    return false;
+  }
   default:
     break;
   }

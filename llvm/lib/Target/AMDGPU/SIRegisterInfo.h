@@ -33,7 +33,33 @@ struct SGPRSpillBuilder;
 /// Register allocation hint types. Helps eliminate unneeded COPY with True16
 namespace AMDGPURI {
 
-enum { Size16 = 1, Size32 = 2 };
+enum {
+  Size16 = 1,
+  Size32 = 2,
+  // MSB block hints for gfx1250+ block-partitioned allocation.
+  // When set, getRegAllocationHints() reorders Order[] to prefer the block.
+  MSBBlock0 = 3,
+  MSBBlock1 = 4,
+  MSBBlock2 = 5,
+  MSBBlock3 = 6,
+};
+
+/// Check if hint type is an MSB block hint.
+inline bool isMSBBlockHint(unsigned HintType) {
+  return HintType >= MSBBlock0 && HintType <= MSBBlock3;
+}
+
+/// Get block number from MSB block hint type.
+inline unsigned getMSBBlockFromHint(unsigned HintType) {
+  assert(isMSBBlockHint(HintType));
+  return HintType - MSBBlock0;
+}
+
+/// Get hint type for a given MSB block.
+inline unsigned getHintForMSBBlock(unsigned Block) {
+  assert(Block < 4);
+  return MSBBlock0 + Block;
+}
 
 } // end namespace AMDGPURI
 

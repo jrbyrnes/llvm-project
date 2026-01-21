@@ -27,7 +27,6 @@
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-
 using namespace llvm;
 
 #define DEBUG_TYPE "amdgpu-pre-ra-alloc"
@@ -40,7 +39,7 @@ static cl::opt<bool> EnablePreRAAlloc(
 static cl::opt<bool> SeedOnlyFromLoops(
     "amdgpu-pre-ra-alloc-loops-only",
     cl::desc("Only seed DS_READs from within loops (focus on hot code)"),
-    cl::init(false), cl::Hidden);
+    cl::init(true), cl::Hidden);
 
 static cl::opt<bool> AnchorOnlyMode(
     "amdgpu-pre-ra-anchor-only",
@@ -137,6 +136,42 @@ static cl::opt<bool> DumpLanePressureLoopsOnly(
     cl::desc("Only dump lane pressure for MBBs that are inside a loop"),
     cl::init(true), cl::Hidden);
 
+static cl::opt<bool> EnablePreSplitRegionMode(
+    "amdgpu-pre-ra-presplit-region",
+    cl::desc("Assume the scheduler (or a pre-pass) has pre-split hot blocks into "
+             "4 stripe subregions separated by SCHED_BARRIER 0; force region i "
+             "to map to MSB block (i % 4) and avoid cross-block anchor bleed."),
+    cl::init(false), cl::Hidden);
+
+static cl::opt<unsigned> PreSplitSeedThreshold(
+    "amdgpu-pre-ra-presplit-seed-threshold",
+    cl::desc("Minimum regclass size (lanes) for presplit-region seeds"),
+    cl::init(8), cl::Hidden);
+
+static cl::opt<unsigned> PreSplitPKSeedMinLanes(
+    "amdgpu-pre-ra-presplit-pk-seed-min-lanes",
+    cl::desc("Minimum lane width for PK_VALU seeds in presplit-region mode. "
+             "Default matches region slice threshold; setting to 2 can increase "
+             "MSB coherence but may increase spills."),
+    cl::init(8), cl::Hidden);
+
+static cl::opt<unsigned> PreSplitPKPropagateMinLanes(
+    "amdgpu-pre-ra-presplit-pk-propagate-min-lanes",
+    cl::desc("Minimum lane width for PK_VALU propagation candidates in "
+             "presplit-region mode. Default matches region slice threshold; setting to 2 "
+             "can increase MSB coherence but may increase spills."),
+    cl::init(8), cl::Hidden);
+
+static cl::opt<bool> DumpPreSplitDetails(
+    "amdgpu-pre-ra-presplit-dump",
+    cl::desc("Dump presplit-region seeds, assignments, and block maps"),
+    cl::init(false), cl::Hidden);
+
+static cl::opt<bool> DumpPreSplitQuality(
+    "amdgpu-pre-ra-presplit-quality",
+    cl::desc("Print one-line per-region presplit quality stats (hints/blocks)"),
+    cl::init(false), cl::Hidden);
+
 namespace {
 
 /// Cluster of vregs that should prefer the same VGPR block.
@@ -203,6 +238,39 @@ struct MSBCluster {
   LLVM_DUMP_METHOD void dump(const TargetRegisterInfo *TRI) const {
     print(dbgs(), TRI);
   }
+};
+
+/// Region bounded by SCHED_BARRIER 0 markers.
+struct SchedBarrierRegion {
+  MachineBasicBlock::iterator Begin;
+  MachineBasicBlock::iterator End;
+  unsigned RegionIndex = 0;
+
+  /// Instruction count within region (for def-order ranking).
+  unsigned size() const {
+    unsigned Count = 0;
+    for (auto I = Begin; I != End; ++I)
+      ++Count;
+    return Count;
+  }
+};
+
+/// Block assignment for a vreg in region-slicing mode.
+struct RegionBlockAssignment {
+  int Block = -1;
+  enum Strength { None, Weak, Strong } AssignStrength = None;
+
+  bool isAssigned() const { return Block >= 0; }
+};
+
+/// Seed vreg for region-slicing (wide tuple defs).
+struct RegionSeed {
+  Register Reg;
+  unsigned SizeInLanes = 0;
+  unsigned FirstDefIdx = UINT_MAX;
+  bool IsStrongAnchor = false; // DS/WMMA dst
+  StringRef Family;            // "WMMA", "DS", "PK_VALU", "EXP", etc.
+  const MachineInstr *DefMI = nullptr;
 };
 
 class AMDGPUPreRAAlloc : public MachineFunctionPass {
@@ -325,6 +393,29 @@ private:
   bool blockHasCapacity(unsigned Block, unsigned LargestTuple) const;
   unsigned getWMMAWindowDepth(const MachineInstr &MI) const;
   void printPatternAnalysis(ArrayRef<MSBCluster> Clusters);
+
+  // === Pre-split region mode methods ===
+  bool runRegionBlockSlicing(MachineFunction &MF);
+  bool hasSchedBarrier0(const MachineBasicBlock &MBB) const;
+  SmallVector<SchedBarrierRegion, 4>
+  splitBySchedBarrier0(MachineBasicBlock &MBB) const;
+  SmallVector<RegionSeed, 32>
+  collectRegionSeeds(const SchedBarrierRegion &Region) const;
+  StringRef classifyOpcodeFamily(const MachineInstr &MI) const;
+  bool isWideTupleVGPR(Register Reg) const;
+  void assignBlocksToSeeds(ArrayRef<RegionSeed> Seeds,
+                           DenseMap<Register, RegionBlockAssignment> &Assignments,
+                           unsigned RegionLaneBudget[4],
+                           unsigned ForcedBlock);
+  void propagateOpcodeAware(const SchedBarrierRegion &Region,
+                            DenseMap<Register, RegionBlockAssignment> &Assignments);
+  unsigned emitRegionHints(
+      const DenseMap<Register, RegionBlockAssignment> &Assignments,
+      unsigned &HintsEmitted);
+  void dumpRegionSeeds(ArrayRef<RegionSeed> Seeds,
+                       const DenseMap<Register, RegionBlockAssignment> &Assignments) const;
+  void dumpRegionAssignments(
+      const DenseMap<Register, RegionBlockAssignment> &Assignments) const;
   void printPostAnalysis(ArrayRef<std::pair<Register, MCPhysReg>> Allocated) const;
   void analyzeMSBExposures() const;
 };
@@ -1434,6 +1525,24 @@ bool AMDGPUPreRAAlloc::runOnMachineFunction(MachineFunction &MF) {
   std::fill(std::begin(BlockPressure), std::end(BlockPressure), 0);
   std::fill(std::begin(BlockPeakReg), std::end(BlockPeakReg), 0);
 
+  // === Pre-split region mode (block-partitioned allocation) ===
+  if (EnablePreSplitRegionMode) {
+    bool Changed = runRegionBlockSlicing(MF);
+
+    if (DumpLanePressureTimeline && Indexes && LIS) {
+      dbgs() << "\n  === Lane-weighted VGPR live pressure timeline (pre-RA, SlotIndexes-based) ===\n";
+      dbgs() << "  Note: timeline is by instruction order (not cycles). Bucket="
+             << std::max(1u, (unsigned)DumpLanePressureBucketSize) << "\n";
+      for (const MachineBasicBlock &MBB : MF) {
+        if (DumpLanePressureLoopsOnly && !MLI->getLoopFor(&MBB))
+          continue;
+        dumpLanePressureTimelineForMBB(MBB);
+      }
+    }
+    return Changed;
+  }
+
+  // === Original DS_READ clustering mode ===
   SmallVector<std::pair<Register, MCPhysReg>, 64> Allocated;
   allocateDSReadPairs(Allocated);
 
@@ -1823,6 +1932,520 @@ void AMDGPUPreRAAlloc::dumpLanePressureTimelineForMBB(
            << " b3=" << Peak[3] << " u=" << Peak[4] << " | ";
     ShowMI->print(dbgs());
   }
+}
+
+//===----------------------------------------------------------------------===//
+// Region-slicing mode implementation
+//===----------------------------------------------------------------------===//
+
+bool AMDGPUPreRAAlloc::hasSchedBarrier0(const MachineBasicBlock &MBB) const {
+  for (const MachineInstr &MI : MBB) {
+    if (MI.getOpcode() == AMDGPU::SCHED_BARRIER &&
+        MI.getOperand(0).getImm() == 0)
+      return true;
+  }
+  return false;
+}
+
+SmallVector<SchedBarrierRegion, 4>
+AMDGPUPreRAAlloc::splitBySchedBarrier0(MachineBasicBlock &MBB) const {
+  SmallVector<SchedBarrierRegion, 4> Regions;
+  auto Begin = MBB.begin();
+  unsigned Idx = 0;
+
+  for (auto I = MBB.begin(), E = MBB.end(); I != E; ++I) {
+    if (I->getOpcode() == AMDGPU::SCHED_BARRIER &&
+        I->getOperand(0).getImm() == 0) {
+      SchedBarrierRegion R;
+      R.Begin = Begin;
+      R.End = I;
+      R.RegionIndex = Idx++;
+      if (R.Begin != R.End)
+        Regions.push_back(R);
+      Begin = std::next(I);
+    }
+  }
+
+  // Final region after last barrier
+  SchedBarrierRegion R;
+  R.Begin = Begin;
+  R.End = MBB.end();
+  R.RegionIndex = Idx;
+  if (R.Begin != R.End)
+    Regions.push_back(R);
+
+  return Regions;
+}
+
+StringRef AMDGPUPreRAAlloc::classifyOpcodeFamily(const MachineInstr &MI) const {
+  unsigned Opc = MI.getOpcode();
+
+  if (isWMMA(MI))
+    return "WMMA";
+  if (isDSRead(MI))
+    return "DS";
+
+  // V_EXP
+  if (Opc == AMDGPU::V_EXP_F32_e32 || Opc == AMDGPU::V_EXP_F32_e64)
+    return "EXP";
+
+  // V_PK_* (packed VALU) - detected via VOP3P flag
+  if (SIInstrInfo::isVOP3P(MI))
+    return "PK_VALU";
+
+  // Generic wide VALU (includes V_CVT and other ops)
+  if (isVALU(MI))
+    return "VALU";
+
+  return "";
+}
+
+bool AMDGPUPreRAAlloc::isWideTupleVGPR(Register Reg) const {
+  if (!Reg.isVirtual())
+    return false;
+  const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+  if (!TRI->hasVGPRs(RC))
+    return false;
+  unsigned Size = getRegSizeInLanes(Reg);
+  return Size >= PreSplitSeedThreshold;
+}
+
+SmallVector<RegionSeed, 32>
+AMDGPUPreRAAlloc::collectRegionSeeds(const SchedBarrierRegion &Region) const {
+  SmallVector<RegionSeed, 32> Seeds;
+  DenseSet<Register> SeenRegs;
+  unsigned InstrIdx = 0;
+
+  for (auto I = Region.Begin; I != Region.End; ++I, ++InstrIdx) {
+    const MachineInstr &MI = *I;
+    StringRef Family = classifyOpcodeFamily(MI);
+    if (Family.empty())
+      continue;
+
+    bool IsStrongAnchor = (Family == "WMMA" || Family == "DS");
+
+    // Collect wide VGPR defs
+    for (const MachineOperand &MO : MI.defs()) {
+      if (!MO.isReg())
+        continue;
+      Register Reg = MO.getReg();
+      if (!Reg.isVirtual()) {
+        if (DumpPreSplitDetails)
+          dbgs() << "    skip " << printReg(Reg, TRI)
+                 << ": non-virtual def\n";
+        continue;
+      }
+      unsigned SeedMinLanes =
+          (Family == "PK_VALU") ? PreSplitPKSeedMinLanes
+                                : PreSplitSeedThreshold;
+      unsigned SizeLanes = getRegSizeInLanes(Reg);
+      if (SizeLanes < SeedMinLanes) {
+        if (DumpPreSplitDetails)
+          dbgs() << "    skip " << printReg(Reg, TRI)
+                 << ": below seed threshold (" << SizeLanes << " lanes)\n";
+        continue;
+      }
+      if (SeenRegs.count(Reg)) {
+        if (DumpPreSplitDetails)
+          dbgs() << "    skip " << printReg(Reg, TRI)
+                 << ": already seeded in region\n";
+        continue;
+      }
+      SeenRegs.insert(Reg);
+
+      RegionSeed S;
+      S.Reg = Reg;
+      S.SizeInLanes = SizeLanes;
+      S.FirstDefIdx = InstrIdx;
+      S.IsStrongAnchor = IsStrongAnchor;
+      S.Family = Family;
+      S.DefMI = &MI;
+      Seeds.push_back(S);
+    }
+  }
+
+  // Sort by first def index
+  llvm::sort(Seeds, [](const RegionSeed &A, const RegionSeed &B) {
+    return A.FirstDefIdx < B.FirstDefIdx;
+  });
+
+  return Seeds;
+}
+
+void AMDGPUPreRAAlloc::assignBlocksToSeeds(
+    ArrayRef<RegionSeed> Seeds,
+    DenseMap<Register, RegionBlockAssignment> &Assignments,
+    unsigned RegionLaneBudget[4],
+    unsigned ForcedBlock) {
+  for (unsigned I = 0; I < Seeds.size(); ++I) {
+    const RegionSeed &S = Seeds[I];
+
+    // Skip if already assigned (from global carryover)
+    if (Assignments.count(S.Reg) && Assignments[S.Reg].isAssigned())
+      continue;
+
+    unsigned B = ForcedBlock;
+    RegionBlockAssignment BA;
+    BA.Block = B;
+    BA.AssignStrength = S.IsStrongAnchor ? RegionBlockAssignment::Strong
+                                         : RegionBlockAssignment::Weak;
+    Assignments[S.Reg] = BA;
+    RegionLaneBudget[B] += S.SizeInLanes;
+
+    LLVM_DEBUG(dbgs() << "    Seed " << printReg(S.Reg, TRI)
+                      << " (" << S.Family << ", " << S.SizeInLanes << " lanes)"
+                      << " -> Block " << B << " (forced region)"
+                      << (BA.AssignStrength == RegionBlockAssignment::Strong
+                              ? " (strong)"
+                              : "")
+                      << "\n");
+  }
+}
+
+void AMDGPUPreRAAlloc::propagateOpcodeAware(
+    const SchedBarrierRegion &Region,
+    DenseMap<Register, RegionBlockAssignment> &Assignments) {
+  
+  bool Changed = true;
+  unsigned Iterations = 0;
+  const unsigned MaxIterations = 10;
+
+  while (Changed && Iterations++ < MaxIterations) {
+    Changed = false;
+
+    for (auto I = Region.Begin; I != Region.End; ++I) {
+      const MachineInstr &MI = *I;
+      StringRef Family = classifyOpcodeFamily(MI);
+      if (Family.empty())
+        continue;
+
+      // Collect candidate regs for propagation (opcode-aware, wide tuples only).
+      SmallVector<Register, 8> CandidateRegs;
+      bool AllowSmall = (Family == "PK_VALU");
+      auto addCandidate = [&](Register R) {
+        if (!R.isVirtual())
+          return;
+        if (!AllowSmall && !isWideTupleVGPR(R))
+          return;
+        if (AllowSmall && getRegSizeInLanes(R) < PreSplitPKPropagateMinLanes)
+          return;
+        if (!is_contained(CandidateRegs, R))
+          CandidateRegs.push_back(R);
+      };
+
+      if (Family == "DS") {
+        for (const MachineOperand &MO : MI.defs())
+          if (MO.isReg())
+            addCandidate(MO.getReg());
+      } else {
+        for (const MachineOperand &MO : MI.defs())
+          if (MO.isReg())
+            addCandidate(MO.getReg());
+        for (const MachineOperand &MO : MI.explicit_uses())
+          if (MO.isReg())
+            addCandidate(MO.getReg());
+      }
+
+      if (CandidateRegs.empty())
+        continue;
+
+      // Find dominant block from assigned candidates
+      int DominantBlock = -1;
+      RegionBlockAssignment::Strength DominantStrength =
+          RegionBlockAssignment::None;
+
+      for (Register R : CandidateRegs) {
+        auto It = Assignments.find(R);
+        if (It != Assignments.end() && It->second.isAssigned()) {
+          if (It->second.AssignStrength > DominantStrength) {
+            DominantBlock = It->second.Block;
+            DominantStrength = It->second.AssignStrength;
+          }
+        }
+      }
+
+      if (DominantBlock < 0)
+        continue;
+
+      // Propagate to unassigned wide VGPRs only
+      // Opcode-aware: only propagate along tile operands
+      for (Register R : CandidateRegs) {
+        if (Assignments.count(R) && Assignments[R].isAssigned())
+          continue;
+
+        RegionBlockAssignment BA;
+        BA.Block = DominantBlock;
+        BA.AssignStrength = RegionBlockAssignment::Weak;
+        Assignments[R] = BA;
+        Changed = true;
+
+        LLVM_DEBUG(dbgs() << "    Propagate " << printReg(R, TRI)
+                          << " -> Block " << DominantBlock << " (from "
+                          << Family << ")\n");
+      }
+    }
+  }
+}
+
+void AMDGPUPreRAAlloc::dumpRegionSeeds(
+    ArrayRef<RegionSeed> Seeds,
+    const DenseMap<Register, RegionBlockAssignment> &Assignments) const {
+  dbgs() << "    Seed list:\n";
+  for (const RegionSeed &S : Seeds) {
+    int Block = -1;
+    auto It = Assignments.find(S.Reg);
+    if (It != Assignments.end() && It->second.isAssigned())
+      Block = It->second.Block;
+    dbgs() << "      " << printReg(S.Reg, TRI) << " (" << S.Family
+           << ", " << S.SizeInLanes << " lanes, def@" << S.FirstDefIdx << ")";
+    if (Block >= 0)
+      dbgs() << " -> B" << Block;
+    if (S.IsStrongAnchor)
+      dbgs() << " [strong]";
+    dbgs() << "\n";
+  }
+}
+
+void AMDGPUPreRAAlloc::dumpRegionAssignments(
+    const DenseMap<Register, RegionBlockAssignment> &Assignments) const {
+  SmallVector<Register, 64> BlockRegs[4];
+  SmallVector<Register, 64> Unassigned;
+
+  for (const auto &[Reg, BA] : Assignments) {
+    if (!BA.isAssigned() || BA.Block < 0 || BA.Block >= 4) {
+      Unassigned.push_back(Reg);
+      continue;
+    }
+    BlockRegs[BA.Block].push_back(Reg);
+  }
+
+  for (int B = 0; B < 4; ++B) {
+    llvm::sort(BlockRegs[B], [](Register A, Register B) {
+      return A.id() < B.id();
+    });
+    dbgs() << "    Block " << B << " vregs (" << BlockRegs[B].size()
+           << "): ";
+    for (Register R : BlockRegs[B])
+      dbgs() << printReg(R, TRI) << " ";
+    dbgs() << "\n";
+  }
+
+  dbgs() << "    Pre-RA block map (wide tuples only):\n";
+  for (int B = 0; B < 4; ++B) {
+    dbgs() << "      B" << B << ":";
+    for (Register R : BlockRegs[B]) {
+      if (!isWideTupleVGPR(R))
+        continue;
+      dbgs() << " " << printReg(R, TRI);
+    }
+    dbgs() << "\n";
+  }
+
+  if (!Unassigned.empty()) {
+    llvm::sort(Unassigned, [](Register A, Register B) {
+      return A.id() < B.id();
+    });
+    dbgs() << "    Unassigned vregs (" << Unassigned.size() << "): ";
+    for (Register R : Unassigned)
+      dbgs() << printReg(R, TRI) << " ";
+    dbgs() << "\n";
+  }
+}
+
+unsigned AMDGPUPreRAAlloc::emitRegionHints(
+    const DenseMap<Register, RegionBlockAssignment> &Assignments,
+    unsigned &HintsEmitted) {
+  unsigned LocalHints = 0;
+
+  for (const auto &[Reg, BA] : Assignments) {
+    if (!BA.isAssigned())
+      continue;
+
+    if (BA.AssignStrength == RegionBlockAssignment::Strong)
+      GlobalMustConstrain.insert(Reg);
+
+    if (MaxHints != 0 && HintsEmitted >= MaxHints)
+      break;
+
+    // Use the new MSBBlock hint types
+    unsigned HintType = AMDGPURI::getHintForMSBBlock(BA.Block);
+
+    // Set a representative physreg in that block as the hint register
+    // (The actual block preference comes from the hint type)
+    MCPhysReg RepPhys = AMDGPU::VGPR0 + (BA.Block * 256);
+
+    MRI->setRegAllocationHint(Reg, HintType, RepPhys);
+    ++HintsEmitted;
+    ++LocalHints;
+
+    // Update AnchorBlock for carryover
+    AnchorBlock[Reg] = BA.Block;
+  }
+
+  return LocalHints;
+}
+
+bool AMDGPUPreRAAlloc::runRegionBlockSlicing(MachineFunction &MF) {
+  LLVM_DEBUG(dbgs() << "  === PreSplit Region Mode ===\n");
+
+  bool MadeChanges = false;
+  unsigned TotalRegions = 0;
+  unsigned TotalSeeds = 0;
+  unsigned TotalAssigned = 0;
+  unsigned HintsEmitted = 0;
+
+  for (MachineBasicBlock &MBB : MF) {
+    // Only process MBBs with SCHED_BARRIER 0 markers
+    if (!hasSchedBarrier0(MBB))
+      continue;
+
+    // Only process loop bodies (hot code)
+    if (SeedOnlyFromLoops && !MLI->getLoopFor(&MBB))
+      continue;
+
+    LLVM_DEBUG(dbgs() << "  Processing MBB " << MBB.getNumber() << "\n");
+
+    SmallVector<SchedBarrierRegion, 4> Regions = splitBySchedBarrier0(MBB);
+    LLVM_DEBUG(dbgs() << "    Found " << Regions.size() << " regions\n");
+
+    for (const SchedBarrierRegion &Region : Regions) {
+      LLVM_DEBUG(dbgs() << "  --- Region " << Region.RegionIndex << " ("
+                        << Region.size() << " instrs) ---\n");
+      TotalRegions++;
+
+      unsigned ForcedBlock = (Region.RegionIndex % 4);
+
+      // Collect seeds (wide tuple defs)
+      SmallVector<RegionSeed, 32> Seeds = collectRegionSeeds(Region);
+      TotalSeeds += Seeds.size();
+      LLVM_DEBUG(dbgs() << "    Seeds: " << Seeds.size() << "\n");
+      if (DumpPreSplitDetails) {
+        dbgs() << "    PreSplit forced block: " << ForcedBlock << "\n";
+        unsigned ExpCount = 0, PkCount = 0, ValuCount = 0, WmmaCount = 0,
+                 DsCount = 0, OtherCount = 0;
+        for (const RegionSeed &S : Seeds) {
+          if (S.Family == "EXP")
+            ++ExpCount;
+          else if (S.Family == "PK_VALU")
+            ++PkCount;
+          else if (S.Family == "VALU")
+            ++ValuCount;
+          else if (S.Family == "WMMA")
+            ++WmmaCount;
+          else if (S.Family == "DS")
+            ++DsCount;
+          else
+            ++OtherCount;
+        }
+        dbgs() << "    Region seeds: EXP=" << ExpCount
+               << ", PK_VALU=" << PkCount << ", VALU=" << ValuCount
+               << ", WMMA=" << WmmaCount << ", DS=" << DsCount;
+        if (OtherCount)
+          dbgs() << ", OTHER=" << OtherCount;
+        dbgs() << "\n";
+      }
+      if (Seeds.empty())
+        continue;
+
+      // Initialize lane budget per block for this region
+      unsigned RegionLaneBudget[4] = {0, 0, 0, 0};
+
+      // Inherit global assignments for vregs used in this region
+      DenseMap<Register, RegionBlockAssignment> Assignments;
+      for (auto I = Region.Begin; I != Region.End; ++I) {
+        for (const MachineOperand &MO : I->operands()) {
+          if (!MO.isReg() || !MO.getReg().isVirtual())
+            continue;
+          Register R = MO.getReg();
+          auto It = AnchorBlock.find(R);
+          if (It != AnchorBlock.end() && It->second >= 0 && It->second < 4) {
+            // In forced-block mode, avoid contaminating the region with
+            // cross-block anchors. Only inherit matching anchors unless the
+            // value is globally must-constrain.
+            if (static_cast<unsigned>(It->second) != ForcedBlock &&
+                !GlobalMustConstrain.count(R))
+              continue;
+            RegionBlockAssignment BA;
+            BA.Block = It->second;
+            BA.AssignStrength = GlobalMustConstrain.count(R)
+                                    ? RegionBlockAssignment::Strong
+                                    : RegionBlockAssignment::Weak;
+            Assignments[R] = BA;
+          }
+        }
+      }
+
+      // Account for inherited assignments in the region budget.
+      for (const auto &[Reg, BA] : Assignments) {
+        if (!BA.isAssigned())
+          continue;
+        RegionLaneBudget[BA.Block] += getRegSizeInLanes(Reg);
+      }
+
+      // Assign blocks to seeds (forced region block).
+      assignBlocksToSeeds(Seeds, Assignments, RegionLaneBudget, ForcedBlock);
+
+      // Propagate through def-use chains (opcode-aware)
+      propagateOpcodeAware(Region, Assignments);
+
+      if (DumpPreSplitDetails) {
+        dumpRegionSeeds(Seeds, Assignments);
+        dumpRegionAssignments(Assignments);
+      }
+
+      // Emit hints using new MSBBlock hint types
+      unsigned LocalHints = emitRegionHints(Assignments, HintsEmitted);
+
+      TotalAssigned += Assignments.size();
+      if (LocalHints > 0)
+        MadeChanges = true;
+
+      if (DumpPreSplitQuality) {
+        unsigned BlockAssignedCounts[4] = {0, 0, 0, 0};
+        unsigned BlockAssignedLanes[4] = {0, 0, 0, 0};
+        unsigned Unassigned = 0;
+        for (const auto &[Reg, BA] : Assignments) {
+          if (!BA.isAssigned()) {
+            ++Unassigned;
+            continue;
+          }
+          if (BA.Block < 4) {
+            ++BlockAssignedCounts[BA.Block];
+            BlockAssignedLanes[BA.Block] += getRegSizeInLanes(Reg);
+          }
+        }
+        errs() << "PreRARegionSlice: bb=" << MBB.getNumber()
+               << " region=" << Region.RegionIndex
+               << " instrs=" << Region.size()
+               << " seeds=" << Seeds.size()
+               << " assigned=" << Assignments.size()
+               << " unassigned=" << Unassigned
+               << " hints=" << LocalHints
+               << " budget=["
+               << RegionLaneBudget[0] << "," << RegionLaneBudget[1] << ","
+               << RegionLaneBudget[2] << "," << RegionLaneBudget[3] << "]"
+               << " assigned_lanes=["
+               << BlockAssignedLanes[0] << "," << BlockAssignedLanes[1] << ","
+               << BlockAssignedLanes[2] << "," << BlockAssignedLanes[3] << "]"
+               << " assigned_regs=["
+               << BlockAssignedCounts[0] << "," << BlockAssignedCounts[1] << ","
+               << BlockAssignedCounts[2] << "," << BlockAssignedCounts[3] << "]"
+               << "\n";
+      }
+
+      LLVM_DEBUG(dbgs() << "    Assigned: " << Assignments.size() << " vregs\n"
+                        << "    Block budget: [0]=" << RegionLaneBudget[0]
+                        << " [1]=" << RegionLaneBudget[1]
+                        << " [2]=" << RegionLaneBudget[2]
+                        << " [3]=" << RegionLaneBudget[3] << "\n");
+    }
+  }
+
+  LLVM_DEBUG(dbgs() << "  Region slicing summary: " << TotalRegions
+                    << " regions, " << TotalSeeds << " seeds, " << TotalAssigned
+                    << " assigned, " << HintsEmitted << " hints\n");
+
+  return MadeChanges;
 }
 
 FunctionPass *llvm::createAMDGPUPreRAAllocPass() {
