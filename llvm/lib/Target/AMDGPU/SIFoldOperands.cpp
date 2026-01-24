@@ -2745,8 +2745,6 @@ bool SIFoldOperandsImpl::tryOptimizeAGPRPhis(MachineBasicBlock &MBB) {
   return Changed;
 }
 
-bool Added = false;
-
 bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   this->MF = &MF;
   MRI = &MF.getRegInfo();
@@ -2805,38 +2803,6 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     }
 
     Changed |= tryOptimizeAGPRPhis(*MBB);
-
-
-    if (MBB->isEntryBlock() && !Added) {
-      Added=true;
-
-      auto buildPrefetch = [MBB, this](unsigned offset) {
-        MachineInstrBuilder Prefetch =
-            BuildMI(*MBB, MBB->getFirstNonPHI(),MBB->getFirstNonPHI()->getDebugLoc(), TII->get(AMDGPU::S_PREFETCH_INST_PC_REL));
-        Prefetch.addImm(offset);
-        Prefetch.addReg(AMDGPU::SGPR_NULL);
-        Prefetch.addImm(31);
-      };
-
-      buildPrefetch(57280);
-      buildPrefetch(53184);
-      buildPrefetch(49088);
-      buildPrefetch(45024);
-      buildPrefetch(40928);
-
-
-
-      for (auto I = 0; I < 10; I++) {
-        MachineInstrBuilder Prefetch =
-            BuildMI(*MBB, MBB->getFirstNonPHI(),MBB->getFirstNonPHI()->getDebugLoc(), TII->get(AMDGPU::S_PREFETCH_INST_PC_REL));
-
-        Prefetch.addImm(4096*(9-I));
-        Prefetch.addReg(AMDGPU::SGPR_NULL);
-        Prefetch.addImm(31);
-      }
-      return true;
-      
-    }
   }
 
   return Changed;
