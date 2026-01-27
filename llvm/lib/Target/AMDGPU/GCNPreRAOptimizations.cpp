@@ -305,12 +305,26 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
     for (const MachineBasicBlock &MBB : MF) {
       SmallVector<SmallVector<Register, 4>, 16> RecentMFMAs;
       SmallVector<SmallVector<Register, 4>, 16> RecentEXPs;
+      unsigned InstrsSinceMFMA = 0;
+      unsigned InstrsSinceEXP = 0;
+      unsigned VALUsSinceMFMA = 0;
+      unsigned VALUsSinceEXP = 0;
       for (const MachineInstr &MI : MBB) {
         if (MI.isDebugInstr())
           continue;
 
+        if (SIInstrInfo::isVALU(MI) && !SIInstrInfo::isMFMAorWMMA(MI) && SIInstrInfo::isTRANS(MI)) {
+          ++VALUsSinceMFMA;
+          ++VALUsSinceEXP;
+        }
+
+        ++InstrsSinceMFMA;
+        ++InstrsSinceEXP;
         // Handle MFMA instructions
         if (SIInstrInfo::isMFMAorWMMA(MI)) {
+          ++VALUsSinceEXP;
+          VALUsSinceMFMA = 0;
+          InstrsSinceMFMA = 0;
           SmallVector<Register, 4> MFMARegisters;
           // Helper to get named operand
           auto collectNamedOperand = [&](AMDGPU::OpName OpName,
@@ -349,6 +363,9 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
 
         // Handle EXP instructions
         if (SIInstrInfo::isTRANS(MI)) {
+          VALUsSinceEXP = 0;
+          ++VALUsSinceMFMA;
+          InstrsSinceEXP = 0;
           SmallVector<Register, 4> TransRegisters;
           // Helper to get named operand
           auto collectNamedOperand = [&](AMDGPU::OpName OpName,
@@ -401,7 +418,9 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           // Only process VGPR registers
           if (!TRI->isVGPRClass(CandidateRC))
             continue;
-          if (!SIInstrInfo::isMFMAorWMMA(MI)) {
+          
+          // FIXME -- VALU and InstCount should be dependent upon MFMA type.
+          if (!SIInstrInfo::isMFMAorWMMA(MI) && VALUsSinceMFMA  < 4 && InstrsSinceMFMA < 9) {
             for (auto It = RecentMFMAs.rbegin(); It != RecentMFMAs.rend();
                  ++It) {
               const SmallVector<Register, 4> &MFMARegs = *It;
@@ -423,7 +442,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
 
           if (!MO.isDef())
             continue;
-          if (!SIInstrInfo::isTRANS(MI)) {
+          if (!SIInstrInfo::isTRANS(MI) && VALUsSinceEXP < 2) {
             for (auto It = RecentEXPs.rbegin(); It != RecentEXPs.rend(); ++It) {
               const SmallVector<Register, 4> &EXPRegs = *It;
               for (Register EXPReg : EXPRegs) {
