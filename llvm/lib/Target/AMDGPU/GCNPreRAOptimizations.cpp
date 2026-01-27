@@ -32,6 +32,7 @@
 
 #include "GCNPreRAOptimizations.h"
 #include "AMDGPU.h"
+#include "GCNHazardRecognizer.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIRegisterInfo.h"
@@ -66,6 +67,7 @@ private:
   const SIRegisterInfo *TRI;
   MachineRegisterInfo *MRI;
   LiveIntervals *LIS;
+  std::unique_ptr<GCNHazardRecognizer> HazardRec;
 
   bool processReg(Register Reg);
 
@@ -258,6 +260,8 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
   TII = ST.getInstrInfo();
   MRI = &MF.getRegInfo();
   TRI = ST.getRegisterInfo();
+  HazardRec = std::make_unique<GCNHazardRecognizer>(
+      MF, GCNHazardRecognizer::OperatingMode::PostRA);
 
   bool Changed = false;
   bool Added = false;
@@ -307,6 +311,8 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
       unsigned InstrsSinceEXP = 0;
       unsigned VALUsSinceMFMA = 0;
       unsigned VALUsSinceEXP = 0;
+      unsigned WMMANeededVALU = 0;
+      unsigned WMMANeededInstr = 0;
       for (const MachineInstr &MI : MBB) {
         if (MI.isDebugInstr())
           continue;
@@ -323,6 +329,38 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           ++VALUsSinceEXP;
           VALUsSinceMFMA = 0;
           InstrsSinceMFMA = 0;
+          SmallVector<GCNHazardRecognizer::WMMASlotType, 8> WMMAPipeline;
+          HazardRec->getWMMASlots(MI, WMMAPipeline);
+
+          if (WMMAPipeline.size()) {
+            WMMANeededInstr =
+                std::max(WMMANeededInstr, (unsigned)WMMAPipeline.size());
+
+            unsigned VALUSlots = 0;
+
+            for (auto Slot : WMMAPipeline) {
+              if (Slot == GCNHazardRecognizer::WMMASlotType::ValuCoExec0 ||
+                  Slot == GCNHazardRecognizer::WMMASlotType::ValuCoExec1 ||
+                  Slot == GCNHazardRecognizer::WMMASlotType::ValuCoExec2 ||
+                  Slot ==
+                      GCNHazardRecognizer::WMMASlotType::ValuCoExecLdScale ||
+                  Slot == GCNHazardRecognizer::WMMASlotType::
+                              ValuCoexecLastLdScale) {
+                ++VALUSlots;
+              }
+              if (Slot == GCNHazardRecognizer::WMMASlotType::Execute) {
+                --WMMANeededInstr;
+              }
+            }
+
+            WMMANeededVALU = std::max(WMMANeededVALU, VALUSlots);
+          }
+
+          if (WMMAPipeline.empty()) {
+            WMMANeededInstr = 16;
+            WMMANeededVALU = 16;
+          }
+
           SmallVector<Register, 4> MFMARegisters;
           // Helper to get named operand
           auto collectNamedOperand = [&](AMDGPU::OpName OpName,
@@ -416,9 +454,10 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           // Only process VGPR registers
           if (!TRI->isVGPRClass(CandidateRC))
             continue;
-          
-          // FIXME -- VALU and InstCount should be dependent upon MFMA type.
-          if (!SIInstrInfo::isMFMAorWMMA(MI) && VALUsSinceMFMA  < 4 && InstrsSinceMFMA < 9) {
+
+          if (!SIInstrInfo::isMFMAorWMMA(MI) &&
+              VALUsSinceMFMA < (WMMANeededVALU + 1) &&
+              InstrsSinceMFMA < (WMMANeededInstr + 1)) {
             for (auto It = RecentMFMAs.rbegin(); It != RecentMFMAs.rend();
                  ++It) {
               const SmallVector<Register, 4> &MFMARegs = *It;
