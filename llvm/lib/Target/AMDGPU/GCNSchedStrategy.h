@@ -138,8 +138,6 @@ public:
 
   unsigned VGPRLimitBias = 0;
 
-  bool CollectedUse = false;
-
   GCNSchedStrategy(const MachineSchedContext *C);
 
   SUnit *pickNode(bool &IsTopNode) override;
