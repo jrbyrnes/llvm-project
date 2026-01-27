@@ -284,7 +284,6 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
       buildPrefetch(40928);
 
 
-
       for (auto I = 0; I < 10; I++) {
         MachineInstrBuilder Prefetch =
             BuildMI(MBB, MBB.getFirstNonPHI(),MBB.getFirstNonPHI()->getDebugLoc(), TII->get(AMDGPU::S_PREFETCH_INST_PC_REL));
@@ -293,6 +292,15 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
         Prefetch.addReg(AMDGPU::SGPR_NULL);
         Prefetch.addImm(31);
       }
+
+
+
+  const unsigned EncodedReg = AMDGPU::Hwreg::HwregEncoding::encode(
+      AMDGPU::Hwreg::ID_MODE, 24, 1);
+  BuildMI(MBB, MBB.getFirstNonPHI(), DebugLoc(), TII->get(AMDGPU::S_SETREG_IMM32_B32))
+      .addImm(1)
+      .addImm(EncodedReg);
+
       Changed = true;
       break;
     }
