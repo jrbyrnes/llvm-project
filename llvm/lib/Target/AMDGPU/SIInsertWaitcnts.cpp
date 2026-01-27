@@ -2814,7 +2814,7 @@ void SIInsertWaitcnts::setSchedulingMode(MachineBasicBlock &MBB,
                                          MachineInstr &MI,
                                          bool ExpertMode) const {
   const unsigned EncodedReg = AMDGPU::Hwreg::HwregEncoding::encode(
-      AMDGPU::Hwreg::ID_SCHED_MODE, AMDGPU::Hwreg::HwregOffset::Default, 2);
+      AMDGPU::Hwreg::ID_SCHED_MODE, AMDGPU::Hwreg::HwregOffset::Default, 5);
   BuildMI(MBB, MI, DebugLoc(), TII->get(AMDGPU::S_SETREG_IMM32_B32))
       .addImm(ExpertMode ? 2 : 0)
       .addImm(EncodedReg);
