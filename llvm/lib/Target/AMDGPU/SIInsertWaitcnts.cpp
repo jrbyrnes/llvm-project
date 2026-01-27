@@ -72,7 +72,7 @@ static cl::opt<bool> SoftwareHazardModeFlag(
              "only)"),
     cl::init(true), cl::Hidden);
 
-static cl::opt<bool> SchedMode4(
+static cl::opt<bool> DisableXDLStallMode(
     "amdgpu-disable-xdl-stall-sched-mode",
     cl::desc("Enable sched mode 4 to disable xdl->xdl stall)"),
     cl::init(false), cl::Hidden);
@@ -2821,7 +2821,7 @@ void SIInsertWaitcnts::setSchedulingMode(MachineBasicBlock &MBB,
   const unsigned EncodedReg = AMDGPU::Hwreg::HwregEncoding::encode(
       AMDGPU::Hwreg::ID_SCHED_MODE, AMDGPU::Hwreg::HwregOffset::Default, 5);
   unsigned SchedMode = ExpertMode ? 2 : 0;
-  SchedMode |= SchedMode4 ? (1 << 4) : 0;
+  SchedMode |= DisableXDLStallMode ? (1 << 4) : 0;
   BuildMI(MBB, MI, DebugLoc(), TII->get(AMDGPU::S_SETREG_IMM32_B32))
       .addImm(SchedMode)
       .addImm(EncodedReg);
