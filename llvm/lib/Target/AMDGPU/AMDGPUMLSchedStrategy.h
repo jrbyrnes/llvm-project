@@ -389,6 +389,106 @@ public:
   }
 };
 
+class CandidateHeuristics {
+public:
+  CandidateHeuristics() = default;
+
+  ScheduleDAGMI *DAG;
+  const SIInstrInfo *SII;
+  const SIRegisterInfo *SRI;
+
+  const TargetSchedModel *SchedModel;
+
+  SmallVector<SUnit *, 16> SchedDSR;
+
+  SmallVector<SUnit *, 16> SchedMFMA;
+
+  SmallVector<HardwareUnitInfo, 8> HWUInfo;
+
+  SmallVector<SUnit *, 16> SchedTDM;
+
+  SmallVector<SUnit *, 16> SchedEXP;
+
+  RegionMixInfo MixInfo;
+
+  AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
+
+  unsigned FencedDSRLatency = 0;
+  unsigned ScheduledSUCount = 0;
+  unsigned SpaceBetweenFence = 0;
+
+  bool IsPrologue = false;
+  bool IsEpilogue = false;
+
+  bool CollectedUse = false;
+
+  bool IsPostRA;
+  bool IsMemoryBound;
+
+  bool ResourcePriorityToProducerVal;
+  bool ResourcePriorityCoexecWindowSizeVal;
+  bool ResourcePriorityExposedCyclesVal;
+  bool EnableShadowMixVal;
+  unsigned ShadowMixWMMAMinVALU1cVal;
+  unsigned ShadowMixWMMAMinDSVal;
+  unsigned ShadowMixWMMAMinSALUVal;
+  bool ShadowMixRulesVal;
+  bool ShadowPriorityWMMAOverDSVal;
+  bool ShadowPriorityWMMAOverSALUVal;
+  bool ShadowPriorityCVTOverDSVal;
+  bool ShadowPriorityCVTOverSALUVal;
+  bool ShadowPriorityTRANS32OverVALU1cVal;
+  bool ShadowPreferVALU1cOverSALUForTRANSVal;
+  unsigned ShadowMixLookaheadDepthVal;
+  unsigned ShadowMixMaxBlockingCostVal;
+  unsigned ShadowMixMaxVisitedVal;
+  unsigned ShadowMixMaxCandidatesVal;
+  bool IgnoreVALUVal;
+  unsigned DSFIFOSizeVal;
+  unsigned DSLatencyFIFOVal;
+  unsigned DSLatencySplitVal;
+  unsigned LatencyForSignalVal;
+  unsigned DSLatencyForFenceVal;
+  unsigned ResourceToBalanceVal;
+
+  void initialize(ScheduleDAGMI *DAG, GCNHazardRecognizer *HazardRec,
+                  const TargetSchedModel *SchedModel,
+                  const TargetRegisterInfo *TRI, bool IsMemoryBound = false,
+                  bool IsPostRA = false);
+
+  void setParams();
+  void collectUse(GCNHazardRecognizer *HazardRec);
+
+  unsigned getHWUICyclesForInst(SUnit *SU, unsigned ReleaseAtCycle);
+  void sortResources();
+  void calculateHiddenLatency(GCNHazardRecognizer *HazardRec);
+
+  void schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec);
+
+  unsigned getLatencyStallCycles(SUnit *SU, SchedBoundary *Zone);
+  bool tryAsyncPipe(GenericSchedulerBase::SchedCandidate &TryCand,
+                    GenericSchedulerBase::SchedCandidate &Cand,
+                    SchedBoundary *Zone);
+  bool tryVALUCoexecSlot(GenericSchedulerBase::SchedCandidate &TryCand,
+                         GenericSchedulerBase::SchedCandidate &Cand,
+                         SchedBoundary *Zone);
+  bool tryShadowMix(GenericSchedulerBase::SchedCandidate &TryCand,
+                    GenericSchedulerBase::SchedCandidate &Cand,
+                    SchedBoundary *Zone,
+                    AMDGPUSchedReason &OutReason);
+  bool
+  tryCriticalResourceDependency(GenericSchedulerBase::SchedCandidate &TryCand,
+                                GenericSchedulerBase::SchedCandidate &Cand,
+                                SchedBoundary *Zone, bool IsAsync);
+
+  bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
+                           GenericSchedulerBase::SchedCandidate &Cand,
+                           SchedBoundary *Zone);
+
+  void dumpRegionSummary();
+};
+
+
 class AMDGPUMLSchedStrategy final : public GCNSchedStrategy {
 protected:
   bool tryCandidateBalanced(SchedCandidate &Cand, SchedCandidate &TryCand,
@@ -405,6 +505,8 @@ protected:
   SmallVector<SUnit *, 16> SchedEXP;
 
   RegionMixInfo MixInfo;
+
+  CandidateHeuristics Heurs;
 
   AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
 
@@ -443,8 +545,6 @@ public:
 
 class AMDGPUMLPostSchedStrategy : public PostGenericScheduler {
 protected:
-  bool CollectedUse = false;
-
   unsigned FencedDSRLatency = 0;
 
   SmallVector<SUnit *, 16> SchedDSR;
@@ -458,6 +558,8 @@ protected:
   SmallVector<SUnit *, 16> SchedEXP;
 
   RegionMixInfo MixInfo;
+
+  CandidateHeuristics Heurs;
 
   AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
 
