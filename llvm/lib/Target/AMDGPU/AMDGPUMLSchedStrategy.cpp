@@ -1316,16 +1316,17 @@ getLatencyStallCycles(SUnit *SU, unsigned CurrCycle, SchedBoundary *Zone,
   }
 
   else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
-    auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
+    if (SchedTDM.size()) {
+      auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
-    if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
-      auto LatencyForSignalVal = IsPrologue    ? LatencyForSignalPro.getValue()
-                                 : !IsEpilogue ? LatencyForSignal.getValue()
-                                               : LatencyForSignalEpi.getValue();
-      ReadyCycle =
-          std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignalVal);
+      if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+        auto LatencyForSignalVal = IsPrologue    ? LatencyForSignalPro.getValue()
+                                   : !IsEpilogue ? LatencyForSignal.getValue()
+                                                 : LatencyForSignalEpi.getValue();
+        ReadyCycle =
+            std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignalVal);
+      }
     }
-
   }
 
   else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
@@ -1493,17 +1494,18 @@ static bool tryAsyncPipe(GenericSchedulerBase::SchedCandidate &TryCand,
     }
 
     else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
-      auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
+      if (SchedTDM.size()) {
+        auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
-      if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
-        auto LatencyForSignalVal = IsPrologue ? LatencyForSignalPro.getValue()
-                                   : !IsEpilogue
-                                       ? LatencyForSignal.getValue()
-                                       : LatencyForSignalEpi.getValue();
-        ReadyCycle =
-            std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignalVal);
+        if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+          auto LatencyForSignalVal = IsPrologue ? LatencyForSignalPro.getValue()
+                                     : !IsEpilogue
+                                         ? LatencyForSignal.getValue()
+                                         : LatencyForSignalEpi.getValue();
+          ReadyCycle =
+              std::max(ReadyCycle, PrevTDM->TopReadyCycle + LatencyForSignalVal);
+        }
       }
-
     }
 
     else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||

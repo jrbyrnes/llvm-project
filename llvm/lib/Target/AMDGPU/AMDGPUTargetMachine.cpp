@@ -555,6 +555,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUAsmPrinterPass(*PR);
   initializeAMDGPUDAGToDAGISelLegacyPass(*PR);
   initializeAMDGPUPrepareAGPRAllocLegacyPass(*PR);
+  initializeAMDGPUPreSchedPartitionPass(*PR);
   initializeAMDGPUPreRAAllocPass(*PR);
   initializeAMDGPUPostRARegRewriterPass(*PR);
   initializeGCNDPPCombineLegacyPass(*PR);
@@ -1652,6 +1653,12 @@ void GCNPassConfig::addOptimizedRegAlloc() {
 
   if (EnableRewritePartialRegUses)
     insertPass(&RenameIndependentSubregsID, &GCNRewritePartialRegUsesID);
+
+  // Pre-scheduling partitioning for TRANS/PK MSB optimization (gfx1250+).
+  // Must run BEFORE machine-scheduler so barriers constrain scheduling.
+  // Insert after RenameIndependentSubregs (which is right before
+  // MachineScheduler)
+  insertPass(&RenameIndependentSubregsID, &AMDGPUPreSchedPartitionID);
 
   if (isPassEnabled(EnablePreRAOptimizations))
     insertPass(&MachineSchedulerID, &GCNPreRAOptimizationsID);

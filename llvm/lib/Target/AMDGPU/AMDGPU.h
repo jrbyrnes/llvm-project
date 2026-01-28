@@ -65,6 +65,8 @@ ModulePass *createAMDGPULowerBufferFatPointersPass();
 ModulePass *createAMDGPULowerIntrinsicsLegacyPass();
 FunctionPass *createSIModeRegisterPass();
 FunctionPass *createGCNPreRAOptimizationsLegacyPass();
+FunctionPass *createAMDGPUPreSchedPartitionPass();
+void initializeAMDGPUPreSchedPartitionPass(PassRegistry &);
 FunctionPass *createAMDGPUPreRAAllocPass();
 void initializeAMDGPUPreRAAllocPass(PassRegistry &);
 FunctionPass *createAMDGPUPostRARegRewriterPass();
@@ -565,6 +567,8 @@ extern char &GCNPreRALongBranchRegID;
 
 void initializeGCNPreRAOptimizationsLegacyPass(PassRegistry &);
 extern char &GCNPreRAOptimizationsID;
+
+extern char &AMDGPUPreSchedPartitionID;
 
 FunctionPass *createAMDGPUSetWavePriorityPass();
 void initializeAMDGPUSetWavePriorityLegacyPass(PassRegistry &);
