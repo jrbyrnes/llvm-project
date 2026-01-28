@@ -54,6 +54,11 @@
 using namespace llvm;
 using namespace llvm::AMDGPU;
 
+static cl::opt<unsigned> ForceTCPSplit(
+    "amdgpu-tcp-split",
+    cl::desc("Force COMPUTE_PGM_RSRC3_GFX125_TCP_SPLIT value (0-7)"),
+    cl::init(0), cl::Hidden);
+
 // This should get the default rounding mode from the kernel. We just set the
 // default here, but this could change if the OpenCL rounding mode pragmas are
 // used.
@@ -1359,11 +1364,17 @@ void AMDGPUAsmPrinter::getSIProgramInfo(SIProgramInfo &ProgInfo,
                 amdhsa::COMPUTE_PGM_RSRC3_GFX90A_TG_SPLIT_SHIFT);
   }
 
-  if (AMDGPU::isGFX1250(STM))
+  if (AMDGPU::isGFX1250(STM)) {
     ProgInfo.ComputePGMRSrc3 =
         SetBits(ProgInfo.ComputePGMRSrc3, ProgInfo.NamedBarCnt,
                 amdhsa::COMPUTE_PGM_RSRC3_GFX125_NAMED_BAR_CNT,
                 amdhsa::COMPUTE_PGM_RSRC3_GFX125_NAMED_BAR_CNT_SHIFT);
+    if (ForceTCPSplit)
+      ProgInfo.ComputePGMRSrc3 =
+          SetBits(ProgInfo.ComputePGMRSrc3, CreateExpr(ForceTCPSplit.getValue()),
+                  amdhsa::COMPUTE_PGM_RSRC3_GFX125_TCP_SPLIT,
+                  amdhsa::COMPUTE_PGM_RSRC3_GFX125_TCP_SPLIT_SHIFT);
+  }
 
   ProgInfo.Occupancy = AMDGPUMCExpr::createOccupancy(
       STM.computeOccupancy(F, ProgInfo.LDSSize).second,
