@@ -59,6 +59,10 @@ static cl::opt<unsigned> VAVDSTLookbackWindow(
     "amdgpu-va-vdst-lookback-window", cl::Hidden,
     cl::desc("Lookback window for VA_VDST anti-hints"), cl::init(32));
 
+static cl::opt<bool>
+    InsertPreftechInstructions("amdgpu-inst-prefetch-64kb", cl::Hidden,
+                             cl::init(false));
+
 namespace {
 
 class GCNPreRAOptimizationsImpl {
@@ -270,7 +274,7 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
 
 
   for (auto &MBB : MF) {
-    if (MBB.isEntryBlock() && !Added) {
+    if (MBB.isEntryBlock() && !Added && InsertPreftechInstructions) {
       Added=true;
 
       auto buildPrefetch = [&MBB, this](unsigned offset) {
