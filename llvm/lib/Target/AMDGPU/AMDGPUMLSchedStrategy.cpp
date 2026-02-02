@@ -770,13 +770,6 @@ void AMDGPUMLSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   CI.clear();
   CI.compute(DAG->MF);
 
-  HWUInfo.resize((int)InstructionFlavor::NUM_FLAVORS);
-  HWUInfo[(int)InstructionFlavor::DMA].IsAsync = true;
-
-  for (unsigned I = 0; I < HWUInfo.size(); I++) {
-    HWUInfo[I].setType(I);
-  }
-
   if (Top.HazardRec) {
     delete Top.HazardRec;
     Top.HazardRec = nullptr;
@@ -1247,10 +1240,6 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
   }
 
   calculateHiddenLatency(HazardRec);
-
-  for (auto HWUI : HWUInfo) {
-    HWUI.print();
-  }
 
   LLVM_DEBUG(dumpRegionSummary());
 }
@@ -3012,21 +3001,6 @@ void AMDGPUMLPostSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   RegionPolicy.OnlyTopDown = true;
   RegionPolicy.OnlyBottomUp = false;
   PostGenericScheduler::initialize(DAG);
-
-  HWUInfo.resize((int)InstructionFlavor::NUM_FLAVORS);
-  HWUInfo[(int)InstructionFlavor::DMA].IsAsync = true;
-
-  for (unsigned I = 0; I < HWUInfo.size(); I++) {
-    HWUInfo[I].setType(I);
-  }
-
-  SchedDSR.clear();
-  SchedMFMA.clear();
-  SchedTDM.clear();
-
-  for (auto &HWUI : HWUInfo) {
-    HWUI.reset();
-  }
 
   if (Top.HazardRec) {
     delete Top.HazardRec;
