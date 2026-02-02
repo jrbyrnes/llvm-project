@@ -23,33 +23,33 @@ using namespace llvm;
 static cl::opt<unsigned> ResourcesToBalance(
     "amdgpu-resource-balancing", cl::Hidden,
     cl::desc("Number of resources we will try to balance during scheduling."),
-    cl::init(100));
+    cl::init(86));
 
 static cl::opt<unsigned>
     DSLatencySplit("amdgpu-ds-latency-split", cl::Hidden,
                    cl::desc("Latency between neighboring DS_LOAD."),
-                   cl::init(2));
+                   cl::init(3));
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
-                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(54));
+                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(38));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(38));
+    cl::init(28));
 
 static cl::opt<unsigned>
     DSLatencyForFence("amdgpu-ds-fence-latency", cl::Hidden,
                       cl::desc("Hazard latency between DS_LOAD and FENCE."),
-                      cl::init(58));
+                      cl::init(65));
 
 static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
-                                    cl::init(10));
+                                    cl::init(8));
 static cl::opt<unsigned>
     DSLatency("amdgpu-ds-latency", cl::Hidden,
-              cl::desc("Latency of DS_LOAD for resource usage."), cl::init(62));
+              cl::desc("Latency of DS_LOAD for resource usage."), cl::init(45));
 
 static cl::opt<bool> IgnoreVALU(
     "amdgpu-ignore-valu-resource-balancing", cl::Hidden,
@@ -83,14 +83,14 @@ static cl::opt<unsigned> ShadowMixWMMAMinDS(
         "Minimum number of ready DS (LDS load/store) instructions required "
         "before scheduling a WMMA instruction. Setting to 0 disables "
         "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
-    cl::init(6));
+    cl::init(3));
 
 static cl::opt<unsigned> ShadowMixWMMAMinSALU(
   "amdgpu-shadow-mix-wmma-min-salu", cl::Hidden,
   cl::desc("Minimum number of ready SALU instructions required "
            "before scheduling a WMMA instruction. Setting to 0 disables "
            "SALU check. SALU can fill WMMA co-exec slots."),
-  cl::init(3));
+  cl::init(2));
 
 static cl::opt<unsigned> ShadowMixLookaheadDepth(
     "amdgpu-shadow-mix-lookahead-depth", cl::Hidden,
@@ -98,7 +98,7 @@ static cl::opt<unsigned> ShadowMixLookaheadDepth(
              "co-execution candidates. Higher values find more opportunities "
              "but increase compile time. 0 disables lookahead (direct enable "
              "only)."),
-    cl::init(8));
+    cl::init(11));
 
 static cl::opt<unsigned> ShadowMixMaxBlockingCost(
     "amdgpu-shadow-mix-max-blocking-cost", cl::Hidden,
@@ -106,7 +106,7 @@ static cl::opt<unsigned> ShadowMixMaxBlockingCost(
         "Maximum number of blocking instructions acceptable when searching "
         "for pending co-execution candidates. Targets with higher cost are "
         "ignored as too expensive to reach."),
-    cl::init(10));
+    cl::init(12));
 
 static cl::opt<unsigned> ShadowMixMaxVisited(
   "amdgpu-shadow-mix-max-visited", cl::Hidden,
@@ -118,14 +118,14 @@ static cl::opt<unsigned> ShadowMixMaxCandidates(
   "amdgpu-shadow-mix-max-candidates", cl::Hidden,
   cl::desc("Maximum number of pending candidates to examine during lookahead. "
            "Limits compile time when many pending instructions exist."),
-  cl::init(4));
+  cl::init(16));
 
 // Shadow priority rules: prefer long-latency instruction so short ones fill shadow.
 // These are toggleable for debugging the increasingly specific heuristics.
 static cl::opt<bool> ShadowPriorityWMMAOverDS(
     "amdgpu-shadow-priority-wmma-over-ds", cl::Hidden,
     cl::desc("Prefer WMMA over DS when both ready (DS fills WMMA shadow)."),
-    cl::init(true));
+    cl::init(false));
 
 static cl::opt<bool> ShadowPriorityWMMAOverSALU(
     "amdgpu-shadow-priority-wmma-over-salu", cl::Hidden,
@@ -140,7 +140,7 @@ static cl::opt<bool> ShadowPriorityCVTOverDS(
 static cl::opt<bool> ShadowPriorityCVTOverSALU(
   "amdgpu-shadow-priority-cvt-over-salu", cl::Hidden,
   cl::desc("Prefer CVT over SALU when both ready (SALU fills CVT shadow)."),
-  cl::init(true));
+  cl::init(false));
 
 static cl::opt<bool> ShadowPriorityTRANS32OverVALU1c(
     "amdgpu-shadow-priority-trans32-over-valu1c", cl::Hidden,
@@ -164,7 +164,7 @@ static cl::opt<bool> ShadowPreferVALU1cOverSALUForTRANS(
   "amdgpu-shadow-prefer-valu-over-salu-for-trans", cl::Hidden,
   cl::desc("When filling TRANS32 shadow, prefer VALU1c over SALU "
            "(reserve SALU for WMMA/CVT shadows)."),
-  cl::init(true));
+  cl::init(false));
 
 // Flag seems universally beneficial, may make sense to delete
 static cl::opt<bool> ResourcePriorityToProducer(
@@ -191,6 +191,45 @@ static cl::opt<bool> ShadowMixRules(
     "amdgpu-use-shadow-mix-rules", cl::Hidden,
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
     cl::init(true));
+
+static cl::opt<unsigned> SchedRandomSeed(
+    "amdgpu-sched-random-seed", cl::Hidden,
+    cl::desc("Random seed for perturbing node ID tiebreaker (0 = no randomness)."),
+    cl::init(0));
+
+static cl::opt<unsigned> SchedRandomFlipPercent(
+    "amdgpu-sched-random-flip-percent", cl::Hidden,
+    cl::desc("Percentage of ORDER tiebreakers to potentially flip (1-100)."),
+    cl::init(10));
+
+static bool randomizedNodeOrder(unsigned TryNodeNum, unsigned CandNodeNum,
+                                bool IsTop, unsigned Seed) {
+  // Default behavior: prefer original program order (lower NodeNum for top-down)
+  bool defaultResult = IsTop ? (TryNodeNum < CandNodeNum) : (TryNodeNum > CandNodeNum);
+  
+  if (Seed == 0)
+    return defaultResult;
+
+  // Hash the node pair + seed to get a deterministic "random" value
+  auto hash = [](unsigned a, unsigned b, unsigned s) -> unsigned {
+    unsigned h = a ^ (b * 2654435761u) ^ (s * 2246822519u);
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    return h;
+  };
+  
+  // Use hash to decide if we should flip this particular comparison
+  unsigned h = hash(std::min(TryNodeNum, CandNodeNum), 
+                    std::max(TryNodeNum, CandNodeNum), Seed);
+  unsigned flipThreshold = (SchedRandomFlipPercent * 0xFFFFFFFFu) / 100;
+  
+  if (h < flipThreshold) {
+    // Flip the result for this comparison
+    return !defaultResult;
+  }
+  return defaultResult;
+}
 
 static cl::opt<unsigned> ResourcesToBalancePro(
     "amdgpu-resource-balancing-pro", cl::Hidden,
@@ -2613,8 +2652,8 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
    //               }
 
   // Fall through to original instruction order.
-  if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
-      (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+  if (randomizedNodeOrder(TryCand.SU->NodeNum, Cand.SU->NodeNum,
+                          Zone->isTop(), SchedRandomSeed)) {
     DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "NID\n");
     TryCand.Reason = NodeOrder;
     return true;
@@ -2880,8 +2919,8 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
 
   if (SameBoundary) {
     // Fall through to original instruction order.
-    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
-        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+    if (randomizedNodeOrder(TryCand.SU->NodeNum, Cand.SU->NodeNum,
+                            Zone->isTop(), SchedRandomSeed)) {
           DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "NID\n");
       TryCand.Reason = NodeOrder;
       return true;
@@ -2963,8 +3002,8 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
 
   if (SameBoundary) {
     // Fall through to original instruction order.
-    if ((Zone->isTop() && TryCand.SU->NodeNum < Cand.SU->NodeNum) ||
-        (!Zone->isTop() && TryCand.SU->NodeNum > Cand.SU->NodeNum)) {
+    if (randomizedNodeOrder(TryCand.SU->NodeNum, Cand.SU->NodeNum,
+                            Zone->isTop(), SchedRandomSeed)) {
           DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "NID\n");
       TryCand.Reason = NodeOrder;
       return true;
