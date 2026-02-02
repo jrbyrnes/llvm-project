@@ -282,6 +282,17 @@ public:
 
 } // end anonymous namespace
 
+static bool dependsOnOtherPHINodeInTheSameBB(PHINode &PN) {
+  for (const Value *Inc : PN.incoming_values()) {
+    if (const auto *OtherPN = dyn_cast<PHINode>(Inc)) {
+      if (OtherPN->getParent() == PN.getParent() && OtherPN != &PN) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool AMDGPUCodeGenPrepareImpl::run() {
   BreakPhiNodesCache.clear();
   bool MadeChange = false;
@@ -299,6 +310,15 @@ bool AMDGPUCodeGenPrepareImpl::run() {
   while (!DeadVals.empty()) {
     if (auto *I = dyn_cast_or_null<Instruction>(DeadVals.pop_back_val()))
       RecursivelyDeleteTriviallyDeadInstructions(I, TLI);
+  }
+
+  for (BasicBlock &BB : F) {
+    for (PHINode &PN : make_early_inc_range(BB.phis())) {
+      if(dependsOnOtherPHINodeInTheSameBB(PN)) {
+        PN.moveBefore(BB.begin());
+        MadeChange = true;
+      }
+    }
   }
 
   return MadeChange;

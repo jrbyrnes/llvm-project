@@ -1578,6 +1578,7 @@ void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
   DAG.Pressure[RegionIdx] = PressureAfter;
+  errs() << "Pressure: "; PressureAfter.dump();
   return;
 
   LLVM_DEBUG(dbgs() << "Pressure after scheduling: " << print(PressureAfter));
