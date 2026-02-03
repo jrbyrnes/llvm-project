@@ -529,8 +529,6 @@ protected:
 
   SUnit *pickNode(bool &IsTopNode) override;
 
-  void dumpRegionSummary();
-
   void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);
 
 public:
@@ -565,8 +563,6 @@ protected:
 
   bool IsPrologue = false;
   bool IsEpilogue = false;
-
-  void dumpRegionSummary();
 
   void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);
 

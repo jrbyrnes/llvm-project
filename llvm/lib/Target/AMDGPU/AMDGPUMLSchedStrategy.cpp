@@ -2330,27 +2330,6 @@ void CandidateHeuristics::schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec) {
   MixInfo.markScheduled(SU, Flavor);
 }
 
-void AMDGPUMLSchedStrategy::dumpRegionSummary() {
-  MachineBasicBlock *BB = DAG->begin()->getParent();
-  dbgs() << "\n=== Region: " << DAG->MF.getName() << " BB" << BB->getNumber()
-         << " (" << DAG->SUnits.size() << " SUs) ===\n";
-
-  MixInfo.dumpMix(dbgs(), /*Detailed=*/true);
-
-  dbgs() << "\nHWUI Resource Pressure (sorted):\n";
-  SmallVector<HardwareUnitInfo, 8> SortedHWUI = HWUInfo;
-  Heurs.sortResources();
-  for (auto &HWUI : SortedHWUI) {
-    if (HWUI.getTotalCycles() == 0)
-      continue;
-
-    StringRef Name = getFlavorName(HWUI.getType());
-    dbgs() << "  [" << HWUI.Idx << "] " << Name << ": " << HWUI.getTotalCycles()
-           << " cycles, " << HWUI.size() << " instrs\n";
-  }
-  dbgs() << "\n";
-}
-
 void AMDGPUMLSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
                                             SchedCandidate &Cand) {
   const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
@@ -2358,8 +2337,8 @@ void AMDGPUMLSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
 
   dbgs() << "=== Pick @ Cycle " << Cycle << " ===\n";
 
-  MixInfo.updateReadyCounts();
-  MixInfo.dumpReadyPending(dbgs());
+  Heurs.MixInfo.updateReadyCounts();
+  Heurs.MixInfo.dumpReadyPending(dbgs());
 
   InstructionFlavor Flavor = classifyFlavor(SU->getInstr(), SII);
   dbgs() << "Picked: SU(" << SU->NodeNum << ") ";
@@ -3051,26 +3030,6 @@ void AMDGPUMLPostSchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
   }
 }
 
-void AMDGPUMLPostSchedStrategy::dumpRegionSummary() {
-  MachineBasicBlock *BB = DAG->begin()->getParent();
-  dbgs() << "\n=== PostRA Region: " << DAG->MF.getName() << " BB"
-         << BB->getNumber() << " (" << DAG->SUnits.size() << " SUs) ===\n";
-
-  MixInfo.dumpMix(dbgs(), /*Detailed=*/true);
-
-  dbgs() << "\nHWUI Resource Pressure (sorted):\n";
-  SmallVector<HardwareUnitInfo, 8> SortedHWUI = HWUInfo;
-  Heurs.sortResources();
-  for (auto &HWUI : SortedHWUI) {
-    if (HWUI.getTotalCycles() == 0)
-      continue;
-    StringRef Name = getFlavorName(HWUI.getType());
-    dbgs() << "  [" << HWUI.Idx << "] " << Name << ": "
-           << HWUI.getTotalCycles() << " cycles, " << HWUI.size() << " instrs\n";
-  }
-  dbgs() << "\n";
-}
-
 void AMDGPUMLPostSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
                                                 SchedCandidate &Cand) {
   const SIInstrInfo *SII = static_cast<const SIInstrInfo *>(DAG->TII);
@@ -3078,8 +3037,8 @@ void AMDGPUMLPostSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
 
   dbgs() << "=== PostRA Pick @ Cycle " << Cycle << " ===\n";
 
-  MixInfo.updateReadyCounts();
-  MixInfo.dumpReadyPending(dbgs());
+  Heurs.MixInfo.updateReadyCounts();
+  Heurs.MixInfo.dumpReadyPending(dbgs());
 
   InstructionFlavor Flavor = classifyFlavor(SU->getInstr(), SII);
   dbgs() << "Picked: SU(" << SU->NodeNum << ") ";
