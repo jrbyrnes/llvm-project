@@ -745,7 +745,7 @@ static ScheduleDAGInstrs *createGCNMLMachineScheduler(MachineSchedContext *C) {
   DAG->addMutation(createIGroupLPDAGMutation(AMDGPU::SchedulingPhase::Initial));
   DAG->addMutation(createAMDGPUMacroFusionDAGMutation());
   DAG->addMutation(createAMDGPUExportClusteringDAGMutation());
-  DAG->addMutation(createAMDGPUBarrierLatencyDAGMutation());
+  DAG->addMutation(createAMDGPUBarrierLatencyDAGMutation(C->MF));
   return DAG;
 }
 
@@ -2517,7 +2517,7 @@ Error AMDGPUCodeGenPassBuilder::addRegAssignmentOptimized(
   else
     addMachineFunctionPass(RAGreedyPass({onlyAllocateSGPRs, "sgpr"}), PMW);
 
-  addPreRewrite(addPass);
+  addPreRewrite(PMW);
   // Commit allocated register changes. This is mostly necessary because too
   // many things rely on the use lists of the physical registers, such as the
   // verifier. This is only necessary with allocators which use LiveIntervals,
