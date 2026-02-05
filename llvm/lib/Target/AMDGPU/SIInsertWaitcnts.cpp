@@ -3035,7 +3035,7 @@ void SIInsertWaitcnts::setSchedulingMode(MachineBasicBlock &MBB,
 
   unsigned SchedMode = ExpertMode ? 2 : 0;
   SchedMode |= DisableXDLStallMode ? (1 << 4) : 0;
-  BuildMI(MBB, MI, DebugLoc(), TII->get(AMDGPU::S_SETREG_IMM32_B32))
+  BuildMI(MBB, I, DebugLoc(), TII->get(AMDGPU::S_SETREG_IMM32_B32))
       .addImm(SchedMode)
       .addImm(EncodedReg);
 }

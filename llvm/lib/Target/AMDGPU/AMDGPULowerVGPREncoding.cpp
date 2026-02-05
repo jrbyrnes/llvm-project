@@ -392,6 +392,7 @@ bool AMDGPULowerVGPREncoding::handleSetregMode(MachineInstr &MI) {
                               TII->get(AMDGPU::S_SET_VGPR_MSB))
                           .addImm(ModeValue);
   return true;
+}
 
 MachineBasicBlock::instr_iterator
 AMDGPULowerVGPREncoding::handleCoissue(MachineBasicBlock::instr_iterator I) {
