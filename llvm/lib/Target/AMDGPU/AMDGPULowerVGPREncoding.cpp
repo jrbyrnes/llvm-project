@@ -510,6 +510,7 @@ bool AMDGPULowerVGPREncoding::handleSetregMode(MachineInstr &MI) {
   LLVM_DEBUG(dbgs() << "    -> inserted S_SET_VGPR_MSB after setreg: "
                     << *MostRecentModeSet);
   return true;
+}
 
 MachineBasicBlock::instr_iterator
 AMDGPULowerVGPREncoding::handleCoissue(MachineBasicBlock::instr_iterator I) {
