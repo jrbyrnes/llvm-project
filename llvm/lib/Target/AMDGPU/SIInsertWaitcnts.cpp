@@ -1305,6 +1305,7 @@ void WaitcntBrackets::simplifyVmVsrc(AMDGPU::Waitcnt &Wait) {
 
 void WaitcntBrackets::determineWait(InstCounterType T, RegInterval Interval,
                                     AMDGPU::Waitcnt &Wait) const {
+
   const unsigned LB = getScoreLB(T);
   const unsigned UB = getScoreUB(T);
   for (int RegNo = Interval.first; RegNo < Interval.second; ++RegNo) {
@@ -1333,6 +1334,8 @@ void WaitcntBrackets::determineWait(InstCounterType T, RegInterval Interval,
       }
     }
   }
+
+  Wait.XCnt = ~0u;
 }
 
 void WaitcntBrackets::tryClearSCCWriteEvent(MachineInstr *Inst) {
