@@ -2745,7 +2745,6 @@ bool SIFoldOperandsImpl::tryOptimizeAGPRPhis(MachineBasicBlock &MBB) {
   return Changed;
 }
 
-bool Added = false;
 
 bool SIFoldOperandsImpl::run(MachineFunction &MF) {
   this->MF = &MF;
@@ -2807,8 +2806,7 @@ bool SIFoldOperandsImpl::run(MachineFunction &MF) {
     Changed |= tryOptimizeAGPRPhis(*MBB);
 
 
-    if (MBB->isEntryBlock() && !Added) {
-      Added=true;
+    if (false) {
 
       auto buildPrefetch = [MBB, this](unsigned offset) {
         MachineInstrBuilder Prefetch =
