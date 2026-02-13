@@ -55,9 +55,17 @@ static cl::opt<bool>
     EnableAntiHintsForVAVDST("amdgpu-anti-hints-for-va-vdst", cl::Hidden,
                              cl::init(true));
 
+static cl::opt<bool>
+    EnableAntiHintsForAddr("amdgpu-anti-hints-for-addr", cl::Hidden,
+                             cl::init(true));
+
 static cl::opt<unsigned> VAVDSTLookbackWindow(
     "amdgpu-va-vdst-lookback-window", cl::Hidden,
     cl::desc("Lookback window for VA_VDST anti-hints"), cl::init(32));
+
+static cl::opt<unsigned> AddrLookbackWindow(
+    "amdgpu-addr-lookback-window", cl::Hidden,
+    cl::desc("Lookback window for VA_VDST anti-hints"), cl::init(200));
 
 static cl::opt<bool>
     InsertPreftechInstructions("amdgpu-inst-prefetch-64kb", cl::Hidden,
@@ -597,6 +605,65 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
       }
     }
   }
+
+
+  // Add anti-hints to wait_xcnt instructions between VMEM instrs with same addr.
+  if (EnableAntiHintsForAddr && ST.getGeneration() >= AMDGPUSubtarget::GFX12) {
+    const unsigned LookbackWindow = VAVDSTLookbackWindow;
+
+    for (const MachineBasicBlock &MBB : MF) {
+      SmallVector<Register, 64> RecentMemInstrs;
+
+      for (const MachineInstr &MI : MBB) {
+        if (MI.isDebugInstr())
+          continue;
+
+        unsigned Opc = MI.getOpcode();
+
+        if (TII->isVMEM(MI)) {
+          if (auto Op = TII->getNamedOperand(MI, AMDGPU::OpName::vdata)) {
+            if (Op->isReg() && Op->getReg().isVirtual()) {
+              Register Reg = Op->getReg();
+              const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+              for (Register PrevAddr : RecentMemInstrs) {
+                if (PrevAddr == Reg)
+                  continue;
+                
+                MRI->addRegAllocationAntiHints(PrevAddr, Reg);
+                MRI->addRegAllocationAntiHints(Reg, PrevAddr);
+              }
+
+              RecentMemInstrs.push_back(Reg);
+              if (RecentMemInstrs.size() > LookbackWindow)
+                RecentMemInstrs.erase(RecentMemInstrs.begin());
+            }
+          }
+        }
+
+        else if (false) {
+          for (const MachineOperand &MO : MI.defs()) {
+            if (!MO.isReg() || !MO.getReg().isVirtual())
+              continue;
+            Register VGPRDestReg = MO.getReg();
+            const TargetRegisterClass *RC = MRI->getRegClass(VGPRDestReg);
+            if (!TRI->hasVGPRs(RC))
+              continue;
+
+            for (Register PrevAddr : RecentMemInstrs) {
+              if (PrevAddr == VGPRDestReg)
+                continue;
+              MRI->addRegAllocationAntiHints(VGPRDestReg, PrevAddr);
+              MRI->addRegAllocationAntiHints(PrevAddr, VGPRDestReg);
+            }
+          }
+
+        }
+
+
+      }
+    }
+  }
+
 
   for (unsigned I = 0, E = MRI->getNumVirtRegs(); I != E; ++I) {
     Register Reg = Register::index2VirtReg(I);
