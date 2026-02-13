@@ -522,15 +522,14 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
         if (MI.isDebugInstr())
           continue;
 
-        unsigned Opc = MI.getOpcode();
 
         if (TII->isVMEM(MI)) {
-          errs() << "Found VMEM: "; MI.dump();
           if (auto Op = TII->getNamedOperand(MI, AMDGPU::OpName::vdata)) {
-            errs() << "Has Vaddr: "; Op->dump();
             if (Op->isReg() && Op->getReg().isVirtual()) {
               Register Reg = Op->getReg();
               const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+              if (!TRI->hasVGPRs(RC))
+                continue;
               for (Register PrevAddr : RecentMemInstrs) {
                 if (PrevAddr == Reg)
                   continue;
