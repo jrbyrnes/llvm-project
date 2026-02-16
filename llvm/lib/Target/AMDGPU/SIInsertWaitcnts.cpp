@@ -46,7 +46,7 @@ using namespace llvm;
 
 #define DEBUG_TYPE "si-insert-waitcnts"
 
-bool DebugVDst = true;
+bool DebugVDst = false;
 
 DEBUG_COUNTER(ForceExpCounter, DEBUG_TYPE "-forceexp",
               "Force emit s_waitcnt expcnt(0) instrs");
@@ -459,7 +459,7 @@ public:
   InstCounterType MaxCounter;
   const unsigned *WaitEventMaskForInst;
 
-  bool shouldFlushVDst(MachineInstr &MI);
+  bool shouldFlushVDst(MachineInstr &MI, unsigned &Counter);
 
   DenseMap<Register, MachineInstr *> VALUWrites;
   DenseMap<Register, MachineInstr *> VALUReads;
@@ -2042,7 +2042,7 @@ static bool callWaitsOnFunctionReturn(const MachineInstr &MI) { return true; }
 
 
 
-bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
+bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI, unsigned &Counter) {
   if (!TII->isDS(MI))
     return false;
   unsigned Waits = 60;
@@ -2127,11 +2127,35 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
     if (DebugVDst)
       errs() << "Insufficient waits: " << Waits << "\n";
 
-    if (MinInstr && DebugVDst) {
-      errs() << "MinInstr: \n";
-      MinInstr->dump();
-      errs() << "DS: \n";
-      MI.dump();
+    Counter = 0;
+    if (MinInstr) {
+      if (DebugVDst) {
+        errs() << "MinInstr: \n";
+        MinInstr->dump();
+        errs() << "DS: \n";
+        MI.dump();
+      }
+
+      if (MI.getParent() == MinInstr->getParent()) {
+        unsigned VALUSince = 0;
+
+        bool ProducerIsWMMA = TII->isMFMAorWMMA(*MinInstr);
+
+        auto I = MinInstr->getIterator();
+        auto E = MI.getIterator();
+
+        for (; I != E; I++) {
+          if (TII->isVALU(*I) && !TII->isMFMAorWMMA(*I) && !ProducerIsWMMA) {
+            ++VALUSince;
+          }
+          if (TII->isMFMAorWMMA(*I) && ProducerIsWMMA) {
+            ++VALUSince;
+          }
+        }
+
+        assert(VALUSince > 0);
+        Counter = VALUSince - 1;
+      }
     }
     return false;
   }
@@ -2402,10 +2426,14 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(MachineInstr &MI,
   
   unsigned OldVDst = Wait.VaVdst;
   bool Flushed = false;
+  unsigned Counter = 0;
   if (TII->isDS(MI)) {
-    if (shouldFlushVDst(MI)) {
+    if (shouldFlushVDst(MI, Counter)) {
       Flushed = true;
       Wait.VaVdst = ~0u;
+    }
+    else {
+      Wait.VaVdst = Counter;
     }
   }
 
