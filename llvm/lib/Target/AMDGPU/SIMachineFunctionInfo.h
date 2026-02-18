@@ -281,6 +281,7 @@ struct SIMachineFunctionInfo final : public yaml::MachineFunctionInfo {
 
   // TODO: 10 may be a better default since it's the maximum.
   unsigned Occupancy = 0;
+  unsigned MaxRP = 0;
 
   SmallVector<StringValue, 2> SpillPhysVGPRS;
   SmallVector<StringValue> WWMReservedRegs;
@@ -530,6 +531,8 @@ private:
 
   // Current recorded maximum possible occupancy.
   unsigned Occupancy;
+
+  unsigned MaxRP = 0;
 
   // Maximum number of dwords that can be clusterred during instruction
   // scheduler stage.
@@ -1181,6 +1184,13 @@ public:
   getGWSPSV(const AMDGPUTargetMachine &TM) {
     return &GWSResourcePSV;
   }
+
+  void setMaxRP(unsigned RP) {
+    if (RP > MaxRP)
+      MaxRP = RP;
+  }
+
+  unsigned getMaxRP() { return MaxRP; }
 
   unsigned getOccupancy() const {
     return Occupancy;
