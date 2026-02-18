@@ -389,6 +389,163 @@ public:
   }
 };
 
+class CoexecWindow {
+private:
+  static constexpr unsigned NumFlavors =
+      static_cast<unsigned>(InstructionFlavor::NUM_FLAVORS);
+
+public:
+  InstructionFlavor WindowProducer = InstructionFlavor::Other;
+
+  // TODO -- should we be using lookahead to more accurately define costs?
+  unsigned ReadyCost = 0;
+  bool IsPopulated = false;
+  bool IsActive = false;
+  bool IsReady = false;
+  bool ProducerIsReady = false;
+  SmallVector<unsigned, NumFlavors> RequiredCounts;
+  SmallVector<unsigned, NumFlavors> ReadyCounts;
+
+  unsigned StartCycle = 0;
+  unsigned EndCycle = 0;
+
+  void printStatus() {
+    errs() << "printing status\n";
+    for (unsigned I = 0; I < NumFlavors; I++) {
+      if (RequiredCounts[I]) {
+        InstructionFlavor Flavor = static_cast<InstructionFlavor>(I);
+        errs() << "Flavor: " << getFlavorName(Flavor)
+               << ", Required: " << RequiredCounts[I]
+               << ", Ready: " << ReadyCounts[I] << "\n";
+      }
+    }
+  }
+
+  CoexecWindow(InstructionFlavor ProducerFlavor, unsigned RequiredVALU1c,
+               unsigned RequiredSALU, unsigned RequiredDS,
+               RegionMixInfo MixInfo)
+      : WindowProducer(ProducerFlavor), RequiredCounts(NumFlavors),
+        ReadyCounts(NumFlavors) {
+    ProducerIsReady = true;
+    for (unsigned I = 0; I < NumFlavors; I++) {
+      InstructionFlavor Flavor = static_cast<InstructionFlavor>(I);
+      ReadyCounts[I] = MixInfo.getReadyCount(Flavor);
+      RequiredCounts[I] = 0;
+      if (Flavor == InstructionFlavor::SALU) {
+        RequiredCounts[I] = RequiredSALU;
+      }
+      if (Flavor == InstructionFlavor::SingleCycleVALU) {
+        RequiredCounts[I] = RequiredVALU1c;
+      }
+      if (Flavor == InstructionFlavor::DS) {
+        RequiredCounts[I] = RequiredDS;
+      }
+      if (Flavor == WindowProducer) {
+        RequiredCounts[I] = 1;
+      }
+
+      if (RequiredCounts[I] > ReadyCounts[I]) {
+        if (Flavor == ProducerFlavor)
+          ProducerIsReady = false;
+        ReadyCost += RequiredCounts[I] - ReadyCounts[I];
+      }
+    }
+    IsPopulated = true;
+    IsReady = ReadyCost == 0;
+  }
+
+  void clear() {
+    RequiredCounts.clear();
+    ReadyCounts.clear();
+    ReadyCost = 0;
+    IsPopulated = false;
+    EndCycle = 0;
+    IsActive = false;
+    IsReady = false;
+    WindowProducer = InstructionFlavor::Other;
+  }
+
+  void copy(CoexecWindow &Other) {
+    RequiredCounts = Other.RequiredCounts;
+    ReadyCounts = Other.ReadyCounts;
+    ReadyCost = Other.ReadyCost;
+    IsPopulated = Other.IsPopulated;
+    EndCycle = Other.EndCycle;
+    IsActive = Other.IsActive;
+    IsReady = Other.IsReady;
+    WindowProducer = Other.WindowProducer;
+  }
+
+  CoexecWindow() = default;
+
+  void refreshMixInfo(RegionMixInfo MixInfo) {
+    if (!IsPopulated) {
+      RequiredCounts.resize(NumFlavors);
+      ReadyCounts.resize(NumFlavors);
+    }
+
+    unsigned ReadyCost = 0;
+    for (unsigned I = 0; I < NumFlavors; I++) {
+      InstructionFlavor Flavor = static_cast<InstructionFlavor>(I);
+      ReadyCounts[I] = MixInfo.getReadyCount(Flavor);
+      if (RequiredCounts[I] > ReadyCounts[I]) {
+        if (Flavor == WindowProducer)
+          ProducerIsReady = false;
+        ReadyCost += RequiredCounts[I] - ReadyCounts[I];
+      }
+    }
+    IsReady = ReadyCost == 0;
+  }
+
+  // TODO -- should we be prioritizing based on some heuruistic?
+  // Currently, using hardcoded order.
+  InstructionFlavor getNeededFlavor() {
+    if (!ProducerIsReady)
+      return WindowProducer;
+    for (auto CandidateFlavor :
+         {InstructionFlavor::SingleCycleVALU, InstructionFlavor::DS,
+          InstructionFlavor::SALU}) {
+      unsigned Index = static_cast<unsigned>(CandidateFlavor);
+      if (RequiredCounts[Index] > ReadyCounts[Index])
+        return CandidateFlavor;
+    }
+    return InstructionFlavor::Other;
+  }
+
+  void getNeededFlavors(SmallVectorImpl<InstructionFlavor> &NeededFlavors) {
+    if (!ProducerIsReady) {
+      NeededFlavors.push_back(WindowProducer);
+      return;
+    }
+
+    for (auto CandidateFlavor :
+         {InstructionFlavor::SingleCycleVALU, InstructionFlavor::DS,
+          InstructionFlavor::SALU}) {
+      unsigned Index = static_cast<unsigned>(CandidateFlavor);
+      if (RequiredCounts[Index] > ReadyCounts[Index])
+        NeededFlavors.push_back(CandidateFlavor);
+    }
+  }
+
+  void schedule(MachineInstr *MI) {
+    /*
+    if (MI == WindowProducer) {
+      assert(!IsActive);
+      WindowProducer = nullptr;
+      IsActive = true;
+      return;
+    }*/
+  }
+
+  bool isReady() {
+    for (unsigned I = 0; I < NumFlavors; I++) {
+      if (RequiredCounts[I] > ReadyCounts[I])
+        return false;
+    }
+    return true;
+  }
+};
+
 class CandidateHeuristics {
 public:
   CandidateHeuristics() = default;
@@ -412,6 +569,9 @@ public:
   RegionMixInfo MixInfo;
 
   AMDGPUSchedReason LastAMDGPUReason = AMDGPUSchedReason::None;
+
+  CoexecWindow CurrentWindow;
+  CoexecWindow NextWindow;
 
   unsigned FencedDSRLatency = 0;
   unsigned ScheduledSUCount = 0;
@@ -451,6 +611,8 @@ public:
   unsigned DSLatencyForFenceVal;
   unsigned ResourceToBalanceVal;
 
+  unsigned CurrCycle;
+
   void initialize(ScheduleDAGMI *DAG, GCNHazardRecognizer *HazardRec,
                   const TargetSchedModel *SchedModel,
                   const TargetRegisterInfo *TRI, bool IsMemoryBound = false,
@@ -464,6 +626,7 @@ public:
   void calculateHiddenLatency(GCNHazardRecognizer *HazardRec);
 
   void schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec);
+  void bumpNode(SUnit *SU, SchedBoundary *Zone);
 
   unsigned getLatencyStallCycles(SUnit *SU, SchedBoundary *Zone);
   bool tryAsyncPipe(GenericSchedulerBase::SchedCandidate &TryCand,
@@ -476,6 +639,10 @@ public:
                     GenericSchedulerBase::SchedCandidate &Cand,
                     SchedBoundary *Zone,
                     AMDGPUSchedReason &OutReason);
+
+  bool tryWMMACoolOff(GenericSchedulerBase::SchedCandidate &TryCand,
+                      GenericSchedulerBase::SchedCandidate &Cand,
+                      SchedBoundary *Zone);
   bool
   tryCriticalResourceDependency(GenericSchedulerBase::SchedCandidate &TryCand,
                                 GenericSchedulerBase::SchedCandidate &Cand,
@@ -484,6 +651,12 @@ public:
   bool tryCriticalResource(GenericSchedulerBase::SchedCandidate &TryCand,
                            GenericSchedulerBase::SchedCandidate &Cand,
                            SchedBoundary *Zone);
+
+  void populateCandidateWindow(
+      CoexecWindow &Window,
+      InstructionFlavor Flavor = InstructionFlavor::NUM_FLAVORS);
+
+  bool coexecWindowIsReady(CoexecWindow *Window, SchedBoundary *Zone);
 
   void dumpRegionSummary();
 };
