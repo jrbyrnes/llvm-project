@@ -1363,7 +1363,7 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
     return 0;
   }
 
-  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
+  else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT && SchedTDM.size()) {
     auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
     if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
@@ -1527,7 +1527,7 @@ bool CandidateHeuristics::tryAsyncPipe(
       return 0;
     }
 
-    else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT) {
+    else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT && SchedTDM.size()) {
       auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
       if (PrevTDM->getInstr()->getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM) {
@@ -1602,8 +1602,6 @@ bool CandidateHeuristics::tryVALUCoexecSlot(
   int CoexecSlot =
       HazardRec->getWMMACoexecSlot(getLatencyStallCycles(TryCand.SU, Zone));
 
-  GCNHazardRecognizer::WMMASlotType CurrentSlot =
-      (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
   MachineInstr *TryMI = TryCand.SU->getInstr();
   MachineInstr *CandMI = Cand.SU->getInstr();
 
@@ -1643,7 +1641,12 @@ bool CandidateHeuristics::tryVALUCoexecSlot(
     if (TransWaits) {
       return PreferNonTransVALU(TryCand, Cand);
     }
+
+    return false;
   }
+
+  GCNHazardRecognizer::WMMASlotType CurrentSlot =
+      (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
 
   auto PreferTransVALU =
       [this, &PreferNonTransVALU](GenericSchedulerBase::SchedCandidate &TryCand,
