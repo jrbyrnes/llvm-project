@@ -1806,6 +1806,9 @@ BlockMetrics analyzeBlock(MachineBasicBlock &MBB, const SIInstrInfo &TII,
 
   Metrics.TotalCycles = State.CurrentCycle - StartCycle;
   if (MeasureSchedulingOnly) {
+    Metrics.TotalCycles -= Metrics.StallISFetch;
+    Metrics.StallISFetch = 0;
+
     MachineFunction *MF = MBB.getParent();
     SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
     const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
@@ -2075,14 +2078,14 @@ BlockMetrics analyzeLoop(MachineLoop *L, MachineLoopInfo &MLI,
 
     if (IterationsUntilBackup < TripCount && SteadyStateStall > 0) {
       unsigned StallIterations = TripCount - IterationsUntilBackup;
-      unsigned AdditionalISStall = StallIterations * SteadyStateStall;
+      unsigned AdditionalISStall = MeasureSchedulingOnly ? 0 : StallIterations * SteadyStateStall;
 
       if (VerboseSimulation) {
         dbgs() << "    Adding " << AdditionalISStall << " estimated IS stall cycles "
                << "(" << StallIterations << " × " << SteadyStateStall << ")\n";
       }
 
-      ScaledMetrics.StallISFetch += AdditionalISStall;
+      ScaledMetrics.StallISFetch += MeasureSchedulingOnly ? 0 : AdditionalISStall;
       ScaledMetrics.TotalCycles += AdditionalISStall;
     }
   }
