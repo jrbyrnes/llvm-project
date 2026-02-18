@@ -130,6 +130,12 @@
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
+static cl::opt<bool> StaticSimIsSchedPerf(
+    "amdgpu-static-sim-measure-sched",
+    cl::desc("Whether or not to run StaticSim immediately after scheduling, to get a more direct measurement of scheduling"),
+    cl::Hidden, cl::init(false));
+
+
 namespace {
 //===----------------------------------------------------------------------===//
 // AMDGPU CodeGen Pass Builder interface.
@@ -1728,6 +1734,9 @@ void GCNPassConfig::addOptimizedRegAlloc() {
 
   if (EnableRewritePartialRegUses)
     insertPass(&RenameIndependentSubregsID, &GCNRewritePartialRegUsesID);
+  
+  if (StaticSimIsSchedPerf)
+    insertPass(&MachineSchedulerID, &AMDGPUStaticSimulatorLegacyID);
 
   if (isPassEnabled(EnablePreRAOptimizations))
     insertPass(&MachineSchedulerID, &GCNPreRAOptimizationsID);
@@ -1743,6 +1752,7 @@ void GCNPassConfig::addOptimizedRegAlloc() {
   // compilation time, so we only enable it from O2.
   if (TM->getOptLevel() > CodeGenOptLevel::Less)
     insertPass(&MachineSchedulerID, &SIFormMemoryClausesID);
+
 
   TargetPassConfig::addOptimizedRegAlloc();
 }
@@ -1925,7 +1935,9 @@ void GCNPassConfig::addPreEmitPass() {
   addPass(&BranchRelaxationPassID);
 
   // Static simulator runs last to analyze the final machine code
-  addPass(createAMDGPUStaticSimulatorPass());
+  if (!StaticSimIsSchedPerf)
+    addPass(createAMDGPUStaticSimulatorPass());
+
 }
 
 void GCNPassConfig::addPostBBSections() {
