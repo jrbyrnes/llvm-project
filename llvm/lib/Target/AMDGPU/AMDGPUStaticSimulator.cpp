@@ -88,6 +88,8 @@ static bool isStaticSimulatorEnabled() {
   return EnableStaticSimulator;
 }
 
+unsigned ExcessRPCost = 400;
+
 void GPUSimState::retireCompletedMemOps() {
   auto RetireFrom = [this](std::deque<PendingMemOp> &Queue,
                            const char *Name) -> unsigned {
@@ -1781,7 +1783,7 @@ void simulateInst(const MachineInstr &MI, const SIInstrInfo &TII,
 }
 
 BlockMetrics analyzeBlock(MachineBasicBlock &MBB, const SIInstrInfo &TII,
-                          GPUSimState &State,
+                          GPUSimState &State, bool MeasureSchedulingOnly,
                           KernelPerfReport *Report = nullptr) {
   if (VerboseSimulation) {
     dbgs() << "\n=== BB#" << MBB.getNumber();
@@ -1803,6 +1805,18 @@ BlockMetrics analyzeBlock(MachineBasicBlock &MBB, const SIInstrInfo &TII,
   }
 
   Metrics.TotalCycles = State.CurrentCycle - StartCycle;
+  if (MeasureSchedulingOnly) {
+    MachineFunction *MF = MBB.getParent();
+    SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
+    const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
+    unsigned ExcessThreshold = ST.getMaxNumVGPRs(MFI->getOccupancy(), false);
+    if (MFI->getMaxRP() > ExcessThreshold) {
+      unsigned NumSpill = MFI->getMaxRP() - ExcessThreshold;
+      unsigned SpillCost = NumSpill * ExcessRPCost;
+
+      Metrics.TotalCycles += SpillCost;
+    }
+  }
 
   if (VerboseSimulation) {
     dbgs() << "=== End BB#" << MBB.getNumber()
@@ -1908,7 +1922,8 @@ BlockMetrics analyzeLoop(MachineLoop *L, MachineLoopInfo &MLI,
                          const SIInstrInfo &TII, GPUSimState &EntryState,
                          DenseSet<MachineBasicBlock *> &Visited,
                          KernelPerfReport &Report,
-                         const MachineBlockFrequencyInfo *MBFI) {
+                         const MachineBlockFrequencyInfo *MBFI,
+                         bool MeasureSchedulingOnly) {
 
   unsigned TripCount = TripCountOverride.getNumOccurrences() ? TripCountOverride.getValue() : getLoopTripCount(L, MBFI);
   unsigned LoopDepth = L->getLoopDepth();
@@ -1947,8 +1962,8 @@ BlockMetrics analyzeLoop(MachineLoop *L, MachineLoopInfo &MLI,
           InnerLoop->getParentLoop() == L) {
         BlockMetrics InnerMetrics;
         if (isCold) {
-          InnerMetrics = analyzeLoop(InnerLoop, MLI, TII, State,
-                                     Visited, Report, MBFI);
+          InnerMetrics = analyzeLoop(InnerLoop, MLI, TII, State, Visited,
+                                     Report, MBFI, MeasureSchedulingOnly);
           InnerLoopMetrics[InnerLoop] = InnerMetrics;
         } else {
           InnerMetrics = InnerLoopMetrics.lookup(InnerLoop);
@@ -1973,7 +1988,8 @@ BlockMetrics analyzeLoop(MachineLoop *L, MachineLoopInfo &MLI,
 
         IterMetrics = IterMetrics + InnerMetrics * RelativeFreq;
       } else if (MLI.getLoopFor(MBB) == L) {
-        BlockMetrics BM = analyzeBlock(*MBB, TII, State, &Report);
+        BlockMetrics BM =
+            analyzeBlock(*MBB, TII, State, MeasureSchedulingOnly, &Report);
         if (isCold)
           DirectBlocksRaw = DirectBlocksRaw + BM;
 
@@ -2076,7 +2092,8 @@ BlockMetrics analyzeLoop(MachineLoop *L, MachineLoopInfo &MLI,
 
 KernelPerfReport analyzeFunction(MachineFunction &MF, const SIInstrInfo &TII,
                                  MachineLoopInfo *MLI,
-                                 const MachineBlockFrequencyInfo *MBFI) {
+                                 const MachineBlockFrequencyInfo *MBFI,
+                                 bool MeasureSchedulingOnly) {
   KernelPerfReport Report;
   GPUSimState State;
 
@@ -2095,7 +2112,8 @@ KernelPerfReport analyzeFunction(MachineFunction &MF, const SIInstrInfo &TII,
     MachineLoop *L = MLI ? MLI->getLoopFor(MBB) : nullptr;
 
     if (L && L->getHeader() == MBB) {
-      BlockMetrics LoopMetrics = analyzeLoop(L, *MLI, TII, State, Visited, Report, MBFI);
+      BlockMetrics LoopMetrics = analyzeLoop(
+          L, *MLI, TII, State, Visited, Report, MBFI, MeasureSchedulingOnly);
 
       float LoopEntryFreq = 1.0f;
       if (MachineBasicBlock *Preheader = L->getLoopPreheader()) {
@@ -2111,7 +2129,8 @@ KernelPerfReport analyzeFunction(MachineFunction &MF, const SIInstrInfo &TII,
 
       Report.Scaled = Report.Scaled + LoopMetrics * LoopEntryFreq;
     } else {
-      BlockMetrics BM = analyzeBlock(*MBB, TII, State, &Report);
+      BlockMetrics BM =
+          analyzeBlock(*MBB, TII, State, MeasureSchedulingOnly, &Report);
       float Freq = getBlockFrequency(MBFI, MBB);
 
       Report.Raw = Report.Raw + BM;
@@ -2143,7 +2162,8 @@ KernelPerfReport analyzeFunction(MachineFunction &MF, const SIInstrInfo &TII,
 }
 
 bool runStaticSimulator(MachineFunction &MF, MachineLoopInfo *MLI,
-                        const MachineBlockFrequencyInfo *MBFI) {
+                        const MachineBlockFrequencyInfo *MBFI,
+                        bool MeasureSchedulingOnly) {
   if (!isStaticSimulatorEnabled())
     return false;
 
@@ -2169,7 +2189,8 @@ bool runStaticSimulator(MachineFunction &MF, MachineLoopInfo *MLI,
     }
   }
 
-  KernelPerfReport Report = analyzeFunction(MF, *TII, MLI, MBFI);
+  KernelPerfReport Report =
+      analyzeFunction(MF, *TII, MLI, MBFI, MeasureSchedulingOnly);
   LLVM_DEBUG(Report.print(dbgs(), MF.getName()));
 
   SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
@@ -2354,7 +2375,7 @@ AMDGPUStaticSimulatorPass::run(MachineFunction &MF,
                                MachineFunctionAnalysisManager &MFAM) {
   MachineLoopInfo &MLI = MFAM.getResult<MachineLoopAnalysis>(MF);
   auto &MBFI = MFAM.getResult<MachineBlockFrequencyAnalysis>(MF);
-  runStaticSimulator(MF, &MLI, &MBFI);
+  runStaticSimulator(MF, &MLI, &MBFI, false);
   return PreservedAnalyses::all();
 }
 
@@ -2363,16 +2384,23 @@ namespace {
 class AMDGPUStaticSimulatorLegacy : public MachineFunctionPass {
 public:
   static char ID;
+  bool MeasureScheduling = true;
 
   AMDGPUStaticSimulatorLegacy() : MachineFunctionPass(ID) {
     initializeAMDGPUStaticSimulatorLegacyPass(*PassRegistry::getPassRegistry());
+  }
+
+  AMDGPUStaticSimulatorLegacy(bool MeasureSchedulingOnly)
+      : MachineFunctionPass(ID) {
+    initializeAMDGPUStaticSimulatorLegacyPass(*PassRegistry::getPassRegistry());
+    MeasureScheduling = MeasureSchedulingOnly;
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     MachineLoopInfo &MLI = getAnalysis<MachineLoopInfoWrapperPass>().getLI();
     MachineBlockFrequencyInfo &MBFI =
         getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI();
-    runStaticSimulator(MF, &MLI, &MBFI);
+    runStaticSimulator(MF, &MLI, &MBFI, MeasureScheduling);
     return false; // Does not modify the function
   }
 
@@ -2401,6 +2429,6 @@ INITIALIZE_PASS_END(AMDGPUStaticSimulatorLegacy, DEBUG_TYPE,
                     "AMDGPU Static Performance Simulator", false, false)
 
 FunctionPass *llvm::createAMDGPUStaticSimulatorPass() {
-  return new AMDGPUStaticSimulatorLegacy();
+  return new AMDGPUStaticSimulatorLegacy(false);
 }
 
