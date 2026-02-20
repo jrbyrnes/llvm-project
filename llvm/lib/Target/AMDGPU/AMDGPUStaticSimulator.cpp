@@ -969,8 +969,8 @@ static unsigned computeRAWStall(const MachineInstr &MI, GPUSimState &State) {
   // Check RAW for ALL source operands (VGPR and SGPR)
   unsigned MaxRAW = 0;
   for (const MachineOperand &MO : MI.explicit_uses()) {
-    if (MO.isReg() && MO.getReg().isPhysical()) {
-      unsigned RAWStall = State.getRAWStall(MO.getReg(), State.RegFile.TRI);
+    if (MO.isReg()) {
+      unsigned RAWStall = State.getRAWStall(MO, State.RegFile.TRI);
       MaxRAW = std::max(MaxRAW, RAWStall);
     }
   }
@@ -1430,8 +1430,8 @@ void recordInstruction(const MachineInstr &MI, const InstTiming &T,
     if (T.IC == InstClass::VALU || T.IC == InstClass::TRANS ||
         T.IC == InstClass::SALU || T.IC == InstClass::WMMA) {
       for (const MachineOperand &MO : MI.defs()) {
-        if (MO.isReg() && MO.getReg().isPhysical()) {
-          State.recordRegWrite(MO.getReg(), T.Latency, State.RegFile.TRI);
+        if (MO.isReg()) {
+          State.recordRegWrite(MO, T.Latency, State.RegFile.TRI);
         }
       }
     }
@@ -1795,7 +1795,6 @@ BlockMetrics analyzeBlock(MachineBasicBlock &MBB, const SIInstrInfo &TII,
 
   BlockMetrics Metrics;
   unsigned StartCycle = State.CurrentCycle;
-
   for (MachineInstr &MI : MBB.instrs()) {
     if (MI.isBundle() || MI.isMetaInstruction())
       continue;
