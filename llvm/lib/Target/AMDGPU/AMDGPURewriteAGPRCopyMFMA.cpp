@@ -602,7 +602,7 @@ bool AMDGPURewriteAGPRCopyMFMAImpl::run(MachineFunction &MF) const {
           if (!Legit)
             break;
           NewMIs.push_back(BuildMI(MBB, MI, DL, TII.get(AMDGPU::S_MOV_B32))
-                               .addReg(Src.getReg(), 0, Indexes[0])
+                               .addReg(Src.getReg(), RegState::NoFlags, Indexes[0])
                                .addImm(0));
         }
       }
