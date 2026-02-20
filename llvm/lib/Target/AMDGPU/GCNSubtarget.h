@@ -214,6 +214,10 @@ public:
     return getGeneration() >= AMDGPUSubtarget::GFX9;
   }
 
+
+  bool enablePostRAScheduler() const override { return !DisablePostMISched; }
+  void setDisablePostMISched(bool Value) { DisablePostMISched = Value; }
+
   bool hasSwap() const { return HasGFX9Insts; }
 
   bool hasScalarPackInsts() const { return HasGFX9Insts; }
