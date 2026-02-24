@@ -147,7 +147,7 @@ InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
 
   if (TII.isWaitcnt(Opc) ||
       Opc == AMDGPU::S_WAIT_XCNT ||
-      Opc == AMDGPU::S_WAIT_TENSORCNT)
+      Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::ATOMIC_FENCE)
     return InstClass::WAITCNT;
 
   if (MI.isBranch())
@@ -442,6 +442,7 @@ unsigned computeWaitStall(const MachineInstr &MI, GPUSimState &State) {
 
   switch (Opc) {
   case AMDGPU::S_WAIT_DSCNT:
+  case AMDGPU::ATOMIC_FENCE:
     WaitName = "DSCNT";
     QueueSizeBefore = State.PendingDS.size();
     Stall = State.waitDS(WaitCount);
@@ -640,7 +641,7 @@ static FalseWaitResult analyzeFalseWaitsForWait(const MachineInstr &MI,
                                                  GPUSimState &State,
                                                  const SIInstrInfo &TII) {
   unsigned Opc = MI.getOpcode();
-  if (Opc != AMDGPU::S_WAIT_DSCNT && Opc != AMDGPU::S_WAIT_LOADCNT)
+  if (Opc != AMDGPU::S_WAIT_DSCNT && Opc != AMDGPU::S_WAIT_LOADCNT && Opc != AMDGPU::ATOMIC_FENCE)
     return {};
 
   unsigned WaitCount = 0;
@@ -651,7 +652,7 @@ static FalseWaitResult analyzeFalseWaitsForWait(const MachineInstr &MI,
   if (VerboseSimulation && Consumer)
     dbgs() << "    Consumer: " << *Consumer;
 
-  if (Opc == AMDGPU::S_WAIT_DSCNT) {
+  if (Opc == AMDGPU::S_WAIT_DSCNT || Opc == AMDGPU::ATOMIC_FENCE) {
     return analyzeFalseWaitsInQueue(MI, WaitCount, State.PendingDS, Consumer,
                                      TII, State.CurrentCycle);
   }
