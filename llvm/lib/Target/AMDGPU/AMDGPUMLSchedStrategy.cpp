@@ -549,6 +549,13 @@ static cl::opt<bool> ShadowMixRulesEpi(
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
     cl::init(false));
 
+
+static cl::opt<bool> EnableWMMACooloff(
+    "amdgpu-use-wmma-cooloff", cl::Hidden,
+    cl::desc("Whether or not to enable WMMA cooloff."),
+    cl::init(true));
+
+
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
 //===----------------------------------------------------------------------===//
@@ -982,6 +989,51 @@ void CandidateHeuristics::calculateHiddenLatency(
         SingleCycleVALUCount);
   }
 }
+
+bool CandidateHeuristics::tryWMMACoolOff(
+    GenericSchedulerBase::SchedCandidate &TryCand,
+    GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone) {
+
+  GCNHazardRecognizer *HazardRec =
+      static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
+  int CoexecSlot =
+      HazardRec->getWMMACoexecSlot();
+
+  if (CoexecSlot == -1)
+    return false;
+
+  GCNHazardRecognizer::WMMASlotType CurrentSlot =
+    (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
+  
+  if (CurrentSlot != GCNHazardRecognizer::WMMASlotType::ValuBlocked0 && CurrentSlot != GCNHazardRecognizer::WMMASlotType::ValuBlocked1)
+    return false;
+  
+  bool TryIsWMMA = classifyFlavor(TryCand.SU->getInstr(), SII) == InstructionFlavor::WMMA;
+  bool CandIsWMMA = classifyFlavor(Cand.SU->getInstr(), SII) == InstructionFlavor::WMMA;;
+
+  if (TryIsWMMA == CandIsWMMA)
+    return false;
+
+  CoexecWindow TempWindow;
+  MixInfo.updateReadyCounts();
+  TempWindow.refreshMixInfo(MixInfo);
+  populateCandidateWindow(TempWindow, InstructionFlavor::WMMA);
+  bool WMMAWindowIsReady = TempWindow.IsReady;
+  if (!WMMAWindowIsReady) {
+    if (TryIsWMMA) {
+      if (Cand.Reason > GenericSchedulerBase::RegCritical) {
+        Cand.Reason = GenericSchedulerBase::RegCritical;
+      }
+      return true;
+    }
+
+    TryCand.Reason = GenericSchedulerBase::RegCritical;
+    return true;
+  }
+
+  return false;
+}
+
 
 unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
                                                    unsigned ReleaseAtCycle) {
@@ -2596,6 +2648,12 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
 
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
+    if (EnableWMMACooloff && Heurs.tryWMMACoolOff(TryCand, Cand, Zone)) {
+      DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "WMMACoolOff\n");
+      return TryCand.Reason != NoCand;
+    }
+
+
     if (Heurs.tryAsyncPipe(TryCand, Cand, Zone)) {
       return TryCand.Reason != NoCand;
     }
@@ -2689,6 +2747,12 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
   }
   bool SameBoundary = Zone != nullptr;
   if (SameBoundary) {
+    if (EnableWMMACooloff && Heurs.tryWMMACoolOff(TryCand, Cand, Zone)) {
+      DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "WMMACoolOff\n");
+      return TryCand.Reason != NoCand;
+    }
+
+
     if (Heurs.tryAsyncPipe(TryCand, Cand, Zone)) {
       return TryCand.Reason != NoCand;
     }
