@@ -37,7 +37,7 @@ static cl::opt<unsigned>
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(60));
+    cl::init(35));
 
 static cl::opt<unsigned>
     DSLatencyForFence("amdgpu-ds-fence-latency", cl::Hidden,
