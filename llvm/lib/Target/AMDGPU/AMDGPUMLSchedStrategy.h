@@ -272,12 +272,34 @@ public:
   SUnit *getTargetSU() { return *PrioritySUs.begin(); }
 
   // TODO -- should we allow looking past the a single depth?
-  SUnit *getNextTargetSU() {
+  SUnit *getNextTargetSU(bool LookDeep = false) {
     for (auto *PrioritySU : PrioritySUs) {
       if (!PrioritySU->isTopReady())
         return PrioritySU;
     }
-    return nullptr;
+
+    if (!LookDeep)
+      return nullptr;
+
+    // TODO -- we may want to think about more advance strategies here.
+    // For example, for GEMMs, we may want to target WMMAs by using the
+    // same A operand for exmaple, leading to even better DS_READ -> WMMA
+    // patterns.
+    unsigned MinDepth = std::numeric_limits<unsigned int>::max();
+    SUnit *TargetSU = nullptr;
+    for (auto *SU : AllSUs) {
+      if (SU->isScheduled)
+        continue;
+
+      if (SU->isTopReady())
+        continue;
+
+      if (SU->getDepth() < MinDepth) {
+        MinDepth = SU->getDepth();
+        TargetSU = SU;
+      }
+    }
+    return TargetSU;
   }
 
   unsigned getTotalCycles() { return TotalCycles; }
@@ -463,6 +485,7 @@ public:
     IsActive = false;
     IsReady = false;
     WindowProducer = InstructionFlavor::Other;
+    ProducerIsReady = false;
   }
 
   void copy(CoexecWindow &Other) {
@@ -474,6 +497,7 @@ public:
     IsActive = Other.IsActive;
     IsReady = Other.IsReady;
     WindowProducer = Other.WindowProducer;
+    ProducerIsReady = Other.ProducerIsReady;
   }
 
   CoexecWindow() = default;
@@ -483,6 +507,7 @@ public:
       RequiredCounts.resize(NumFlavors);
       ReadyCounts.resize(NumFlavors);
     }
+    ProducerIsReady = true;
 
     unsigned ReadyCost = 0;
     for (unsigned I = 0; I < NumFlavors; I++) {
@@ -643,6 +668,7 @@ public:
   bool tryWMMACoolOff(GenericSchedulerBase::SchedCandidate &TryCand,
                       GenericSchedulerBase::SchedCandidate &Cand,
                       SchedBoundary *Zone);
+
   bool
   tryCriticalResourceDependency(GenericSchedulerBase::SchedCandidate &TryCand,
                                 GenericSchedulerBase::SchedCandidate &Cand,
