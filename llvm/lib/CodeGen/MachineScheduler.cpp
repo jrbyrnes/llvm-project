@@ -2969,6 +2969,7 @@ void SchedBoundary::bumpNode(SUnit *SU) {
   // exceed the issue width.
   const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
   unsigned IncMOps = std::min(SchedModel->getNumMicroOps(SU->getInstr()), (unsigned)1);
+
   assert(
       (CurrMOps == 0 || (CurrMOps + IncMOps) <= SchedModel->getIssueWidth()) &&
       "Cannot schedule this instruction's MicroOps in the current cycle.");

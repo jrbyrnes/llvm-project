@@ -32,7 +32,7 @@ static cl::opt<unsigned>
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
-                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(40));
+                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(60));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
@@ -46,7 +46,7 @@ static cl::opt<unsigned>
 
 static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
-                                    cl::init(8));
+                                    cl::init(16));
 static cl::opt<unsigned>
     DSLatency("amdgpu-ds-latency", cl::Hidden,
               cl::desc("Latency of DS_LOAD for resource usage."), cl::init(60));
@@ -83,7 +83,7 @@ static cl::opt<unsigned> ShadowMixWMMAMinDS(
         "Minimum number of ready DS (LDS load/store) instructions required "
         "before scheduling a WMMA instruction. Setting to 0 disables "
         "DS check. WMMA's first co-exec slot can accommodate a DS_LOAD."),
-    cl::init(2));
+    cl::init(1));
 
 static cl::opt<unsigned> ShadowMixWMMAMinSALU(
     "amdgpu-shadow-mix-wmma-min-salu", cl::Hidden,
@@ -384,12 +384,12 @@ static cl::opt<unsigned>
 static cl::opt<unsigned>
     DSLatencyFIFOEpi("amdgpu-ds-fifo-latency-epi", cl::Hidden,
                      cl::desc("Hazard latency DS_LOAD FIFO full."),
-                     cl::init(40));
+                     cl::init(60));
 
 static cl::opt<unsigned> LatencyForSignalEpi(
     "amdgpu-signal-latency-epi", cl::Hidden,
     cl::desc("Hazard latency between BARRIER_SIGNAL and BARRIER_WAIT."),
-    cl::init(60));
+    cl::init(35));
 
 static cl::opt<unsigned>
     DSLatencyForFenceEpi("amdgpu-ds-fence-latency-epi", cl::Hidden,
@@ -398,7 +398,7 @@ static cl::opt<unsigned>
 
 static cl::opt<unsigned> DSFIFOSizeEpi("amdgpu-ds-fifo-size-epi", cl::Hidden,
                                        cl::desc("DS_LOAD FIFO size."),
-                                       cl::init(8));
+                                       cl::init(16));
 static cl::opt<unsigned>
     DSLatencyEpi("amdgpu-ds-latency-epi", cl::Hidden,
                  cl::desc("Latency of DS_LOAD for resource usage."),
@@ -999,15 +999,17 @@ bool CandidateHeuristics::tryWMMACoolOff(
   int CoexecSlot =
       HazardRec->getWMMACoexecSlot();
 
-  if (CoexecSlot == -1)
-    return false;
+  bool UnderWMMAShadow = CoexecSlot != -1;
 
-  GCNHazardRecognizer::WMMASlotType CurrentSlot =
-    (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
-  
-  if (CurrentSlot != GCNHazardRecognizer::WMMASlotType::ValuBlocked0 && CurrentSlot != GCNHazardRecognizer::WMMASlotType::ValuBlocked1)
-    return false;
-  
+  if (UnderWMMAShadow) {
+    GCNHazardRecognizer::WMMASlotType CurrentSlot =
+        (GCNHazardRecognizer::WMMASlotType)CoexecSlot;
+
+    if (CurrentSlot != GCNHazardRecognizer::WMMASlotType::ValuBlocked0 &&
+        CurrentSlot != GCNHazardRecognizer::WMMASlotType::ValuBlocked1)
+      return false;
+  }
+
   bool TryIsWMMA = classifyFlavor(TryCand.SU->getInstr(), SII) == InstructionFlavor::WMMA;
   bool CandIsWMMA = classifyFlavor(Cand.SU->getInstr(), SII) == InstructionFlavor::WMMA;;
 
@@ -1019,7 +1021,41 @@ bool CandidateHeuristics::tryWMMACoolOff(
   TempWindow.refreshMixInfo(MixInfo);
   populateCandidateWindow(TempWindow, InstructionFlavor::WMMA);
   bool WMMAWindowIsReady = TempWindow.IsReady;
-  if (!WMMAWindowIsReady) {
+
+  if (!TempWindow.IsReady) {
+    SmallVector<InstructionFlavor, 4> NeededFlavors;
+    TempWindow.getNeededFlavors(NeededFlavors);
+    // Neither candidate directly enables any of the needed flavors, look eahd.
+    for (InstructionFlavor &NeededFlavor : NeededFlavors) {
+
+      auto [NearestTarget, Cost] = findNearestPendingByFlavor(
+          MixInfo, NeededFlavor, ShadowMixLookaheadDepthVal,
+          ShadowMixMaxBlockingCostVal, ShadowMixMaxVisitedVal,
+          ShadowMixMaxCandidatesVal);
+
+      // It is too much effort to try to make the window ready, proceed with the
+      // WMMA
+      if (!NearestTarget) {
+        return false;
+      }
+    }
+
+    // The consumers are not available, and it is not much effort to make them
+    // available
+    if (TryIsWMMA) {
+      if (Cand.Reason > GenericSchedulerBase::RegCritical) {
+        Cand.Reason = GenericSchedulerBase::RegCritical;
+      }
+      return true;
+    }
+
+    TryCand.Reason = GenericSchedulerBase::RegCritical;
+    return true;
+  }
+
+  // It is possible we have all the coexecution consumers, but they need long
+  // stalls
+  if (!coexecWindowIsReady(&TempWindow, Zone)) {
     if (TryIsWMMA) {
       if (Cand.Reason > GenericSchedulerBase::RegCritical) {
         Cand.Reason = GenericSchedulerBase::RegCritical;
@@ -1978,6 +2014,20 @@ bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
     return false;
 
   unsigned MaxFlavors = static_cast<unsigned>(InstructionFlavor::NUM_FLAVORS);
+
+  InstructionFlavor Producer = Window->WindowProducer;
+  auto ProducerSUs = MixInfo.getSUs(Producer);
+
+  unsigned MinStall = 64;
+
+  for (auto SU : ProducerSUs) {
+    unsigned SUStall = getLatencyStallCycles(SU, Zone);
+    if (SUStall < MinStall)
+      MinStall = SUStall;
+  }
+
+  unsigned Add = 1;
+
   for (unsigned I = 0; I < MaxFlavors; I++) {
     unsigned RequiredCount = Window->RequiredCounts[I];
     if (!RequiredCount)
@@ -1988,8 +2038,12 @@ bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
 
     unsigned ReadyCount = 0;
     for (auto SU : FlavorSUs) {
+      if (Producer == InstructionFlavor::WMMA &&
+          Flavor == InstructionFlavor::SingleCycleVALU) {
+        Add = 3;
+      }
       if (!SU->isScheduled && SU->isTopReady()) {
-        if (getLatencyStallCycles(SU, Zone) <= 1) {
+        if (getLatencyStallCycles(SU, Zone) <= MinStall + Add) {
           ++ReadyCount;
         }
       }
@@ -2299,11 +2353,12 @@ bool CandidateHeuristics::tryShadowMix(
       return true;
     }
   }
-
+  bool TryIsProducer = TryFlavor == TargetWindow->WindowProducer;
+  bool CandIsProducer = CandFlavor == TargetWindow->WindowProducer;
   // Rule 5: Defer WMMA if window consumers are not ready.
-  if (TryIsWMMA != CandIsWMMA) {
+  if (TryIsProducer != CandIsProducer) {
     // Prefer the non-WMMA candidate
-    if (TryIsWMMA) {
+    if (TryIsProducer) {
       // Cand is non-WMMA, prefer it
       if (Cand.Reason > GenericSchedulerBase::RegCritical)
         Cand.Reason = GenericSchedulerBase::RegCritical;
@@ -2331,7 +2386,8 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
     GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone,
     bool IsAsync) {
 
-  auto IsCandidateResource = [this, IsAsync](unsigned ResourceIdx) {
+  auto IsCandidateResource = [this, &Cand, &TryCand,
+                              IsAsync](unsigned ResourceIdx) {
     // unsigned MaxAvailableLat =
     // Zone->findMaxLatency(Zone->Available.elements());
     HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
@@ -2341,7 +2397,11 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
         !HWUI.ProducesCoexecWindow)
       return false;
 
-    auto *TargetSU = HWUI.getNextTargetSU();
+    auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
+    bool LookDeep = CandFlavor == InstructionFlavor::DS &&
+                    HWUI.getType() == InstructionFlavor::WMMA;
+    auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
+
     if (!TargetSU)
       return false;
 
@@ -2350,7 +2410,12 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
 
   auto TryEnablesResource = [&Cand, &TryCand, this](unsigned ResourceIdx) {
     HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
-    auto *TargetSU = HWUI.getNextTargetSU();
+    auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
+
+    // We want to ensure our DS order matches WMMA order.
+    bool LookDeep = CandFlavor == InstructionFlavor::DS &&
+                    HWUI.getType() == InstructionFlavor::WMMA;
+    auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
 
     bool CandEnables =
         TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
