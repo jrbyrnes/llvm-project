@@ -94,10 +94,10 @@ struct VGPRThresholdParser : public cl::parser<unsigned> {
 
 } // end anonymous namespace
 
-static cl::opt<unsigned, false, VGPRThresholdParser>
-    VGPRThresholdPercent("amdgpu-vgpr-excess-threshold-percent", cl::init(85), cl::Hidden,
-                     cl::desc("Percent of maximum available VGPRs to use as excess RP threshold"));
-
+static cl::opt<unsigned, false, VGPRThresholdParser> VGPRThresholdPercent(
+    "amdgpu-vgpr-excess-threshold-percent", cl::init(90), cl::Hidden,
+    cl::desc(
+        "Percent of maximum available VGPRs to use as excess RP threshold"));
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 #define DUMP_MAX_REG_PRESSURE
