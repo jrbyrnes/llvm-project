@@ -452,6 +452,8 @@ public:
     for (unsigned I = 0; I < NumFlavors; I++) {
       InstructionFlavor Flavor = static_cast<InstructionFlavor>(I);
       ReadyCounts[I] = MixInfo.getReadyCount(Flavor);
+      if (Flavor == InstructionFlavor::DS)
+        ReadyCounts[I] += MixInfo.getReadyCount(InstructionFlavor::SALU);
       RequiredCounts[I] = 0;
       if (Flavor == InstructionFlavor::SALU) {
         RequiredCounts[I] = RequiredSALU;
@@ -682,7 +684,7 @@ public:
       CoexecWindow &Window,
       InstructionFlavor Flavor = InstructionFlavor::NUM_FLAVORS);
 
-  bool coexecWindowIsReady(CoexecWindow *Window, SchedBoundary *Zone);
+  bool coexecWindowIsReady(CoexecWindow *Window, SchedBoundary *Zone, unsigned &MaxStall);
 
   void dumpRegionSummary();
 };
