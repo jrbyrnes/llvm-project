@@ -1038,6 +1038,10 @@ bool CandidateHeuristics::tryWMMACoolOff(
       if (!NearestTarget) {
         return false;
       }
+      if (NeededFlavor == InstructionFlavor::DS) {
+        errs() << "WMMACoolOff, need DS, cost is: " << Cost << "\n";
+      }
+
     }
 
     // The consumers are not available, and it is not much effort to make them
@@ -1055,7 +1059,9 @@ bool CandidateHeuristics::tryWMMACoolOff(
 
   // It is possible we have all the coexecution consumers, but they need long
   // stalls
-  if (!coexecWindowIsReady(&TempWindow, Zone)) {
+  unsigned MaxStall = 0;
+  if (!coexecWindowIsReady(&TempWindow, Zone, MaxStall)) {
+    if (MaxStall < 8) {
     if (TryIsWMMA) {
       if (Cand.Reason > GenericSchedulerBase::RegCritical) {
         Cand.Reason = GenericSchedulerBase::RegCritical;
@@ -1065,6 +1071,7 @@ bool CandidateHeuristics::tryWMMACoolOff(
 
     TryCand.Reason = GenericSchedulerBase::RegCritical;
     return true;
+  }
   }
 
   return false;
@@ -1405,7 +1412,6 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
   }
 
   calculateHiddenLatency(HazardRec);
-
   LLVM_DEBUG(dumpRegionSummary());
 }
 
@@ -2009,7 +2015,7 @@ bool CandidateHeuristics::tryVALUCoexecSlot(
 }
 
 bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
-                                              SchedBoundary *Zone) {
+                                              SchedBoundary *Zone, unsigned &MaxStall) {
   if (!Window->IsReady)
     return false;
 
@@ -2043,12 +2049,35 @@ bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
         Add = 3;
       }
       if (!SU->isScheduled && SU->isTopReady()) {
-        if (getLatencyStallCycles(SU, Zone) <= MinStall + Add) {
+        auto Stall = getLatencyStallCycles(SU, Zone);
+        if (Stall > MaxStall)
+          MaxStall = Stall;
+        if (Stall <= MinStall + Add) {
           ++ReadyCount;
         }
       }
       if (ReadyCount >= RequiredCount)
         break;
+    }
+
+    if (Flavor == InstructionFlavor::DS) {
+      auto FlavorSUs = MixInfo.getSUs(InstructionFlavor::SALU);
+    for (auto SU : FlavorSUs) {
+      if (Producer == InstructionFlavor::WMMA &&
+          Flavor == InstructionFlavor::SingleCycleVALU) {
+        Add = 3;
+      }
+      if (!SU->isScheduled && SU->isTopReady()) {
+        auto Stall = getLatencyStallCycles(SU, Zone);
+        if (Stall > MaxStall)
+          MaxStall = Stall;
+        if (Stall <= MinStall + Add) {
+          ++ReadyCount;
+        }
+      }
+      if (ReadyCount >= RequiredCount)
+        break;
+    }
     }
     if (ReadyCount < RequiredCount)
       return false;
@@ -2331,7 +2360,8 @@ bool CandidateHeuristics::tryShadowMix(
 
   // Rule 4: If we have enough co-exec candidates, and we do not need to stall
   // for them, then schedule the window.
-  if (coexecWindowIsReady(TargetWindow, Zone)) {
+  unsigned MaxStall = 0;
+  if (coexecWindowIsReady(TargetWindow, Zone, MaxStall)) {
     bool TryIsProducer = TryFlavor == TargetWindow->WindowProducer;
     bool CandIsProducer = CandFlavor == TargetWindow->WindowProducer;
     if (TryIsProducer == CandIsProducer)
@@ -2343,12 +2373,14 @@ bool CandidateHeuristics::tryShadowMix(
       if (Cand.Reason > GenericSchedulerBase::RegCritical)
         Cand.Reason = GenericSchedulerBase::RegCritical;
       OutReason = AMDGPUSchedReason::ShadowDeferWMMA;
+
       LLVM_DEBUG(dbgs() << "  ShadowMix: Producer (Window Ready)\n");
       return true;
     } else {
       // TryCand is non-WMMA, prefer it
       TryCand.Reason = GenericSchedulerBase::RegCritical;
       OutReason = AMDGPUSchedReason::ShadowDeferWMMA;
+      TargetWindow->printStatus();
       LLVM_DEBUG(dbgs() << "  ShadowMix: Producer (Window Ready)\n");
       return true;
     }

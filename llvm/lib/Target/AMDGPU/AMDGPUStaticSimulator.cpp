@@ -127,6 +127,25 @@ namespace {
 InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
   unsigned Opc = MI.getOpcode();
 
+  bool IsVALU = false;
+  bool IsSALU = false;
+
+  if (MI.isCopy()) {
+    Register Dest = MI.getOperand(0).getReg();
+    if (Dest.isVirtual()) {
+      auto &TRI = TII.getRegisterInfo();
+      auto &MRI = MI.getMF()->getRegInfo();
+      auto RC = MRI.getRegClass(Dest);
+      if (TRI.isSGPRClass(RC)) {
+        IsSALU = true;
+      }
+      if (TRI.isVGPRClass(RC)) {
+        IsVALU = true;
+      }
+    }
+
+  }
+
   if (Opc == AMDGPU::S_DELAY_ALU)
     return InstClass::DELAY_ALU;
 
@@ -180,13 +199,13 @@ InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
   if (TII.isSMRD(MI))
     return InstClass::SMEM;
 
-  if (TII.isSALU(MI))
+  if (TII.isSALU(MI) || IsSALU)
     return InstClass::SALU;
 
   if (SIInstrInfo::isTRANS(MI))
     return InstClass::TRANS;
 
-  if (TII.isVALU(MI))
+  if (TII.isVALU(MI) || IsVALU)
     return InstClass::VALU;
 
   return InstClass::OTHER;
