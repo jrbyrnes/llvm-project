@@ -302,6 +302,8 @@ public:
     return TargetSU;
   }
 
+  void fixupFIFO(unsigned FIFOSize) {TotalCycles /= FIFOSize;}
+
   unsigned getTotalCycles() { return TotalCycles; }
 
   void setType(unsigned TheType) {
@@ -363,9 +365,20 @@ public:
   void schedule(SUnit *SU, unsigned ReleaseAtCycle) {
     AllSUs.remove(SU);
     PrioritySUs.remove(SU);
-    if (TotalCycles > ReleaseAtCycle)
-      TotalCycles -= ReleaseAtCycle;
-    else TotalCycles = 0;
+
+    if (getType() != InstructionFlavor::DS) {
+      if (TotalCycles != 0)
+        assert(ReleaseAtCycle <= TotalCycles);
+      if (TotalCycles > ReleaseAtCycle)
+        TotalCycles -= ReleaseAtCycle;
+      else TotalCycles = 0;
+    }
+    else {
+      TotalCycles -= ReleaseAtCycle / 16;
+    }
+
+
+
     if (AllSUs.empty())
       return;
     if (PrioritySUs.empty()) {
