@@ -824,6 +824,7 @@ unsigned AMDGPUMLSchedStrategy::getHWUICyclesForInst(SUnit *SU,
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+
   unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
   // FIXME -- harcoded?
   // This is used to determine hardware unit balancing between LDS and other
@@ -1089,7 +1090,8 @@ unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
                Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
-  unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
+  unsigned Latency = IsDMA ? 400 : ReleaseAtCycle;
+
   // FIXME -- harcoded?
   // This is used to determine hardware unit balancing between LDS and other
   // resources, if we use a high cycle count to more accurately reflect LDS
@@ -1097,7 +1099,7 @@ unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
   // latency is usually hidden across loops, whereas other latency (e.g. WMMA)
   // are not hidden in this way.
   if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
-    Latency = 8;
+    Latency = 60;
 
   MachineInstr *MI = SU->getInstr();
   unsigned RepeatRate = SII->getRepeatRate(*MI);
@@ -1353,7 +1355,6 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
   HWUInfo[(int)InstructionFlavor::WMMA].ProducesCoexecWindow = true;
   HWUInfo[(int)InstructionFlavor::MultiCycleVALU].ProducesCoexecWindow = true;
   HWUInfo[(int)InstructionFlavor::TRANS].ProducesCoexecWindow = true;
-  HWUInfo[(int)InstructionFlavor::DS].ProducesCoexecWindow = true;
 
   HWUInfo[(int)InstructionFlavor::WMMA].CoexecWindowSize = 6;
   HWUInfo[(int)InstructionFlavor::MultiCycleVALU].CoexecWindowSize = 3;
@@ -1410,6 +1411,8 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
     HWUInfo[(unsigned)InstructionFlavor::SingleCycleVALU].reset();
     HWUInfo[(unsigned)InstructionFlavor::SALU].reset();
   }
+
+  HWUInfo[(unsigned)InstructionFlavor::DS].fixupFIFO(16);
 
   calculateHiddenLatency(HazardRec);
   LLVM_DEBUG(dumpRegionSummary());
@@ -2380,7 +2383,6 @@ bool CandidateHeuristics::tryShadowMix(
       // TryCand is non-WMMA, prefer it
       TryCand.Reason = GenericSchedulerBase::RegCritical;
       OutReason = AMDGPUSchedReason::ShadowDeferWMMA;
-      TargetWindow->printStatus();
       LLVM_DEBUG(dbgs() << "  ShadowMix: Producer (Window Ready)\n");
       return true;
     }
@@ -2417,6 +2419,9 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
     GenericSchedulerBase::SchedCandidate &TryCand,
     GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone,
     bool IsAsync) {
+
+  if (IsAsync)
+    return false;
 
   auto IsCandidateResource = [this, &Cand, &TryCand,
                               IsAsync](unsigned ResourceIdx) {
@@ -2529,25 +2534,7 @@ bool CandidateHeuristics::tryCriticalResource(
     GenericSchedulerBase::SchedCandidate &TryCand,
     GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone) {
   unsigned CandOp = Cand.SU->getInstr()->getOpcode();
-  bool CandIsLoad = CandOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-                    CandOp == AMDGPU::S_WAIT_TENSORCNT ||
-                    CandOp == AMDGPU::S_BARRIER_WAIT ||
-                    CandOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
-  if (CandIsLoad) {
-    if (Cand.Reason > GenericSchedulerBase::RegCritical)
-      Cand.Reason = GenericSchedulerBase::RegCritical;
-    return true;
-  }
 
-  unsigned TryOp = TryCand.SU->getInstr()->getOpcode();
-  bool TryIsLoad = TryOp == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-                   TryOp == AMDGPU::S_WAIT_TENSORCNT ||
-                   TryOp == AMDGPU::S_BARRIER_WAIT ||
-                   TryOp == AMDGPU::S_BARRIER_SIGNAL_IMM;
-  if (TryIsLoad) {
-    TryCand.Reason = GenericSchedulerBase::RegCritical;
-    return true;
-  }
 
   unsigned Cutoff = std::min(HWUInfo.size(), (size_t)ResourceToBalanceVal);
   unsigned CheckedResources = 0;
@@ -2583,22 +2570,16 @@ bool CandidateHeuristics::tryCriticalResource(
       return true;
     }
 
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, false)) {
-      return true;
-    }
-
-    if (tryCriticalResourceDependency(TryCand, Cand, Zone, true)) {
-      return true;
-    }
-
     if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
       if (Cand.Reason > GenericSchedulerBase::RegCritical)
         Cand.Reason = GenericSchedulerBase::RegCritical;
       return true;
     }
 
-    TryCand.Reason = GenericSchedulerBase::RegCritical;
-    return true;
+    if (HWUI.isHigherPriority(TryCand.SU, Cand.SU)) {
+      TryCand.Reason = GenericSchedulerBase::RegCritical;
+      return true;
+    }
   }
 
   return false;
