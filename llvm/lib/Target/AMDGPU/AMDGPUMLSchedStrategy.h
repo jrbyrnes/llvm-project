@@ -426,12 +426,6 @@ public:
         for (auto SU : NewPrioritySUs) {
           PrioritySUs.insert(SU);
         }
-
-        errs() << "New Priority WMMAs: \n";
-        for (auto SU : PrioritySUs) {
-          SU->getInstr()->dump();
-        }
-
       }
     }
   }
