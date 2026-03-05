@@ -362,7 +362,7 @@ public:
     return false;
   }
 
-  void schedule(SUnit *SU, unsigned ReleaseAtCycle) {
+  void schedule(SUnit *SU, unsigned ReleaseAtCycle, const SIInstrInfo *TII) {
     AllSUs.remove(SU);
     PrioritySUs.remove(SU);
 
@@ -382,24 +382,56 @@ public:
     if (AllSUs.empty())
       return;
     if (PrioritySUs.empty()) {
+      SmallVector<SUnit *, 16> NewPrioritySUs;
       for (auto SU : AllSUs) {
-        if (PrioritySUs.empty()) {
-          PrioritySUs.insert(SU);
+        if (NewPrioritySUs.empty()) {
+          NewPrioritySUs.push_back(SU);
           continue;
         }
         unsigned SUDepth = SU->getDepth();
-        unsigned CurrDepth = (*PrioritySUs.begin())->getDepth();
+        unsigned CurrDepth = (*NewPrioritySUs.begin())->getDepth();
         if (SUDepth > CurrDepth)
           continue;
 
         if (SUDepth == CurrDepth) {
-          PrioritySUs.insert(SU);
+          NewPrioritySUs.push_back(SU);
           continue;
         }
 
         // SU is lower depth and should be prioritized.
+        NewPrioritySUs.clear();
+        NewPrioritySUs.push_back(SU);
+      }
+
+      if (getType() == InstructionFlavor::WMMA) {
+        SIInstrInfo *SII = const_cast<SIInstrInfo *>(TII);
+        sort(NewPrioritySUs, [SII](SUnit *A, SUnit *B){
+          auto ASrc1 = SII->getNamedOperand(*A->getInstr(), AMDGPU::OpName::src0);
+          auto BSrc1 = SII->getNamedOperand(*B->getInstr(), AMDGPU::OpName::src0);
+
+          if (!ASrc1->isReg() || !BSrc1->isReg())
+            return !ASrc1->isReg();
+          
+          auto AReg = ASrc1->getReg();
+          auto BReg = BSrc1->getReg();
+
+          if (!AReg.isVirtual() || !BReg.isVirtual())
+            return !AReg.isVirtual();
+          
+          return AReg.id() < BReg.id();
+
+        }); 
+
         PrioritySUs.clear();
-        PrioritySUs.insert(SU);
+        for (auto SU : NewPrioritySUs) {
+          PrioritySUs.insert(SU);
+        }
+
+        errs() << "New Priority WMMAs: \n";
+        for (auto SU : PrioritySUs) {
+          SU->getInstr()->dump();
+        }
+
       }
     }
   }
@@ -413,6 +445,13 @@ public:
     RemainingExposed = 0;
     ProducesCoexecWindow = false;
     CoexecWindowSize = 0;
+  }
+
+  void printPriorities() {
+    errs() << "New Priority WMMAs: \n";
+    for (auto SU : PrioritySUs) {
+      SU->getInstr()->dump();
+    }
   }
 
   void print() {

@@ -960,6 +960,13 @@ void CandidateHeuristics::calculateHiddenLatency(
     unsigned SALUWMMACoexecution = std::min(WMMAESlot, SALUCount);
     SALUCount -= SALUWMMACoexecution;
 
+
+    ShadowMixWMMAMinDSVal = WMMACount ? (DSWMMACoexecution + SALUWMMACoexecution) / WMMACount : 0;
+
+    //errs() << "ShadowMixWMMAMinDSVal: " << ShadowMixWMMAMinDSVal << "\n";
+
+    ShadowMixWMMAMinSALUVal = 0;//WMMACount ? SALUWMMACoexecution / WMMACount : 0;
+
     if (SALUCount) {
       unsigned SALUMultiCoexecution = std::min(CoexecWithMultiVALU, SALUCount);
       SALUCount -= SALUMultiCoexecution;
@@ -980,11 +987,18 @@ void CandidateHeuristics::calculateHiddenLatency(
     unsigned VALUWMMACoexecution = std::min(WMMAISlot, SingleCycleVALUCount);
 
     WMMAISlot -= VALUWMMACoexecution;
+
+    ShadowMixWMMAMinVALU1cVal = WMMACount ? (WMMACount * ISlotCount - WMMAISlot) / WMMACount : 0;
+
     SingleCycleVALUCount -= VALUWMMACoexecution;
 
     unsigned VALUEXPCoexecution = std::min(EXPCount, SingleCycleVALUCount);
 
     SingleCycleVALUCount -= VALUEXPCoexecution;
+
+    if (SingleCycleVALUCount)
+      ShadowMixTRANS32MinVALU1c = 1;
+
 
     HWUInfo[(int)InstructionFlavor::SingleCycleVALU].setExposedCount(
         SingleCycleVALUCount);
@@ -1039,10 +1053,6 @@ bool CandidateHeuristics::tryWMMACoolOff(
       if (!NearestTarget) {
         return false;
       }
-      if (NeededFlavor == InstructionFlavor::DS) {
-        errs() << "WMMACoolOff, need DS, cost is: " << Cost << "\n";
-      }
-
     }
 
     // The consumers are not available, and it is not much effort to make them
@@ -1381,6 +1391,9 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
     auto *MI = SU.getInstr();
     InstructionFlavor Flavor = classifyFlavor(MI, SII);
     HWUInfo[(int)(Flavor)].insert(&SU, Latency);
+
+    if (Flavor == InstructionFlavor::WMMA && Latency != 8)
+      HWUInfo[(unsigned)Flavor].CoexecWindowSize = Latency-1;
     unsigned FlavorCycles = getFlavorCycles(MI, Flavor, SII);
     MixInfo.addSU(&SU, Flavor, FlavorCycles);
 
@@ -2082,6 +2095,9 @@ bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
         break;
     }
     }
+
+
+
     if (ReadyCount < RequiredCount)
       return false;
   }
@@ -2609,7 +2625,7 @@ void CandidateHeuristics::schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec) {
     bool FoundIt = false;
     for (auto &HWUI : HWUInfo) {
       if (HWUI.getType() == Flavor) {
-        HWUI.schedule(SU, Latency);
+        HWUI.schedule(SU, Latency, SII);
         if (!IsHidden)
           HWUI.reduceRemainingExposed();
         FoundIt = true;
