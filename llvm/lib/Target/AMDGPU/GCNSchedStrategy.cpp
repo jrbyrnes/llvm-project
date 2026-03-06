@@ -1597,6 +1597,7 @@ void GCNSchedStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
+  errs() << "PressureAfter: "; PressureAfter.dump();
   DAG.Pressure[RegionIdx] = PressureAfter;
   SIMachineFunctionInfo *SMI = static_cast<SIMachineFunctionInfo *>(&DAG.MFI);
   SMI->setMaxRP(DAG.Pressure[RegionIdx].getArchVGPRNum());
