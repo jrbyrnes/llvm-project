@@ -2451,7 +2451,7 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
       return false;
 
     auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
-    bool LookDeep = CandFlavor == InstructionFlavor::DS &&
+    bool LookDeep = (CandFlavor == InstructionFlavor::DS) &&
                     HWUI.getType() == InstructionFlavor::WMMA;
     auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
 
@@ -2466,7 +2466,7 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
     auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
 
     // We want to ensure our DS order matches WMMA order.
-    bool LookDeep = CandFlavor == InstructionFlavor::DS &&
+    bool LookDeep = (CandFlavor == InstructionFlavor::DS) &&
                     HWUI.getType() == InstructionFlavor::WMMA;
     auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
 
@@ -2584,6 +2584,12 @@ bool CandidateHeuristics::tryCriticalResource(
     if (!CandUsesCrit && TryCandUsesCrit) {
       TryCand.Reason = GenericSchedulerBase::RegCritical;
       return true;
+    }
+
+    if (HWUI.getType() == InstructionFlavor::DS) {
+      if (tryCriticalResourceDependency(TryCand, Cand, Zone, false)) {
+        return true;
+      }
     }
 
     if (HWUI.isHigherPriority(Cand.SU, TryCand.SU)) {
