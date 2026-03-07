@@ -313,12 +313,12 @@ bool AMDGPUCodeGenPrepareImpl::run() {
       RecursivelyDeleteTriviallyDeadInstructions(I, TLI);
   }
 
-  //for (BasicBlock &BB : F) {
-  //  for (PHINode &PN : make_early_inc_range(BB.phis())) {
-  //    if(dependsOnOtherPHINodeInTheSameBB(PN))
-  //      PN.moveBefore(BB.begin());
-  //  }
-  //}
+  for (BasicBlock &BB : F) {
+    for (PHINode &PN : make_early_inc_range(BB.phis())) {
+      if(dependsOnOtherPHINodeInTheSameBB(PN))
+        PN.moveBefore(BB.begin());
+    }
+  }
 
   return MadeChange;
 }
