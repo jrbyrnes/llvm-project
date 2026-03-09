@@ -15,6 +15,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUCOEXECSCHEDSTRATEGY_H
 
 #include "GCNSchedStrategy.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -104,6 +105,11 @@ InstructionFlavor classifyFlavor(const MachineInstr &MI,
 using FlavorGroup = SmallVector<InstructionFlavor, 4>;
 
 namespace FlavorGroups {
+inline FlavorGroup allALU() {
+  return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS,
+          InstructionFlavor::MultiCycleVALU, InstructionFlavor::WMMA,
+          InstructionFlavor::SALU};
+}
 inline FlavorGroup allVALU() {
   return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS,
           InstructionFlavor::MultiCycleVALU};
@@ -151,6 +157,56 @@ inline StringRef getReasonName(AMDGPUSchedReason R) {
 // Hardware Unit Information
 //===----------------------------------------------------------------------===//
 
+/// Certain ALU instructions can coexecute with others -- we have coexecution
+/// window "producers" and coexecution window "consumers". The producers produce
+/// a shadow in which the consumers can hide their execution. The CoexecSlot
+/// models part of the shadow for the coexecution window producers.
+struct CoexecSlot {
+  /// Upper 16 bits are the preferred flavors, and lower 16 bits are the allowed
+  /// flavors
+  static const unsigned Lanewidth = 16;
+  /// Mask of preferred and allowed flavors.
+  unsigned Flavors = 0;
+  /// How many cycles of the shadow this coexec slot represents.
+  unsigned Cycles = 0;
+
+  /// Add a \p Flavor to the Flavors. If \p IsPreferred is true, it will add it
+  /// to the preferred flavors, otherwise it will just add to the allowed
+  /// flavors.
+  void addFlavor(AMDGPU::InstructionFlavor Flavor, bool IsPreferred = false) {
+    assert((int)AMDGPU::InstructionFlavor::NUM_FLAVORS <= Lanewidth);
+    unsigned FlavorOffset = 1 << (unsigned)Flavor;
+    Flavors |= FlavorOffset;
+    if (IsPreferred) {
+      unsigned PreferredOffset = FlavorOffset << Lanewidth;
+      Flavors |= PreferredOffset;
+    }
+  }
+
+  void dump() {
+    for (unsigned I = 0; I < (unsigned)AMDGPU::InstructionFlavor::NUM_FLAVORS;
+         I++) {
+      if (Flavors && I) {
+        dbgs() << "Holds: "
+               << AMDGPU::getFlavorName((AMDGPU::InstructionFlavor)I) << "\n";
+      }
+      if (Flavors && (I << Lanewidth)) {
+        dbgs() << "  Is Preferred Flavor\n";
+      }
+    }
+    dbgs() << "Total Cycles: " << Cycles << "\n";
+  }
+
+  /// Check if \p Flavor is coexecutable in this slot. If \p Preferred is true,
+  /// then \returns if it is a preferred flavor. Otherwise, \p returns if it is
+  /// an allowed flavor.
+  static bool canHold(AMDGPU::InstructionFlavor Flavor, unsigned FlavorMask,
+                      bool Preferred) {
+    return FlavorMask &
+           ((1 << (unsigned)Flavor) << (Preferred ? Lanewidth : 0));
+  }
+};
+
 /// HardwareUnitInfo is a wrapper class which maps to some real hardware
 /// resource. This is used to model hardware resource pressure per region, and
 /// guide scheduling heuristics.
@@ -184,6 +240,21 @@ private:
   unsigned BufferSize = 0;
   /// How many cycles it takes for an instruction to clear the buffer.
   unsigned BufferCycles = 0;
+  /// The lower bound of number of instructions on this HardwareUnit which can
+  /// not be hidden.
+  unsigned ExposedCount = 0;
+  /// The lower bound of number of cycles on this HardwareUnit which can not be
+  /// hidden.
+  unsigned ExpectedTopLineCycles = 0;
+  /// The upper bound of number of instructions on this HardwareUnit which can
+  /// be hidden.
+  unsigned FullyHiddenCount = 0;
+  /// The shadow cycles that instructions on this HardwareUnit produce. This
+  /// maps a flavormasks to cyclecount. computeCoexecCycles uses this map to
+  /// find the optimal coexecution latency hiding. To do this, it modifies the
+  /// map. After computeCoexecCycles, the cycle counts in CoexecCycles will be
+  /// those that can not be hidden.
+  DenseMap<unsigned, unsigned> CoexecCycles;
 
 public:
   HardwareUnitInfo() {}
@@ -210,6 +281,89 @@ public:
   void setBufferSize(unsigned Size) { BufferSize = Size; }
 
   unsigned getBufferSize() { return BufferSize; }
+
+  void setExposedCount(unsigned Exposed) { ExposedCount = Exposed; }
+
+  unsigned getExpectedTopLineCycles() { return ExpectedTopLineCycles; }
+
+  /// Reduce the ExpectedTopLineCycles by \p Reduction amount.
+  void reduceExpectedTopLineCycles(unsigned Reduction) {
+    assert(Reduction <= ExpectedTopLineCycles);
+    ExpectedTopLineCycles -= Reduction;
+  }
+
+  /// Find slots that can hide instructions in the \p Other HardwareUnit.
+  /// Reduce the cycle count of these slots, and reduce the exposed count
+  /// of the \p Other HardwareUnit. If the \p Other HardwareUnit has
+  /// coexecslots, reduce the count of each coexecslot by one, as this
+  /// slot is no longer available for coexecution.
+  void hide(HardwareUnitInfo *Other, bool Preferred) {
+    // How many cycles we were able to hide
+    unsigned TotalHiddenCycles = 0;
+    // How many cycles in the other hardware unit that still need to be hidden.
+    unsigned RemainingCycles = Other->ExpectedTopLineCycles;
+    unsigned TotalCycles = RemainingCycles;
+    for (auto &Slot : CoexecCycles) {
+      if (!CoexecSlot::canHold(Other->getType(), Slot.first, Preferred))
+        continue;
+
+      unsigned &SlotCycles = Slot.second;
+      // Loop until we run out of instructions to hide in the other HarwareUnit,
+      // or until we run out of slots in which to hide them.
+      while (RemainingCycles && SlotCycles) {
+        SlotCycles -= 1;
+        // If the other HardwareUnit has coexec slots, remove one of each as
+        // we have consumed the instruction.
+        unsigned Latency = Other->hideInstruction();
+        assert(Latency <= RemainingCycles);
+        RemainingCycles -= Latency;
+        TotalHiddenCycles += Latency;
+        assert(TotalHiddenCycles <= TotalCycles);
+      }
+      if (TotalHiddenCycles == TotalCycles)
+        break;
+    }
+    Other->ExpectedTopLineCycles = RemainingCycles;
+  }
+
+  /// Check if this HardwareUnit can hide the \p Other . If \p Preferred
+  /// is true, \p returns whether the \p Other flavor is preferred. Otherwise,
+  /// \p returns if it is allowed in the shadow.
+  bool canHide(AMDGPU::InstructionFlavor Other, bool Preferred) {
+    for (auto SlotMask : CoexecCycles.keys()) {
+      if (CoexecSlot::canHold(Other, SlotMask, Preferred))
+        return true;
+    }
+    return false;
+  }
+
+  bool isALU() {
+    auto AllALU = AMDGPU::FlavorGroups::allALU();
+    for (auto Flavor : AllALU) {
+      if (Type == Flavor)
+        return true;
+    }
+    return false;
+  }
+
+  /// Adjust the state to account for one hidden instruction. \p returns the
+  /// number of cycles for this hidden instruction. This is the issue cycle plus
+  /// any coexec cycles that the instruction produced. Increments the
+  /// FullyHiddenCount.
+  unsigned hideInstruction() {
+    unsigned ReducedCount = 1;
+    ++FullyHiddenCount;
+    assert(FullyHiddenCount <= AllSUs.size());
+    for (auto &Slot : CoexecCycles) {
+      if (Slot.second > 0) {
+        Slot.second -= 1;
+        ++ReducedCount;
+      }
+    }
+    return ReducedCount;
+  }
+
+  unsigned getFullyHiddenCount() { return FullyHiddenCount; }
 
   /// \returns the next cycle where there is space in the buffer.
   unsigned getBufferAvailableCycle(unsigned CurrCycle) {
@@ -245,10 +399,14 @@ public:
   void reset() {
     AllSUs.clear();
     PrioritySUs.clear();
+    CoexecCycles.clear();
     TotalCycles = 0;
     ProducesCoexecWindow = false;
     BufferSize = 0;
     BufferCycles = 0;
+    ExposedCount = 0;
+    ExpectedTopLineCycles = 0;
+    FullyHiddenCount = 0;
   }
 
   /// \returns the next SU in PriortySUs that is not ready. If \p LookDeep is
@@ -262,8 +420,10 @@ public:
   /// beneficial to enable SUs multiple levels ahead.
   SUnit *getNextTargetSU(bool LookDeep = false);
   /// insert the \p SU into the AllSUs and account its \p BlockingCycles into
-  /// the TotalCycles. This maintains the list of PrioritySUs.
-  void insert(SUnit *SU, unsigned BlockingCycles);
+  /// the TotalCycles. The \p CoexecSlots are added parsed an accumulated into
+  /// the CoexecCycles. This maintains the list of PrioritySUs.
+  void insert(SUnit *SU, unsigned BlockingCycles,
+              SmallVectorImpl<CoexecSlot> &CoexecSlots);
   /// schedule the \p SU by removing it from the AllSus and reducing its \p
   /// BlockingCycles from the TotalCycles. This maintains the list of
   /// PrioritySUS.
@@ -273,6 +433,16 @@ public:
   /// HardwareUnit can hold N instructions simultaneously, then there is no
   /// penalty for scheduling N instructions back to back.
   void finalizeCycles();
+
+  void dumpCoexecCycles() {
+    for (auto &Entry : CoexecCycles) {
+      dbgs() << "    HardwareUnit has coexec slot: \n";
+      CoexecSlot TempSlot;
+      TempSlot.Flavors = Entry.first;
+      TempSlot.Cycles = Entry.second;
+      TempSlot.dump();
+    }
+  }
 };
 
 //===----------------------------------------------------------------------===//
@@ -297,6 +467,19 @@ protected:
   /// SU
   unsigned getHWUICyclesForInst(SUnit *SU);
 
+  /// Given a \p SU , calculate the c
+  bool getCoexecSlots(SUnit *SU, SmallVectorImpl<CoexecSlot> &CoexecSlots);
+
+  /// Caculate how many cycles for each HardwareUnit can be hidden behind
+  /// execution on another HardwareUnit. This computation is done by simplifying
+  /// the problem and arrives at estimates to guide the heuristics. One obvious
+  /// simplification is that we ignore dependencies that may make coexecution
+  /// impossible. Ultimately, this analysis will produce the estimated exposed
+  /// count per HardwareUnit. Understanding the hidden / exposed counts helps us
+  /// make better decisions about which types of instructions to attempt to hide
+  /// behind other HardwareUnits.
+  void computeCoexecCycles();
+
 public:
   CandidateHeuristics() = default;
 
@@ -313,6 +496,10 @@ public:
   /// priority are first. Priority is determined by maximizing coexecution and
   /// keeping the critical Hardware unit busy.
   void sortHWUIResources();
+
+  // Sort the HardwarUnitInfo vector such that HWUI appearing earlier cannot be
+  // hidden by HWUI appearing later.
+  void sortHWUIResourcesByCoexecution();
 
   /// Check for critical resource consumption. Prefer the candidate that uses
   /// the most prioritized HardwareUnit. If both candidates use the same
