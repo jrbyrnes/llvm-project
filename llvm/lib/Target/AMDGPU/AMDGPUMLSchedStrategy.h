@@ -263,8 +263,11 @@ struct CoexecSlot {
   void addFlavor(InstructionFlavor Flavor, bool IsPreferred = false) {
     assert((int)InstructionFlavor::NUM_FLAVORS <= 16);
     unsigned FlavorOffset = 1 << (unsigned)Flavor;
-    unsigned PreferredOffset = FlavorOffset << (IsPreferred ? 16 : 0);
-    Flavors |= PreferredOffset;
+    Flavors |= FlavorOffset;
+    if (IsPreferred) {
+      unsigned PreferredOffset = FlavorOffset << 16;
+      Flavors |= PreferredOffset;
+    }
   }
 
   void dump() {
@@ -303,6 +306,7 @@ private:
   unsigned Exposed = 0;
   unsigned RemainingExposed = 0;
   unsigned RemainingExposedCycles = 0;
+  unsigned FullyHidden = 0;
 
   DenseMap<unsigned, unsigned> CoexecCycles;
 
@@ -371,8 +375,9 @@ public:
   unsigned getRemainingExposed() { return RemainingExposed; }
 
   void reduceRemainingExposed() {
-    if (RemainingExposed > 0)
+    if (RemainingExposed > 0) {
       --RemainingExposed;
+    }
   }
 
   unsigned ExpectedTopLineCycles = 0;
@@ -385,42 +390,61 @@ public:
     return false;
   }
 
-  unsigned hideWithPreference(HardwareUnitInfo *Other,
-                              unsigned AvailableCycles) {
+  void hideWithPreference(HardwareUnitInfo *Other) {
     unsigned TotalHiddenCycles = 0;
-    unsigned RemainingCycles = AvailableCycles;
+    unsigned RemainingCycles = Other->ExpectedTopLineCycles;
+    unsigned TotalCycles = RemainingCycles;
     for (auto &Slot : CoexecCycles) {
-      if (CoexecSlot::prefersToHold(Other->getType(), Slot.first))
+      if (!CoexecSlot::prefersToHold(Other->getType(), Slot.first))
         continue;
       
-      unsigned OtherLatency = 
+      unsigned NumberOfSlots = Other->getNonzeroSlotSize();
+      
       unsigned &SlotCycles = Slot.second;
-      unsigned RemainingCycles = AvailableCycles - TotalHiddenCycles;
-      unsigned HiddenCycles = std::min(SlotCycles, RemainingCycles);
-      SlotCycles -= HiddenCycles;
-      TotalHiddenCycles += HiddenCycles;
-      assert(TotalHiddenCycles <= AvailableCycles);
-      if (TotalHiddenCycles == AvailableCycles)
+      while (RemainingCycles && SlotCycles) {
+        SlotCycles -= 1;
+        unsigned Latency = NumberOfSlots + 1;
+        assert(Latency <= RemainingCycles);
+        RemainingCycles -= Latency;
+        Other->reduceCoexecSlots(Latency);
+        TotalHiddenCycles += Latency;
+        assert(TotalHiddenCycles <= TotalCycles);
+        NumberOfSlots = Other->getNonzeroSlotSize();
+        Other->increaseFullyHiddenCount(1);
+
+      }
+      if (TotalHiddenCycles == TotalCycles)
         break;
     }
-    return TotalHiddenCycles;
+    Other->ExpectedTopLineCycles = RemainingCycles;
   }
 
-  unsigned hide(HardwareUnitInfo *Other, unsigned AvailableCycles) {
+  void hide(HardwareUnitInfo *Other) {
     unsigned TotalHiddenCycles = 0;
+    unsigned RemainingCycles = Other->ExpectedTopLineCycles;
+    unsigned TotalCycles = RemainingCycles;
     for (auto &Slot : CoexecCycles) {
-      if (CoexecSlot::canHold(Other, Slot.first))
+      if (!CoexecSlot::canHold(Other->getType(), Slot.first))
         continue;
+      
+      unsigned NumberOfSlots = Other->getNonzeroSlotSize();
       unsigned &SlotCycles = Slot.second;
-      unsigned RemainingCycles = AvailableCycles - TotalHiddenCycles;
-      unsigned HiddenCycles = std::min(SlotCycles, RemainingCycles);
-      SlotCycles -= HiddenCycles;
-      TotalHiddenCycles += HiddenCycles;
-      assert(TotalHiddenCycles <= AvailableCycles);
-      if (TotalHiddenCycles == AvailableCycles)
+      while (NumberOfSlots && RemainingCycles && SlotCycles) {
+        SlotCycles -= 1;
+        unsigned Latency = NumberOfSlots + 1;
+        assert(Latency <= RemainingCycles);
+        RemainingCycles -= Latency;
+        Other->reduceCoexecSlots(Latency);
+        TotalHiddenCycles += Latency;
+        assert(TotalHiddenCycles <= TotalCycles);
+        NumberOfSlots = Other->getNonzeroSlotSize();
+        Other->increaseFullyHiddenCount(1);
+
+      }
+      if (TotalHiddenCycles == TotalCycles)
         break;
     }
-    return TotalHiddenCycles;
+    Other->ExpectedTopLineCycles = RemainingCycles;
   }
 
   bool canHide(InstructionFlavor Other) {
@@ -457,6 +481,24 @@ public:
     }
   }
 
+  unsigned getNonzeroSlotSize() {
+    unsigned Count = 0;
+    for (auto &Slot : CoexecCycles) {
+      if (Slot.second > 0)
+        ++Count;
+    }
+    return Count;
+  }
+
+  void increaseFullyHiddenCount(unsigned N) {
+    FullyHidden += N;
+    assert(FullyHidden <= AllSUs.size());
+  }
+
+  unsigned getFullyHiddenCount() {
+    return FullyHidden;
+  }
+
   void insert(SUnit *SU, unsigned BlockingCycles,
               SmallVectorImpl<CoexecSlot> &CoexecSlots) {
 
@@ -472,16 +514,6 @@ public:
     CoexecCycles[Slot.Flavors] += Slot.Cycles;
   }
  
-  unsigned getNonzeroSlotSize() {
-    unsigned Count = 0;
-    for (auto &Slot : CoexecCycles) {
-      if (Slot.second > 0)
-        ++Count;
-    }
-    return Count;
-  }
-
-
     assert(Inserted);
     if (PrioritySUs.empty()) {
       PrioritySUs.insert(SU);
@@ -595,6 +627,7 @@ public:
     CoexecWindowSize = 0;
     RemainingExposedCycles = 0;
     ExpectedTopLineCycles = 0;
+    FullyHidden = 0;
   }
 
   void printPriorities() {
