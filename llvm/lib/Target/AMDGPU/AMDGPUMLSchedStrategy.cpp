@@ -876,7 +876,7 @@ void CandidateHeuristics::calculateHiddenLatency(
   unsigned WMMACount = HWUInfo[(int)InstructionFlavor::WMMA].size();
   unsigned MultiVALUCount =
       HWUInfo[(int)InstructionFlavor::MultiCycleVALU].size();
-  unsigned EXPCount = HWUInfo[(int)InstructionFlavor::DS].size();
+  unsigned EXPCount = HWUInfo[(int)InstructionFlavor::TRANS].size();
   unsigned SingleCycleVALUCount =
       HWUInfo[(int)InstructionFlavor::SingleCycleVALU].size();
 
@@ -1123,8 +1123,7 @@ unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
   MachineInstr *MI = SU->getInstr();
   unsigned RepeatRate = SII->getRepeatRate(*MI);
 
-  if (RepeatRate > 1 && SII->isVALU(*MI) && !SII->isMFMAorWMMA(*MI) &&
-      !SII->isTRANS(*MI)) {
+  if (RepeatRate > 1 && SII->isVALU(*MI) && !SII->isMFMAorWMMA(*MI)) {
     Latency = RepeatRate;
   }
 
@@ -1454,23 +1453,16 @@ void CandidateHeuristics::computeCoexecCycles(GCNHazardRecognizer *HazardRec) {
       if (!HWUIB.isALU())
         continue;
       if (HWUIA.prefersToHide(HWUIB.getType())) {
-        unsigned HiddenCycles = HWUIA.hideWithPreference(
-            HWUIB.getType(), HWUIB.ExpectedTopLineCycles);
-        assert(HiddenCycles <= HWUIB.ExpectedTopLineCycles);
-        HWUIB.ExpectedTopLineCycles -= HiddenCycles;
-        HWUIB.reduceCoexecSlots(HiddenCycles);
+        HWUIA.hideWithPreference(&HWUIB);
       }
+
     }
     for (unsigned J = I + 1; J < HWUInfo.size(); J++) {
       auto &HWUIB = HWUInfo[J];
       if (!HWUIB.isALU())
         continue;
       if (HWUIA.canHide(HWUIB.getType())) {
-        unsigned HiddenCycles =
-            HWUIA.hide(HWUIB.getType(), HWUIB.ExpectedTopLineCycles);
-        assert(HiddenCycles <= HWUIB.ExpectedTopLineCycles);
-        HWUIB.ExpectedTopLineCycles -= HiddenCycles;
-        HWUIB.reduceCoexecSlots(HiddenCycles);
+          HWUIA.hide(&HWUIB);
       }
     }
   }
@@ -1489,13 +1481,12 @@ void CandidateHeuristics::computeCoexecCycles(GCNHazardRecognizer *HazardRec) {
   for (auto &HWUI : HWUInfo) {
     if (!HWUI.isALU())
       continue;
-    HWUI.setExposedCount(IsDSBound ? 0 : HWUI.ExpectedTopLineCycles);
-    errs() << "NewExposed count " << getFlavorName(HWUI.getType()) << ": " << HWUI.ExpectedTopLineCycles << "\n";
+    unsigned NewExposedCount = HWUI.size() - HWUI.getFullyHiddenCount();
+    HWUI.setExposedCount(IsDSBound ? 0 : NewExposedCount);
   }
 
-  HWUIDS->setExposedCount(IsDSBound ? HWUIDS->getTotalCycles() : 0);
-  errs() << "NewExposed count DS: 0\n";
-  
+  HWUIDS->setExposedCount(IsDSBound ? HWUIDS->size() : 0);
+ 
 }
 
 void CandidateHeuristics::sortHWUIResourcesByCoexecution() {
@@ -2738,8 +2729,8 @@ bool CandidateHeuristics::getCoexecSlots(
 
   if (Flavor == InstructionFlavor::TRANS) {
     CoexecSlot Slot;
-    Slot.Cycles = CoexecCycles - 1;
-    Slot.addFlavor(InstructionFlavor::SingleCycleVALU, false);
+    Slot.Cycles = SII->getRepeatRate(*SU->getInstr()) - 1;
+    Slot.addFlavor(InstructionFlavor::SingleCycleVALU, true);
     Slot.addFlavor(InstructionFlavor::SALU, false);
     Slot.addFlavor(InstructionFlavor::DS, false);
     CoexecSlots.push_back(Slot);
@@ -2748,7 +2739,7 @@ bool CandidateHeuristics::getCoexecSlots(
 
   if (Flavor == InstructionFlavor::MultiCycleVALU) {
     CoexecSlot Slot;
-    Slot.Cycles = CoexecCycles - 1;
+    Slot.Cycles = SII->getRepeatRate(*SU->getInstr()) - 1;
     Slot.addFlavor(InstructionFlavor::SALU, false);
     Slot.addFlavor(InstructionFlavor::DS, false);
     CoexecSlots.push_back(Slot);
@@ -2789,8 +2780,17 @@ bool CandidateHeuristics::getCoexecSlots(
     ISlot1.addFlavor(InstructionFlavor::DMA, false);
     ISlot1.addFlavor(InstructionFlavor::VMEM, false);
 
+    CoexecSlot ISlot2;
+    ISlot1.Cycles = 1;
+    ISlot2.Flavors = 0;
+
 
     CoexecSlots.push_back(ESlot0);
+    CoexecSlots.push_back(ESlot1);
+    CoexecSlots.push_back(ISlot0);
+    CoexecSlots.push_back(ISlot1);
+    CoexecSlots.push_back(ISlot2);
+
     return true;
   }
 
