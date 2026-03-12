@@ -935,9 +935,9 @@ void CandidateHeuristics::calculateHiddenLatency(
   if (!IsDSBound) {
     // If we are not DS Bound, then we cannot hide any of the WMMA or multi
     // cycle VALU
-    HWUInfo[(int)InstructionFlavor::WMMA].setExposedCount(WMMACount);
-    HWUInfo[(int)InstructionFlavor::MultiCycleVALU].setExposedCount(
-        MultiVALUCount);
+    //HWUInfo[(int)InstructionFlavor::WMMA].setExposedCount(WMMACount);
+    //HWUInfo[(int)InstructionFlavor::MultiCycleVALU].setExposedCount(
+    //    MultiVALUCount);
 
     unsigned DSWMMACoexecution = std::min(WMMAESlotForDS, DSCount);
 
@@ -955,7 +955,7 @@ void CandidateHeuristics::calculateHiddenLatency(
       CoexecWithMultiVALU -= DSMultiCoexecution;
     }
 
-    HWUInfo[(int)InstructionFlavor::DS].setExposedCount(DSCount);
+    //HWUInfo[(int)InstructionFlavor::DS].setExposedCount(DSCount);
 
     unsigned SALUWMMACoexecution = std::min(WMMAESlot, SALUCount);
     SALUCount -= SALUWMMACoexecution;
@@ -974,7 +974,7 @@ void CandidateHeuristics::calculateHiddenLatency(
       WMMAESlot -= SALUMultiCoexecution;
     }
 
-    HWUInfo[(int)InstructionFlavor::SALU].setExposedCount(SALUCount);
+    //HWUInfo[(int)InstructionFlavor::SALU].setExposedCount(SALUCount);
 
     unsigned EXPWMMACoexecution =
         true ? std::min(WMMAISlotForTRANS, EXPCount) : 0;
@@ -982,7 +982,8 @@ void CandidateHeuristics::calculateHiddenLatency(
     WMMAISlot -= EXPWMMACoexecution;
     EXPCount -= EXPWMMACoexecution;
 
-    HWUInfo[(int)InstructionFlavor::TRANS].setExposedCount(EXPCount);
+    //HWUInfo[(int)InstructionFlavor::TRANS].setExposedCount(EXPCount);
+
 
     unsigned VALUWMMACoexecution = std::min(WMMAISlot, SingleCycleVALUCount);
 
@@ -1000,8 +1001,16 @@ void CandidateHeuristics::calculateHiddenLatency(
       ShadowMixTRANS32MinVALU1c = 1;
 
 
-    HWUInfo[(int)InstructionFlavor::SingleCycleVALU].setExposedCount(
-        SingleCycleVALUCount);
+    //HWUInfo[(int)InstructionFlavor::SingleCycleVALU].setExposedCount(
+    //    SingleCycleVALUCount);
+
+    errs() << "\n\n\n";
+    errs() << "Exposed WMMA: " << WMMACount << "\n";
+    errs() << "Exposed MultiVALU: " << MultiVALUCount << "\n";
+    errs() << "Exposed DS: " << DSCount << "\n";
+    errs() << "Exposed SALU: " << SALUCount << "\n";
+    errs() << "Exposed Trans: " << EXPCount << "\n";
+    errs() << "Exposed 1cVALU: " << SingleCycleVALUCount << "\n";
   }
 }
 
@@ -1266,6 +1275,7 @@ void CandidateHeuristics::initialize(ScheduleDAGMI *SchedDAG,
   }
 
   collectUse(GCNazardRec);
+  computeCoexecCycles(GCNazardRec);
 }
 
 void CandidateHeuristics::populateCandidateWindow(CoexecWindow &Window,
@@ -1390,8 +1400,9 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
 
     auto *MI = SU.getInstr();
     InstructionFlavor Flavor = classifyFlavor(MI, SII);
-    HWUInfo[(int)(Flavor)].insert(&SU, Latency);
-
+    SmallVector<CoexecSlot> CoexecSlots;
+    getCoexecSlots(&SU, CoexecSlots);
+    HWUInfo[(int)(Flavor)].insert(&SU, Latency, CoexecSlots);
     if (Flavor == InstructionFlavor::WMMA && Latency != 8)
       HWUInfo[(unsigned)Flavor].CoexecWindowSize = Latency-1;
     unsigned FlavorCycles = getFlavorCycles(MI, Flavor, SII);
@@ -1430,6 +1441,103 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
   calculateHiddenLatency(HazardRec);
   LLVM_DEBUG(dumpRegionSummary());
 }
+
+void CandidateHeuristics::computeCoexecCycles(GCNHazardRecognizer *HazardRec) {
+  sortHWUIResourcesByCoexecution();
+
+  for (unsigned I = 0; I < HWUInfo.size(); I++) {
+    auto &HWUIA = HWUInfo[I];
+    if (!HWUIA.isALU())
+      continue;
+    for (unsigned J = I + 1; J < HWUInfo.size(); J++) {
+      auto &HWUIB = HWUInfo[J];
+      if (!HWUIB.isALU())
+        continue;
+      if (HWUIA.prefersToHide(HWUIB.getType())) {
+        unsigned HiddenCycles = HWUIA.hideWithPreference(
+            HWUIB.getType(), HWUIB.ExpectedTopLineCycles);
+        assert(HiddenCycles <= HWUIB.ExpectedTopLineCycles);
+        HWUIB.ExpectedTopLineCycles -= HiddenCycles;
+        HWUIB.reduceCoexecSlots(HiddenCycles);
+      }
+    }
+    for (unsigned J = I + 1; J < HWUInfo.size(); J++) {
+      auto &HWUIB = HWUInfo[J];
+      if (!HWUIB.isALU())
+        continue;
+      if (HWUIA.canHide(HWUIB.getType())) {
+        unsigned HiddenCycles =
+            HWUIA.hide(HWUIB.getType(), HWUIB.ExpectedTopLineCycles);
+        assert(HiddenCycles <= HWUIB.ExpectedTopLineCycles);
+        HWUIB.ExpectedTopLineCycles -= HiddenCycles;
+        HWUIB.reduceCoexecSlots(HiddenCycles);
+      }
+    }
+  }
+
+  unsigned ExposedALUCycles = 0;
+  for (auto &HWUI : HWUInfo) {
+    if (!HWUI.isALU())
+      continue;
+
+    ExposedALUCycles += HWUI.ExpectedTopLineCycles;
+  }
+
+  HardwareUnitInfo *HWUIDS = getHWUIFromFlavor(InstructionFlavor::DS);
+  bool IsDSBound = HWUIDS->getTotalCycles() > ExposedALUCycles;
+
+  for (auto &HWUI : HWUInfo) {
+    if (!HWUI.isALU())
+      continue;
+    HWUI.setExposedCount(IsDSBound ? 0 : HWUI.ExpectedTopLineCycles);
+    errs() << "NewExposed count " << getFlavorName(HWUI.getType()) << ": " << HWUI.ExpectedTopLineCycles << "\n";
+  }
+
+  HWUIDS->setExposedCount(IsDSBound ? HWUIDS->getTotalCycles() : 0);
+  errs() << "NewExposed count DS: 0\n";
+  
+}
+
+void CandidateHeuristics::sortHWUIResourcesByCoexecution() {
+  SmallVector<HardwareUnitInfo, 8> RemainingHWUI;
+  SmallVector<HardwareUnitInfo, 8> SortedHWUI;
+  SmallSet<InstructionFlavor, 8> InsertedFlavors;
+
+  unsigned HWUISize = HWUInfo.size();
+
+  for (auto &HWUI : HWUInfo) {
+    RemainingHWUI.push_back(HWUI);
+  }
+
+  HWUInfo.clear();
+
+  while (SortedHWUI.size() < HWUISize) {
+    for (auto &HWUIA : RemainingHWUI) {
+      if (InsertedFlavors.contains(HWUIA.getType()))
+        continue;
+      bool CanCoexecuteUnderOther = false;
+      for (auto &HWUIB : RemainingHWUI) {
+        if (HWUIA.getType() == HWUIB.getType())
+          continue;
+        if (InsertedFlavors.contains(HWUIB.getType()))
+          continue;
+        if (HWUIB.canHide(HWUIA.getType())) {
+          CanCoexecuteUnderOther = true;
+          break;
+        }
+      }
+      if (!CanCoexecuteUnderOther) {
+        SortedHWUI.push_back(HWUIA);
+        InsertedFlavors.insert(HWUIA.getType());
+      }
+    }
+  }
+
+  for (auto &HWUI : SortedHWUI) {
+    HWUInfo.push_back(HWUI);
+  }
+}
+
 
 void CandidateHeuristics::dumpRegionSummary() {
   MachineBasicBlock *BB = DAG->begin()->getParent();
@@ -2602,6 +2710,88 @@ bool CandidateHeuristics::tryCriticalResource(
       TryCand.Reason = GenericSchedulerBase::RegCritical;
       return true;
     }
+  }
+
+  return false;
+}
+
+bool CandidateHeuristics::getCoexecSlots(
+    SUnit *SU, SmallVectorImpl<CoexecSlot> &CoexecSlots) {
+  CoexecSlots.clear();
+  InstructionFlavor Flavor = classifyFlavor(SU->getInstr(), SII);
+  if (Flavor != InstructionFlavor::TRANS && Flavor != InstructionFlavor::WMMA &&
+      Flavor != InstructionFlavor::MultiCycleVALU)
+    return false;
+
+  unsigned CoexecCycles = 0;
+  if (SchedModel && SchedModel->hasInstrSchedModel()) {
+    unsigned ReleaseAtCycle = 0;
+    const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
+    for (TargetSchedModel::ProcResIter
+             PI = SchedModel->getWriteProcResBegin(SC),
+             PE = SchedModel->getWriteProcResEnd(SC);
+         PI != PE; ++PI) {
+      ReleaseAtCycle = std::max(ReleaseAtCycle, (unsigned)PI->ReleaseAtCycle);
+    }
+    unsigned CoexecCycles = getHWUICyclesForInst(SU, ReleaseAtCycle);
+  }
+
+  if (Flavor == InstructionFlavor::TRANS) {
+    CoexecSlot Slot;
+    Slot.Cycles = CoexecCycles - 1;
+    Slot.addFlavor(InstructionFlavor::SingleCycleVALU, false);
+    Slot.addFlavor(InstructionFlavor::SALU, false);
+    Slot.addFlavor(InstructionFlavor::DS, false);
+    CoexecSlots.push_back(Slot);
+    return true;
+  }
+
+  if (Flavor == InstructionFlavor::MultiCycleVALU) {
+    CoexecSlot Slot;
+    Slot.Cycles = CoexecCycles - 1;
+    Slot.addFlavor(InstructionFlavor::SALU, false);
+    Slot.addFlavor(InstructionFlavor::DS, false);
+    CoexecSlots.push_back(Slot);
+    return true;
+  }
+
+  if (Flavor == InstructionFlavor::WMMA) {
+    CoexecSlot ESlot0;
+    ESlot0.Cycles = 2;
+    ESlot0.addFlavor(InstructionFlavor::SALU, false);
+    ESlot0.addFlavor(InstructionFlavor::DS, true);
+    ESlot0.addFlavor(InstructionFlavor::DMA, false);
+    ESlot0.addFlavor(InstructionFlavor::VMEM, false);
+
+    CoexecSlot ESlot1;
+    ESlot1.Cycles = 2;
+    ESlot1.addFlavor(InstructionFlavor::SALU, true);
+    ESlot1.addFlavor(InstructionFlavor::DS, false);
+    ESlot1.addFlavor(InstructionFlavor::DMA, false);
+    ESlot1.addFlavor(InstructionFlavor::VMEM, false);
+
+
+    CoexecSlot ISlot0;
+    ISlot0.Cycles = 1;
+    ISlot0.addFlavor(InstructionFlavor::SingleCycleVALU, false);
+    ISlot0.addFlavor(InstructionFlavor::SALU, false);
+    ISlot0.addFlavor(InstructionFlavor::DS, false);
+    ISlot0.addFlavor(InstructionFlavor::TRANS, true);
+    ISlot0.addFlavor(InstructionFlavor::DMA, false);
+    ISlot0.addFlavor(InstructionFlavor::VMEM, false);
+
+    CoexecSlot ISlot1;
+    ISlot1.Cycles = 1;
+    ISlot1.addFlavor(InstructionFlavor::SingleCycleVALU, true);
+    ISlot1.addFlavor(InstructionFlavor::SALU, false);
+    ISlot1.addFlavor(InstructionFlavor::DS, false);
+    ISlot1.addFlavor(InstructionFlavor::TRANS, false);
+    ISlot1.addFlavor(InstructionFlavor::DMA, false);
+    ISlot1.addFlavor(InstructionFlavor::VMEM, false);
+
+
+    CoexecSlots.push_back(ESlot0);
+    return true;
   }
 
   return false;

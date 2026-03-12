@@ -14,6 +14,7 @@
 #include "GCNHazardRecognizer.h"
 #include "GCNSchedStrategy.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/MachineCycleAnalysis.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
@@ -83,6 +84,11 @@ namespace FlavorGroups {
   inline FlavorGroup allVALU() {
     return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS,
             InstructionFlavor::MultiCycleVALU};
+  }
+  inline FlavorGroup allALU() {
+  return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS,
+          InstructionFlavor::MultiCycleVALU, InstructionFlavor::WMMA,
+          InstructionFlavor::SALU};
   }
   inline FlavorGroup allMem() {
     return {InstructionFlavor::VMEM, InstructionFlavor::DS,
@@ -247,6 +253,45 @@ public:
   void dumpReadyPending(raw_ostream &OS) const;
 };
 
+
+struct CoexecSlot {
+  // Upper 16 bits are the preferred flavors, and lower 16 bits are the allowed
+  // flavors
+  unsigned Flavors = 0;
+  unsigned Cycles = 0;
+
+  void addFlavor(InstructionFlavor Flavor, bool IsPreferred = false) {
+    assert((int)InstructionFlavor::NUM_FLAVORS <= 16);
+    unsigned FlavorOffset = 1 << (unsigned)Flavor;
+    unsigned PreferredOffset = FlavorOffset << (IsPreferred ? 16 : 0);
+    Flavors |= PreferredOffset;
+  }
+
+  void dump() {
+    for (unsigned I = 0; I < (unsigned)InstructionFlavor::NUM_FLAVORS;
+         I++) {
+      if (Flavors && I) {
+        dbgs() << "Holds: "
+               << getFlavorName((InstructionFlavor)I) << "\n";
+      }
+      if (Flavors && (I << 16)) {
+        dbgs() << "  Is Preferred Flavor\n";
+      }
+    }
+    dbgs() << "Total Cycles: " << Cycles << "\n";
+  }
+
+  static bool canHold(InstructionFlavor Flavor, unsigned FlavorMask) {
+    return FlavorMask & (1 << (unsigned)Flavor);
+  }
+
+  static bool prefersToHold(InstructionFlavor Flavor,
+                            unsigned FlavorMask) {
+    return FlavorMask & ((1 << (unsigned)Flavor) << 16);
+  }
+};
+
+
 class HardwareUnitInfo {
 private:
   // Ideally these would be sorted on how much they enable a secondary resource,
@@ -257,6 +302,11 @@ private:
   InstructionFlavor Type;
   unsigned Exposed = 0;
   unsigned RemainingExposed = 0;
+  unsigned RemainingExposedCycles = 0;
+
+  DenseMap<unsigned, unsigned> CoexecCycles;
+
+
 
 public:
   // TODO -- handle this better.
@@ -325,9 +375,112 @@ public:
       --RemainingExposed;
   }
 
-  void insert(SUnit *SU, unsigned ReleaseAtCycle) {
+  unsigned ExpectedTopLineCycles = 0;
+
+  bool prefersToHide(InstructionFlavor Other) {
+    for (auto SlotMask : CoexecCycles.keys()) {
+      if (CoexecSlot::prefersToHold(Other, SlotMask))
+        return true;
+    }
+    return false;
+  }
+
+  unsigned hideWithPreference(HardwareUnitInfo *Other,
+                              unsigned AvailableCycles) {
+    unsigned TotalHiddenCycles = 0;
+    unsigned RemainingCycles = AvailableCycles;
+    for (auto &Slot : CoexecCycles) {
+      if (CoexecSlot::prefersToHold(Other->getType(), Slot.first))
+        continue;
+      
+      unsigned OtherLatency = 
+      unsigned &SlotCycles = Slot.second;
+      unsigned RemainingCycles = AvailableCycles - TotalHiddenCycles;
+      unsigned HiddenCycles = std::min(SlotCycles, RemainingCycles);
+      SlotCycles -= HiddenCycles;
+      TotalHiddenCycles += HiddenCycles;
+      assert(TotalHiddenCycles <= AvailableCycles);
+      if (TotalHiddenCycles == AvailableCycles)
+        break;
+    }
+    return TotalHiddenCycles;
+  }
+
+  unsigned hide(HardwareUnitInfo *Other, unsigned AvailableCycles) {
+    unsigned TotalHiddenCycles = 0;
+    for (auto &Slot : CoexecCycles) {
+      if (CoexecSlot::canHold(Other, Slot.first))
+        continue;
+      unsigned &SlotCycles = Slot.second;
+      unsigned RemainingCycles = AvailableCycles - TotalHiddenCycles;
+      unsigned HiddenCycles = std::min(SlotCycles, RemainingCycles);
+      SlotCycles -= HiddenCycles;
+      TotalHiddenCycles += HiddenCycles;
+      assert(TotalHiddenCycles <= AvailableCycles);
+      if (TotalHiddenCycles == AvailableCycles)
+        break;
+    }
+    return TotalHiddenCycles;
+  }
+
+  bool canHide(InstructionFlavor Other) {
+    for (auto SlotMask : CoexecCycles.keys()) {
+      if (CoexecSlot::canHold(Other, SlotMask))
+        return true;
+    }
+    return false;
+  }
+
+  bool isALU() {
+    auto AllALU = FlavorGroups::allALU();
+    for (auto Flavor : AllALU) {
+      if (Type == Flavor)
+        return true;
+    }
+    return false;
+  }
+
+  void reduceCoexecSlots(unsigned ReduceBy) {
+    unsigned RemainingCycles = ReduceBy;
+    while (RemainingCycles) {
+      RemainingCycles -= 1;
+      if (!RemainingCycles)
+        break;
+      for (auto &Slot : CoexecCycles) {
+        if (Slot.second > 0) {
+          Slot.second -= 1;
+          RemainingCycles -= 1;
+        }
+        if (!RemainingCycles)
+          break;
+      }
+    }
+  }
+
+  void insert(SUnit *SU, unsigned BlockingCycles,
+              SmallVectorImpl<CoexecSlot> &CoexecSlots) {
+
     bool Inserted = AllSUs.insert(SU);
-    TotalCycles += ReleaseAtCycle;
+    TotalCycles += BlockingCycles;
+    ExpectedTopLineCycles += BlockingCycles;
+
+  for (auto &Slot : CoexecSlots) {
+    if (!CoexecCycles.contains(Slot.Flavors)) {
+      CoexecCycles[Slot.Flavors] = 0;
+    }
+
+    CoexecCycles[Slot.Flavors] += Slot.Cycles;
+  }
+ 
+  unsigned getNonzeroSlotSize() {
+    unsigned Count = 0;
+    for (auto &Slot : CoexecCycles) {
+      if (Slot.second > 0)
+        ++Count;
+    }
+    return Count;
+  }
+
 
     assert(Inserted);
     if (PrioritySUs.empty()) {
@@ -433,12 +586,15 @@ public:
   void reset() {
     AllSUs.clear();
     PrioritySUs.clear();
+    CoexecCycles.clear();
     TotalCycles = 0;
     IsAsync = false;
     Exposed = 0;
     RemainingExposed = 0;
     ProducesCoexecWindow = false;
     CoexecWindowSize = 0;
+    RemainingExposedCycles = 0;
+    ExpectedTopLineCycles = 0;
   }
 
   void printPriorities() {
@@ -622,6 +778,29 @@ public:
 class CandidateHeuristics {
 public:
   CandidateHeuristics() = default;
+
+  void sortHWUIResourcesByCoexecution();
+
+  bool getCoexecSlots(SUnit *SU, SmallVectorImpl<CoexecSlot> &CoexecSlots);
+
+  /// Caculate how many cycles for each HardwareUnit can be hidden behind
+  /// execution on another HardwareUnit. This likely overestimates the hidden
+  /// cycles since it assumes we can always hide behind a HardwareUnit, but, in
+  /// practice, we may not be able to due to instruction dependencies.
+  /// Understanding the hidden / exposed cycles helps us make better decisions
+  /// about which types of instructions to attempt to hide behind other
+  /// HardwareUnits.
+  void computeCoexecCycles(GCNHazardRecognizer *HazardRec);
+
+HardwareUnitInfo *getHWUIFromFlavor(InstructionFlavor Flavor) {
+  for (auto &HWUICand : HWUInfo) {
+    if (HWUICand.getType() == Flavor) {
+      return &HWUICand;
+    }
+  }
+  return nullptr;
+}
+
 
   ScheduleDAGMI *DAG;
   const SIInstrInfo *SII;
