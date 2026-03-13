@@ -961,11 +961,11 @@ void CandidateHeuristics::calculateHiddenLatency(
     SALUCount -= SALUWMMACoexecution;
 
 
-    ShadowMixWMMAMinDSVal = WMMACount ? (DSWMMACoexecution + SALUWMMACoexecution) / WMMACount : 0;
+    ShadowMixWMMAMinDSVal = WMMACount ? (DSWMMACoexecution) / WMMACount : 0;
 
     //errs() << "ShadowMixWMMAMinDSVal: " << ShadowMixWMMAMinDSVal << "\n";
 
-    ShadowMixWMMAMinSALUVal = 0;//WMMACount ? SALUWMMACoexecution / WMMACount : 0;
+    ShadowMixWMMAMinSALUVal = WMMACount ? SALUWMMACoexecution / WMMACount : 0;
 
     if (SALUCount) {
       unsigned SALUMultiCoexecution = std::min(CoexecWithMultiVALU, SALUCount);
@@ -2174,7 +2174,7 @@ bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
       if (ReadyCount >= RequiredCount)
         break;
     }
-
+/*
     if (Flavor == InstructionFlavor::DS) {
       auto FlavorSUs = MixInfo.getSUs(InstructionFlavor::SALU);
     for (auto SU : FlavorSUs) {
@@ -2193,7 +2193,7 @@ bool CandidateHeuristics::coexecWindowIsReady(CoexecWindow *Window,
       if (ReadyCount >= RequiredCount)
         break;
     }
-    }
+    }*/
 
 
 
