@@ -45,7 +45,7 @@ namespace DefaultLatency {
 constexpr unsigned VALU = 5;
 constexpr unsigned SALU = 2;
 constexpr unsigned TRANS = 8;      // Transcendental / WMMA
-constexpr unsigned DS_READ = 50;   // LDS load
+constexpr unsigned DS_READ = 70;   // LDS load
 constexpr unsigned DS_WRITE = 8;   // LDS store
 constexpr unsigned VMEM = 300;     // Global memory (conservative)
 constexpr unsigned SMEM = 20;      // Scalar memory

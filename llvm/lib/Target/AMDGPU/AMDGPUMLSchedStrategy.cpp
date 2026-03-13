@@ -32,7 +32,7 @@ static cl::opt<unsigned>
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
-                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(60));
+                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(80));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
@@ -42,7 +42,7 @@ static cl::opt<unsigned> LatencyForSignal(
 static cl::opt<unsigned>
     DSLatencyForFence("amdgpu-ds-fence-latency", cl::Hidden,
                       cl::desc("Hazard latency between DS_LOAD and FENCE."),
-                      cl::init(60));
+                      cl::init(80));
 
 static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
@@ -1340,8 +1340,8 @@ void CandidateHeuristics::populateCandidateWindow(CoexecWindow &Window,
     if (A.ReadyCost != B.ReadyCost)
       return A.ReadyCost < B.ReadyCost;
 
-    if (HWUIA.getRemainingExposed() != HWUIB.getRemainingExposed())
-      return HWUIA.getRemainingExposed() > HWUIB.getRemainingExposed();
+    if (HWUIA.getRemainingExposed() * HWUIA.CoexecWindowSize != HWUIB.getRemainingExposed() * HWUIB.CoexecWindowSize)
+      return HWUIA.getRemainingExposed() * HWUIA.CoexecWindowSize  > HWUIB.getRemainingExposed() * HWUIB.CoexecWindowSize;
 
     return true;
   });
@@ -2243,7 +2243,6 @@ bool CandidateHeuristics::tryShadowMix(
   TargetWindow = &CurrentWindow;
 
   if (!CurrentWindow.IsActive) {
-
     CoexecWindow TempWindow;
     TempWindow.refreshMixInfo(MixInfo);
     populateCandidateWindow(TempWindow);
