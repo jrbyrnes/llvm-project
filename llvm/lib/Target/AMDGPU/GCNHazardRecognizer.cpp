@@ -1387,13 +1387,25 @@ static int
 getWaitStatesSince(GCNHazardRecognizer::IsHazardFn IsHazard,
                    const MachineInstr *MI,
                    GCNHazardRecognizer::IsExpiredFn IsExpired,
-                   StaticGetNumWaitStatesFn GetNumWaitStates =
-                       SIInstrInfo::getNumWaitStates) {
+                   StaticGetNumWaitStatesFn GetNumWaitStates) {
   DenseSet<const MachineBasicBlock *> Visited;
   return getWaitStatesSince(IsHazard, MI->getParent(),
                             std::next(MI->getReverseIterator()), 0, IsExpired,
                             Visited, GetNumWaitStates);
 }
+
+
+static int
+getWaitStatesSince(GCNHazardRecognizer::IsHazardFn IsHazard,
+                   const MachineInstr *MI,
+                   GCNHazardRecognizer::IsExpiredFn IsExpired) {
+  DenseSet<const MachineBasicBlock *> Visited;
+  return getWaitStatesSince(IsHazard, MI->getParent(),
+                            std::next(MI->getReverseIterator()), 0, IsExpired,
+                            Visited,  SIInstrInfo::getNumWaitStates);
+}
+
+
 
 int GCNHazardRecognizer::getWaitStatesSince(
     IsHazardFn IsHazard, int Limit, GetNumWaitStatesFn GetNumWaitStates) const {
@@ -1435,12 +1447,78 @@ int GCNHazardRecognizer::getWaitStatesSince(
   return std::numeric_limits<int>::max();
 }
 
+
+
+
+
+
+
+
+
+
+int GCNHazardRecognizer::getWaitStatesSince(
+    IsHazardFn IsHazard, int Limit, StaticGetNumWaitStatesFn GetNumWaitStates) const {
+  if (IsHazardRecognizerMode) {
+    auto IsExpiredFn = [Limit](const MachineInstr &, int WaitStates) {
+      return WaitStates >= Limit;
+    };
+    // Wrap the pointer-based callback for the static helper which uses references
+    auto WrapperFn = [GetNumWaitStates](const MachineInstr &MI) {
+      return GetNumWaitStates(MI);
+    };
+    return ::getWaitStatesSince(IsHazard, CurrCycleInstr, IsExpiredFn,
+                                WrapperFn);
+  }
+
+  int WaitStates = 0;
+  for (MachineInstr *MI : EmittedInstrs) {
+    if (MI) {
+      if (SIInstrInfo::isVALU(*MI))
+      if (IsHazard(*MI)) {
+        LLVM_DEBUG(dbgs() << "  getWaitStatesSince: HAZARD after "
+                          << WaitStates << " wait states\n");
+        return WaitStates;
+      }
+
+      if (MI->isInlineAsm())
+        continue;
+    } else {
+    }
+    // Pass the pointer (which may be nullptr for stall cycles) to the callback.
+    // This allows hazard-specific counting, e.g., WMMA hazards only count VALUs.
+    WaitStates += GetNumWaitStates(*MI);
+
+    if (WaitStates >= Limit)
+      break;
+  }
+  LLVM_DEBUG(dbgs() << "  getWaitStatesSince: no hazard (" << WaitStates
+                    << "/" << Limit << " wait states)\n");
+  return std::numeric_limits<int>::max();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 int GCNHazardRecognizer::getWaitStatesSince(IsHazardFn IsHazard,
                                             int Limit) const {
   return getWaitStatesSince(IsHazard, Limit, SIInstrInfo::getNumWaitStates);
 }
 
-int GCNHazardRecognizer::getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) {
+int GCNHazardRecognizer::getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) const {
   auto GetXDLWaitStates = [this](const MachineInstr *MI) -> unsigned {
     assert(MI);
 
@@ -3048,7 +3126,7 @@ int GCNHazardRecognizer::checkTRANSCoexecutionHazards(MachineInstr *MI) {
   return 0;
 }
 
-int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) {
+int GCNHazardRecognizer::checkWMMACoexecutionHazards(MachineInstr *MI) const {
   if (!AMDGPU::isGFX1250(ST))
     return 0;
 

@@ -2789,7 +2789,7 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   if (TII->isVALU(MI))
     Wait.set(VA_VDST, ~0u);
   
-  unsigned OldVDst = Wait.VaVdst;
+  unsigned OldVDst = Wait.get(VA_VDST);
   bool Flushed = false;
   if (TII->isDS(MI)) {
     if (shouldFlushVDst(MI)) {
@@ -2832,7 +2832,7 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   auto Ret = generateWaitcnt(Wait, MI.getIterator(), *MI.getParent(), ScoreBrackets,
                          OldWaitcntInstr);
   if (Flushed)
-    Wait.VaVdst = OldVDst;
+    Wait.set(VA_VDST, OldVDst);
   
   return Ret;
 }

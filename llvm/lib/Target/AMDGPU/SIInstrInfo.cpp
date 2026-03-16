@@ -2066,6 +2066,20 @@ unsigned SIInstrInfo::getNumWaitStates(const MachineInstr &MI) {
   }
 }
 
+unsigned SIInstrInfo::getNumWaitStatesOther(const MachineInstr *MI) {
+  switch (MI->getOpcode()) {
+  default:
+    if (MI->isMetaInstruction())
+      return 0;
+    return 1; // FIXME: Do wait states equal cycles?
+
+  case AMDGPU::S_NOP:
+    return MI->getOperand(0).getImm() + 1;
+  // SI_RETURN_TO_EPILOG is a fallthrough to code outside of the function. The
+  // hazard, even if one exist, won't really be visible. Should we handle it?
+  }
+}
+
 bool SIInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   MachineBasicBlock &MBB = *MI.getParent();
   DebugLoc DL = MBB.findDebugLoc(MI);
