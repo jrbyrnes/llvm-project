@@ -21,6 +21,7 @@
 #include "SIInstrInfo.h"
 #include <list>
 
+
 namespace llvm {
 
 class MachineFunction;
@@ -202,17 +203,27 @@ private:
     return MI ? SIInstrInfo::getNumWaitStates(*MI) : 1;
   }
 
+using StaticGetNumWaitStatesFn =
+    function_ref<unsigned int(const MachineInstr &)>;
+
   int getWaitStatesSince(
       IsHazardFn IsHazard, int Limit,
-      GetNumWaitStatesFn GetNumWaitStates = getDefaultNumWaitStates);
+      StaticGetNumWaitStatesFn GetNumWaitStates) const;
+
+int getWaitStatesSince(
+    IsHazardFn IsHazard, int Limit, GetNumWaitStatesFn GetNumWaitStates) const;
+
+  int getWaitStatesSince(
+      IsHazardFn IsHazard, int Limit) const;
+
 
   /// Query the VALU-specific instruction list for hazards.
   /// This only considers VALU/WMMA instructions and V_NOP stalls.
   /// Used for WMMA coexecution hazards where S_NOPs don't resolve the hazard.
-  int getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit);
+  int getWaitStatesSinceVALU(IsHazardFn IsHazard, int Limit) const;
 
-  int getWaitStatesSinceDef(unsigned Reg, IsHazardFn IsHazardDef, int Limit);
-  int getWaitStatesSinceSetReg(IsHazardFn IsHazard, int Limit);
+  int getWaitStatesSinceDef(unsigned Reg, IsHazardFn IsHazardDef, int Limit) const;
+  int getWaitStatesSinceSetReg(IsHazardFn IsHazard, int Limit) const;
 
   int checkSoftClauseHazards(MachineInstr *SMEM) const;
   int checkSMRDHazards(MachineInstr *SMRD) const;

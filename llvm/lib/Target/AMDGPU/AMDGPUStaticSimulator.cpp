@@ -175,7 +175,7 @@ InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
   if (TII.isXDLWMMA(MI))
     return InstClass::WMMA;
 
-  if (Opc == AMDGPU::TENSOR_LOAD_TO_LDS || Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2)
+  if (const_cast<SIInstrInfo *>(&TII)->isLDSDMA(Opc))
     return InstClass::TDM;
 
   uint64_t TSFlags = MI.getDesc().TSFlags;

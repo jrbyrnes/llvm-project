@@ -665,10 +665,7 @@ InstructionFlavor llvm::classifyFlavor(const MachineInstr *MI,
 
   // Check for specific opcodes first.
 
-  if (Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-      Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
-      Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
-      Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR)
+  if (const_cast<SIInstrInfo *>(SII)->isLDSDMA(Opc))
     return InstructionFlavor::DMA;
 
   if (Opc == AMDGPU::ATOMIC_FENCE ||
@@ -816,14 +813,8 @@ unsigned AMDGPUMLSchedStrategy::getHWUICyclesForInst(SUnit *SU,
                                                      const SIInstrInfo *SII,
                                                      unsigned ReleaseAtCycle) {
   auto Opc = SU->getInstr()->getOpcode();
-  bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+
+  bool IsDMA = const_cast<SIInstrInfo *>(SII)->isLDSDMA(Opc);
 
   unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
   // FIXME -- harcoded?
@@ -1092,14 +1083,8 @@ bool CandidateHeuristics::tryWMMACoolOff(
 unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
                                                    unsigned ReleaseAtCycle) {
   auto Opc = SU->getInstr()->getOpcode();
-  bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+  bool IsDMA =const_cast<SIInstrInfo *>(SII)->isLDSDMA(Opc);
+
   unsigned Latency = IsDMA ? 400 : ReleaseAtCycle;
 
   // FIXME -- harcoded?
@@ -1546,7 +1531,7 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
     }
   }
 
-  else if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
+  else if (const_cast<SIInstrInfo *>(SII)->isLDSDMA(MI->getOpcode())) {
     return 0;
   }
 
@@ -1570,6 +1555,10 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
       // TODO: Can we detect CFG carried loads?
       ReadyCycle = std::max(ReadyCycle, DSLatencyForFenceVal);
     }
+  }
+
+  else if (SII->isMFMAorWMMA(*MI)) {
+    ReadyCycle = std::max(ReadyCycle, DSLatency.getValue());
   }
 
   unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
@@ -1710,7 +1699,7 @@ bool CandidateHeuristics::tryAsyncPipe(
     unsigned ReadyCycle = SU->TopReadyCycle;
     unsigned CurrCycle = Zone->getCurrCycle();
     MachineInstr *MI = SU->getInstr();
-    if (MI->getOpcode() == AMDGPU::TENSOR_LOAD_TO_LDS_D2) {
+    if (const_cast<SIInstrInfo *>(SII)->isLDSDMA(MI->getOpcode())) {
       return 0;
     }
 
@@ -1741,12 +1730,12 @@ bool CandidateHeuristics::tryAsyncPipe(
   };
 
   auto isAsyncPipe =
-      [](GenericSchedulerBase::SchedCandidate &SchedCand) -> bool {
+      [this](GenericSchedulerBase::SchedCandidate &SchedCand) -> bool {
     SUnit *SU = SchedCand.SU;
     MachineInstr *MI = SU->getInstr();
     unsigned Opc = MI->getOpcode();
 
-    return Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
+    return const_cast<SIInstrInfo *>(SII)->isLDSDMA(Opc)||
            Opc == AMDGPU::S_BARRIER_WAIT ||
            Opc == AMDGPU::S_BARRIER_SIGNAL_IMM || Opc == AMDGPU::ATOMIC_FENCE ||
            Opc == AMDGPU::S_WAIT_TENSORCNT;
@@ -3337,14 +3326,7 @@ void AMDGPUMLPostSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
 unsigned AMDGPUMLPostSchedStrategy::getHWUICyclesForInst(
     SUnit *SU, const SIInstrInfo *SII, unsigned ReleaseAtCycle) {
   auto Opc = SU->getInstr()->getOpcode();
-  bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
-               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
-               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+  bool IsDMA = const_cast<SIInstrInfo *>(SII)->isLDSDMA(Opc);
   unsigned Latency = IsDMA ? SU->Latency : ReleaseAtCycle;
   if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
     Latency = 8;

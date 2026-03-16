@@ -1531,6 +1531,8 @@ public:
   /// instruction.
   static unsigned getNumWaitStates(const MachineInstr &MI);
 
+  static unsigned getNumWaitStatesOther(const MachineInstr *MI);
+
   /// Returns the operand named \p Op.  If \p MI does not have an
   /// operand named \c Op, this function returns nullptr.
   LLVM_READONLY
