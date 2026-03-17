@@ -1622,6 +1622,47 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
   auto *MI = SU->getInstr();
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
 
+
+  if (ReadyCycle < DSLatency) {
+    bool FoundBlockCarriedLoad = false;
+    for (auto &Op : MI->operands()) {
+      if (!Op.isReg())
+        continue;
+      auto Reg = Op.getReg();
+      if (!Reg.isVirtual())
+        continue;
+      
+
+      for (auto &Def : DAG->MRI.def_instructions(Reg)) {
+        if (!SII->isDS(Def) || !Def.mayLoad())
+          continue;
+        
+        if (Def.getParent() != MI->getParent()) {
+          FoundBlockCarriedLoad = true;
+          break;
+        }
+
+          SlotIndex LoadIdx = DAG->getLIS()->getInstructionIndex(Def);
+          SlotIndex UseIdx = DAG->getLIS()->getInstructionIndex(*MI);
+          if (SlotIndex::isEarlierInstr(UseIdx, LoadIdx)) {
+            FoundBlockCarriedLoad = true;
+            break;
+          }
+
+
+
+      }
+
+      if (FoundBlockCarriedLoad)
+        break;
+    }
+
+    if (FoundBlockCarriedLoad)
+      ReadyCycle = DSLatency;
+  }
+
+
+
   if (SII->isDS(*MI) && MI->mayLoad()) {
 
     if (SchedDSR.size() >= DSFIFOSizeVal) {
