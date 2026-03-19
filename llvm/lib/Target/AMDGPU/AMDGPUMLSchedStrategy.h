@@ -898,6 +898,9 @@ HardwareUnitInfo *getHWUIFromFlavor(InstructionFlavor Flavor) {
 
   unsigned CurrCycle;
 
+  DenseMap<MachineInstr *, unsigned> BlockCarriedLatency;
+
+
   void initialize(ScheduleDAGMI *DAG, GCNHazardRecognizer *HazardRec,
                   const TargetSchedModel *SchedModel,
                   const TargetRegisterInfo *TRI, bool IsMemoryBound = false,

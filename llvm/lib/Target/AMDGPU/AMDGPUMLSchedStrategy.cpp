@@ -1097,6 +1097,32 @@ bool CandidateHeuristics::tryWMMACoolOff(
   return false;
 }
 
+static unsigned getHWUICyclesForMI(MachineInstr *MI,
+                                   unsigned ReleaseAtCycle,
+                                   const SIInstrInfo *SII) {
+  auto Opc = MI->getOpcode();
+  bool IsDMA = Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
+               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2_gfx1250 ||
+               Opc == AMDGPU::TENSOR_LOAD_TO_LDS ||
+               Opc == AMDGPU::TENSOR_LOAD_TO_LDS_gfx1250 ||
+               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
+               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_gfx1250 ||
+               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR ||
+               Opc == AMDGPU::GLOBAL_LOAD_ASYNC_TO_LDS_B32_SADDR_gfx1250;
+  unsigned Latency = IsDMA ? 400 : 0;
+
+  // FIXME -- harcoded?
+  // This is used to determine hardware unit balancing between LDS and other
+  // resources, if we use a high cycle count to more accurately reflect LDS
+  // latency, then we become LDS bound in most cases. The problem is that LDS
+  // latency is usually hidden across loops, whereas other latency (e.g. WMMA)
+  // are not hidden in this way.
+  if (SII->isDS(*MI) && MI->mayLoad())
+    Latency = 60;
+
+  return Latency;
+}
+
 
 unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
                                                    unsigned ReleaseAtCycle) {
@@ -1265,6 +1291,7 @@ void CandidateHeuristics::initialize(ScheduleDAGMI *SchedDAG,
   SchedDSR.clear();
   SchedMFMA.clear();
   SchedTDM.clear();
+  BlockCarriedLatency.clear();
 
   CurrentWindow.clear();
   NextWindow.clear();
@@ -1386,6 +1413,7 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
   unsigned PrevDSR = 0;
   unsigned PrevFence = 0;
   unsigned FencedDSRCount = 0;
+  errs() << "\n\n\n";
   for (auto &SU : DAG->SUnits) {
     unsigned ReleaseAtCycle = 0;
     const MCSchedClassDesc *SC = DAG->getSchedClass(&SU);
@@ -1398,6 +1426,69 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
     unsigned Latency = getHWUICyclesForInst(&SU, ReleaseAtCycle);
 
     auto *MI = SU.getInstr();
+
+
+
+  unsigned CarriedLatency = 0;
+  for (auto &Op : MI->operands()) {
+    if (!Op.isReg())
+      continue;
+    if (!Op.isUse())
+      continue;
+    auto Reg = Op.getReg();
+    if (!Reg.isVirtual())
+      continue;
+
+    for (auto &Def : DAG->MRI.def_instructions(Reg)) {
+      // We don't have the proper modelling to accurately measure all carried
+      // latency. Just try to measure carried latency for long latency loads to
+      // avoid long stalls.
+      if (!Def.mayLoad())
+        continue;
+
+      unsigned Latency = getHWUICyclesForMI(&Def, 0, SII);
+
+      // Load is carried across block
+      if (Def.getParent() != MI->getParent()) {
+        bool FoundUseInDefBlock = false;
+        for (auto &Use : DAG->MRI.use_nodbg_instructions(Reg)) {
+          if (Use.getParent() != Def.getParent())
+            continue;
+
+          SlotIndex DefIdx = DAG->getLIS()->getInstructionIndex(Def);
+          SlotIndex UseIdx = DAG->getLIS()->getInstructionIndex(Use);
+          // We have a use of this load in the def block that occurs after the
+          // load. In this case we must wait for the load in the def block, and
+          // we do not have any carried latency from this load.
+          if (SlotIndex::isEarlierInstr(DefIdx, UseIdx)) {
+            FoundUseInDefBlock = true;
+            break;
+          }
+        }
+        if (!FoundUseInDefBlock)
+          CarriedLatency = std::max(Latency, CarriedLatency);
+
+        continue;
+      }
+
+      assert(Def.getParent() == MI->getParent());
+      // Load is in the same block
+      SlotIndex LoadIdx = DAG->getLIS()->getInstructionIndex(Def);
+      SlotIndex UseIdx = DAG->getLIS()->getInstructionIndex(*MI);
+      // The load occurs after this use -- the latency is carred across loop
+      // backedge.
+      if (SlotIndex::isEarlierInstr(UseIdx, LoadIdx))
+        CarriedLatency = std::max(Latency, CarriedLatency);
+    }
+  }
+
+    if (CarriedLatency) {
+      BlockCarriedLatency[MI] = CarriedLatency;
+
+    }
+
+
+
     InstructionFlavor Flavor = classifyFlavor(MI, SII);
     SmallVector<CoexecSlot> CoexecSlots;
     getCoexecSlots(&SU, CoexecSlots);
@@ -1622,46 +1713,9 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
   auto *MI = SU->getInstr();
   const GCNSubtarget &ST = DAG->MF.getSubtarget<GCNSubtarget>();
 
-
-  if (ReadyCycle < DSLatency) {
-    bool FoundBlockCarriedLoad = false;
-    for (auto &Op : MI->operands()) {
-      if (!Op.isReg())
-        continue;
-      auto Reg = Op.getReg();
-      if (!Reg.isVirtual())
-        continue;
-      
-
-      for (auto &Def : DAG->MRI.def_instructions(Reg)) {
-        if (!SII->isDS(Def) || !Def.mayLoad())
-          continue;
-        
-        if (Def.getParent() != MI->getParent()) {
-          FoundBlockCarriedLoad = true;
-          break;
-        }
-
-          SlotIndex LoadIdx = DAG->getLIS()->getInstructionIndex(Def);
-          SlotIndex UseIdx = DAG->getLIS()->getInstructionIndex(*MI);
-          if (SlotIndex::isEarlierInstr(UseIdx, LoadIdx)) {
-            FoundBlockCarriedLoad = true;
-            break;
-          }
-
-
-
-      }
-
-      if (FoundBlockCarriedLoad)
-        break;
-    }
-
-    if (FoundBlockCarriedLoad)
-      ReadyCycle = DSLatency;
+  if (BlockCarriedLatency.contains(MI)) {
+    ReadyCycle = std::max(ReadyCycle, BlockCarriedLatency[MI]);
   }
-
-
 
   if (SII->isDS(*MI) && MI->mayLoad()) {
 
