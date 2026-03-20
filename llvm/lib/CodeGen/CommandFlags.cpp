@@ -231,12 +231,6 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
                      "Enable frame pointer elimination")));
   CGBINDOPT(FramePointerUsage);
 
-  static cl::opt<bool> EnableNoNaNsFPMath(
-      "enable-no-nans-fp-math",
-      cl::desc("Enable FP math optimizations that assume no NaNs"),
-      cl::init(true));
-  CGBINDOPT(EnableNoNaNsFPMath);
-
   static cl::opt<bool> EnableNoSignedZerosFPMath(
       "enable-no-signed-zeros-fp-math",
       cl::desc("Enable FP math optimizations that assume "

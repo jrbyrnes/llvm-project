@@ -127,6 +127,11 @@ static cl::opt<bool> DisableRewriteMFMAFormSchedStage(
     "amdgpu-disable-rewrite-mfma-form-sched-stage", cl::Hidden,
     cl::desc("Disable rewrite mfma rewrite scheduling stage"), cl::init(true));
 
+#ifndef NDEBUG
+extern cl::opt<int> DebugOnlyBlock;
+#endif
+
+
 const unsigned ScheduleMetrics::ScaleFactor = 100;
 
 GCNSchedStrategy::GCNSchedStrategy(const MachineSchedContext *C)

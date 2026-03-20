@@ -504,14 +504,6 @@ struct PreheaderFlushFlags {
 
 class SIInsertWaitcnts {
 public:
-  const GCNSubtarget *ST;
-  const SIInstrInfo *TII = nullptr;
-  const SIRegisterInfo *TRI = nullptr;
-  const MachineRegisterInfo *MRI = nullptr;
-  InstCounterType SmemAccessCounter;
-  InstCounterType MaxCounter;
-  bool IsExpertMode = false;
-
   bool shouldFlushVDst(MachineInstr &MI);
 
   DenseMap<Register, MachineInstr *> VALUWrites;
@@ -2423,7 +2415,7 @@ static bool callWaitsOnFunctionReturn(const MachineInstr &MI) { return true; }
 
 
 bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
-  if (!TII->isDS(MI))
+  if (!TII.isDS(MI))
     return false;
   unsigned Waits = 60;
   MachineInstr *LastRead = nullptr;
@@ -2434,13 +2426,13 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
     if (!Op.isReg())
       continue;
     
-    const bool IsVGPR = TRI->isVectorRegister(*MRI, Op.getReg());
+    const bool IsVGPR = TRI.isVectorRegister(MRI, Op.getReg());
     if (!IsVGPR)
       continue;
     
     auto TheReg = Op.getReg();
 
-    if (TRI->regsOverlap(TheReg, AMDGPU::EXEC))
+    if (TRI.regsOverlap(TheReg, AMDGPU::EXEC))
       continue;
 
     if (Op.isDef()) {
@@ -2448,7 +2440,7 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
 
       for (auto Entry : VALUReads) {
         auto CandReg = Entry.first;
-        if (!TRI->regsOverlap(CandReg, Op.getReg()))
+        if (!TRI.regsOverlap(CandReg, Op.getReg()))
           continue;
 
           LastRead = VALUReads[CandReg];
@@ -2466,7 +2458,7 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
       //if (VALUWrites.contains(Op.getReg())) {
       for (auto Entry : VALUWrites) {
         auto CandReg = Entry.first;
-        if (!TRI->regsOverlap(CandReg, Op.getReg()))
+        if (!TRI.regsOverlap(CandReg, Op.getReg()))
           continue;
 
         LastWrite = VALUWrites[CandReg];
@@ -2486,7 +2478,7 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
     if (Op.isUse()) {
       for (auto Entry : VALUWrites) {
       auto CandReg = Entry.first;
-      if (!TRI->regsOverlap(CandReg, Op.getReg()))
+      if (!TRI.regsOverlap(CandReg, Op.getReg()))
         continue;
 
       RAWWrite = VALUWrites[CandReg];
@@ -2503,7 +2495,7 @@ bool SIInsertWaitcnts::shouldFlushVDst(MachineInstr &MI) {
     }
   }
 
-  if  (Waits < ST->getVDstThreshold(*MI.getMF())) {
+  if  (Waits < ST.getVDstThreshold(*MI.getMF())) {
     if (DebugVDst)
       errs() << "Insufficient waits: " << Waits << "\n";
 
@@ -2704,7 +2696,7 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
         if (!Op.isReg())
           continue;
 
-        if (TII->isVALU(MI)) {
+        if (TII.isVALU(MI)) {
           if (Op.isDef()) {
             VALUWrites[Op.getReg()] = &MI;
           }
@@ -2802,7 +2794,7 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   
   unsigned OldVDst = Wait.get(VA_VDST);
   bool Flushed = false;
-  if (TII->isDS(MI)) {
+  if (TII.isDS(MI)) {
     if (shouldFlushVDst(MI)) {
       Wait.set(VA_VDST, ~0u);
       Flushed = true;
@@ -3791,7 +3783,7 @@ bool SIInsertWaitcnts::run() {
   HazardRec = std::make_unique<GCNHazardRecognizer>(MF, GCNHazardRecognizer::OperatingMode::PostRA);
 
 
-  AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST->getCPU());
+  AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
 
   // Initialize hardware limits first, as they're needed by the generators.
   Limits = AMDGPU::HardwareLimits(IV);
