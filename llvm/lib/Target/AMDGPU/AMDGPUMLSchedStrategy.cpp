@@ -2440,6 +2440,8 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
                     HWUI.getType() == InstructionFlavor::WMMA;
     auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
 
+
+
     if (!TargetSU)
       return false;
 
@@ -2534,6 +2536,9 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
   for (unsigned I = 0; I < HWUInfo.size(); I++) {
     if (CheckedResources++ >= Cutoff)
       return false;
+
+    if (!HasPrioritySU(I))
+      continue;
 
     // If we have encountered a resource that is not critical, then neither
     // candidate enables a critical resource
