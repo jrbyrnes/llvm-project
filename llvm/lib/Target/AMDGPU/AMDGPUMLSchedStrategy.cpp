@@ -2428,6 +2428,24 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
   if (IsAsync)
     return false;
 
+  auto HasPrioritySU = [this, &Cand, &TryCand,
+                              IsAsync](unsigned ResourceIdx) {
+    // unsigned MaxAvailableLat =
+    // Zone->findMaxLatency(Zone->Available.elements());
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+    // unsigned CriticalUsage = HWUI.getTotalCycles();
+
+    auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
+    bool LookDeep = CandFlavor == InstructionFlavor::DS &&
+                    HWUI.getType() == InstructionFlavor::WMMA;
+    auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
+
+    if (!TargetSU)
+      return false;
+
+    return true;
+  };
+
   auto IsCandidateResource = [this, &Cand, &TryCand,
                               IsAsync](unsigned ResourceIdx) {
     // unsigned MaxAvailableLat =
@@ -2437,14 +2455,6 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
 
     if (!IsAsync && HWUI.getRemainingExposed() == 0 &&
         !HWUI.ProducesCoexecWindow)
-      return false;
-
-    auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
-    bool LookDeep = CandFlavor == InstructionFlavor::DS &&
-                    HWUI.getType() == InstructionFlavor::WMMA;
-    auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
-
-    if (!TargetSU)
       return false;
 
     return true;
@@ -2505,6 +2515,9 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
   if (IsAsync) {
     for (unsigned I = 0; I < HWUInfo.size(); I++) {
       if (!HWUInfo[I].IsAsync)
+        continue;
+      
+      if (!HasPrioritySU(I))
         continue;
 
       if (!IsCandidateResource(I))
@@ -2675,7 +2688,7 @@ void CandidateHeuristics::bumpNode(SUnit *SU, SchedBoundary *Zone) {
 
     // It is possible that the current instruction has clobbered the previous
     // window and started a new one.
-    if (!CurrentWindow.IsActive && Flavor == CurrentWindow.WindowProducer) {
+    if (!CurrentWindow.IsActive && Flavor != InstructionFlavor::Other && Flavor == CurrentWindow.WindowProducer) {
       CurrentWindow.IsActive = true;
       CurrentWindow.StartCycle = SU->TopReadyCycle;
       CurrentWindow.EndCycle = MaxInstrLatency + CurrentWindow.StartCycle - 1;
