@@ -1413,7 +1413,7 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
   unsigned PrevDSR = 0;
   unsigned PrevFence = 0;
   unsigned FencedDSRCount = 0;
-  errs() << "\n\n\n";
+
   for (auto &SU : DAG->SUnits) {
     unsigned ReleaseAtCycle = 0;
     const MCSchedClassDesc *SC = DAG->getSchedClass(&SU);
