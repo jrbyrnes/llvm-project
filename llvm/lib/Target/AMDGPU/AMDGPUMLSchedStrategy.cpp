@@ -1004,13 +1004,13 @@ void CandidateHeuristics::calculateHiddenLatency(
     //HWUInfo[(int)InstructionFlavor::SingleCycleVALU].setExposedCount(
     //    SingleCycleVALUCount);
 
-    errs() << "\n\n\n";
-    errs() << "Exposed WMMA: " << WMMACount << "\n";
-    errs() << "Exposed MultiVALU: " << MultiVALUCount << "\n";
-    errs() << "Exposed DS: " << DSCount << "\n";
-    errs() << "Exposed SALU: " << SALUCount << "\n";
-    errs() << "Exposed Trans: " << EXPCount << "\n";
-    errs() << "Exposed 1cVALU: " << SingleCycleVALUCount << "\n";
+    //errs() << "\n\n\n";
+    //errs() << "Exposed WMMA: " << WMMACount << "\n";
+    //errs() << "Exposed MultiVALU: " << MultiVALUCount << "\n";
+    //errs() << "Exposed DS: " << DSCount << "\n";
+    //errs() << "Exposed SALU: " << SALUCount << "\n";
+    //errs() << "Exposed Trans: " << EXPCount << "\n";
+    //errs() << "Exposed 1cVALU: " << SingleCycleVALUCount << "\n";
   }
 }
 
@@ -2347,6 +2347,8 @@ bool CandidateHeuristics::tryShadowMix(
     }
   }
 
+  CurrentIsPopulated = CurrentWindow.IsPopulated;
+
   if (CurrentWindow.IsReady && CurrentWindow.IsActive) {
     assert(CurrentIsPopulated);
     bool NextIsPopulated = NextWindow.IsPopulated;
@@ -2356,6 +2358,7 @@ bool CandidateHeuristics::tryShadowMix(
     }
     TargetWindow = &NextWindow;
   }
+
 
   assert(TargetWindow);
   unsigned ReadyVALU1c =
@@ -2632,6 +2635,19 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
   if (IsAsync)
     return false;
 
+  auto HasPrioritySU = [this, &Cand, &TryCand](unsigned ResourceIdx) {
+    HardwareUnitInfo HWUI = HWUInfo[ResourceIdx];
+        auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
+    bool LookDeep = (CandFlavor == InstructionFlavor::DS) &&
+                    HWUI.getType() == InstructionFlavor::WMMA;
+    auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
+
+    if (!TargetSU)
+      return false;
+
+    return true;
+                              };
+
   auto IsCandidateResource = [this, &Cand, &TryCand,
                               IsAsync](unsigned ResourceIdx) {
     // unsigned MaxAvailableLat =
@@ -2641,14 +2657,6 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
 
     if (!IsAsync && HWUI.getRemainingExposed() == 0 &&
         !HWUI.ProducesCoexecWindow)
-      return false;
-
-    auto CandFlavor = classifyFlavor(Cand.SU->getInstr(), SII);
-    bool LookDeep = (CandFlavor == InstructionFlavor::DS) &&
-                    HWUI.getType() == InstructionFlavor::WMMA;
-    auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
-
-    if (!TargetSU)
       return false;
 
     return true;
@@ -2726,6 +2734,9 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
     if (CheckedResources++ >= Cutoff)
       return false;
 
+    if (!HasPrioritySU(I))
+      continue;
+  
     // If we have encountered a resource that is not critical, then neither
     // candidate enables a critical resource
     if (!IsCandidateResource(I))
@@ -2976,7 +2987,7 @@ void CandidateHeuristics::bumpNode(SUnit *SU, SchedBoundary *Zone) {
 
     // It is possible that the current instruction has clobbered the previous
     // window and started a new one.
-    if (!CurrentWindow.IsActive && Flavor == CurrentWindow.WindowProducer) {
+    if (!CurrentWindow.IsActive && Flavor == CurrentWindow.WindowProducer && Flavor != InstructionFlavor::Other) {
       CurrentWindow.IsActive = true;
       CurrentWindow.StartCycle = SU->TopReadyCycle;
       CurrentWindow.EndCycle = MaxInstrLatency + CurrentWindow.StartCycle - 1;
