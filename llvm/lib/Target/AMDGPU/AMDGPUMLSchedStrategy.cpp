@@ -671,6 +671,7 @@ InstructionFlavor llvm::classifyFlavor(const MachineInstr *MI,
   if (Opc == AMDGPU::ATOMIC_FENCE ||
       Opc == AMDGPU::S_WAIT_ASYNCCNT ||
       Opc == AMDGPU::S_WAIT_TENSORCNT ||
+      Opc == AMDGPU::S_WAIT_DSCNT ||
       Opc == AMDGPU::S_BARRIER_WAIT ||
       Opc == AMDGPU::S_BARRIER_SIGNAL_IMM)
     return InstructionFlavor::Fence;
@@ -1546,7 +1547,8 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
   }
 
   else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
-            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+            MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT ||
+            MI->getOpcode() == AMDGPU::S_WAIT_DSCNT)) {
     if (SchedDSR.size()) {
       auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
       ReadyCycle =
@@ -1714,7 +1716,8 @@ bool CandidateHeuristics::tryAsyncPipe(
     }
 
     else if ((MI->getOpcode() == AMDGPU::ATOMIC_FENCE ||
-              MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT)) {
+              MI->getOpcode() == AMDGPU::S_WAIT_TENSORCNT ||
+              MI->getOpcode() == AMDGPU::S_WAIT_DSCNT)) {
       if (SchedDSR.size()) {
         auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
         ReadyCycle =
@@ -1738,7 +1741,7 @@ bool CandidateHeuristics::tryAsyncPipe(
     return const_cast<SIInstrInfo *>(SII)->isLDSDMA(Opc)||
            Opc == AMDGPU::S_BARRIER_WAIT ||
            Opc == AMDGPU::S_BARRIER_SIGNAL_IMM || Opc == AMDGPU::ATOMIC_FENCE ||
-           Opc == AMDGPU::S_WAIT_TENSORCNT;
+           Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_WAIT_DSCNT;
   };
 
   bool CandIsAsync = isAsyncPipe(Cand);
@@ -2651,7 +2654,7 @@ void CandidateHeuristics::schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec) {
     }
 
     auto Opc = MI->getOpcode();
-    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_BARRIER_WAIT || Opc == AMDGPU::S_BARRIER_SIGNAL_IMM) {
+    if (Opc == AMDGPU::ATOMIC_FENCE || Opc == AMDGPU::S_WAIT_ASYNCCNT || Opc == AMDGPU::S_WAIT_TENSORCNT || Opc == AMDGPU::S_WAIT_DSCNT || Opc == AMDGPU::S_BARRIER_WAIT || Opc == AMDGPU::S_BARRIER_SIGNAL_IMM) {
       SchedTDM.push_back(SU);
     }
 
