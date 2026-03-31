@@ -693,8 +693,11 @@ InstructionFlavor llvm::classifyFlavor(const MachineInstr *MI,
   if (SII->isVALU(*MI))
     return InstructionFlavor::SingleCycleVALU;
 
-  if (SII->isDS(*MI))
+  if (SII->isDS(*MI) && MI->mayLoad())
     return InstructionFlavor::DS;
+
+  if (SII->isDS(*MI) && MI->mayStore())
+    return InstructionFlavor::DS_WRITE;
 
   if (SII->isFLAT(*MI) || SII->isFLATGlobal(*MI) || SII->isFLATScratch(*MI))
     return InstructionFlavor::VMEM;
@@ -826,6 +829,9 @@ unsigned AMDGPUMLSchedStrategy::getHWUICyclesForInst(SUnit *SU,
   // are not hidden in this way.
   if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
     Latency = 8;
+  
+  if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayStore())
+    Latency = 60;
 
   MachineInstr *MI = SU->getInstr();
   unsigned RepeatRate = SII->getRepeatRate(*MI);
@@ -856,6 +862,7 @@ void CandidateHeuristics::calculateHiddenLatency(
   unsigned WMMACycles = HWUInfo[(int)InstructionFlavor::WMMA].getTotalCycles();
 
   unsigned DSCycles = HWUInfo[(int)InstructionFlavor::DS].getTotalCycles();
+  unsigned DSWCycles = HWUInfo[(int)InstructionFlavor::DS_WRITE].getTotalCycles();
   unsigned MultiVALUCycles =
       HWUInfo[(int)InstructionFlavor::MultiCycleVALU].getTotalCycles();
   unsigned SingleCycleVALUCycles =
@@ -920,8 +927,9 @@ void CandidateHeuristics::calculateHiddenLatency(
   unsigned CoexecWithMultiVALU =
       MultiVALUCycles - HWUInfo[(int)InstructionFlavor::MultiCycleVALU].size();
 
-  bool IsDSBound = DSCycles > WMMACycles + DSCycles + SingleCycleVALUCycles +
+  bool IsDSBound = DSCycles + DSWCycles > WMMACycles + SALUCount + SingleCycleVALUCycles +
                                   TRANSCycles - 2 * WMMACount;
+
 
   // TODO -- properly model DSBound & MemBound
   if (!IsDSBound) {
@@ -994,6 +1002,16 @@ void CandidateHeuristics::calculateHiddenLatency(
 
     HWUInfo[(int)InstructionFlavor::SingleCycleVALU].setExposedCount(
         SingleCycleVALUCount);
+  }
+
+  else {
+    HWUInfo[(int)InstructionFlavor::WMMA].setExposedCount(0);
+    HWUInfo[(int)InstructionFlavor::MultiCycleVALU].setExposedCount(0);
+    HWUInfo[(int)InstructionFlavor::SALU].setExposedCount(0);
+    HWUInfo[(int)InstructionFlavor::TRANS].setExposedCount(0);
+    HWUInfo[(int)InstructionFlavor::SingleCycleVALU].setExposedCount(0);
+    HWUInfo[(int)InstructionFlavor::DS].setExposedCount(DSCount);
+    HWUInfo[(int)InstructionFlavor::DS_WRITE].setExposedCount(HWUInfo[(int)InstructionFlavor::DS_WRITE].size());
   }
 }
 
@@ -1095,6 +1113,9 @@ unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU,
   // latency is usually hidden across loops, whereas other latency (e.g. WMMA)
   // are not hidden in this way.
   if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayLoad())
+    Latency = 60;
+
+  if (SII->isDS(*SU->getInstr()) && SU->getInstr()->mayStore())
     Latency = 60;
 
   MachineInstr *MI = SU->getInstr();
@@ -1241,6 +1262,7 @@ void CandidateHeuristics::initialize(ScheduleDAGMI *SchedDAG,
   CollectedUse = false;
 
   SchedDSR.clear();
+  SchedDSW.clear();
   SchedMFMA.clear();
   SchedTDM.clear();
 
@@ -1332,6 +1354,7 @@ void CandidateHeuristics::collectUse(GCNHazardRecognizer *HazardRec) {
 
   CollectedUse = true;
   SchedDSR.clear();
+  SchedDSW.clear();
   SchedMFMA.clear();
   SchedTDM.clear();
   SchedEXP.clear();
@@ -1532,6 +1555,23 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
     }
   }
 
+  if (SII->isDS(*MI) && MI->mayStore()) {
+
+    if (SchedDSW.size() >= DSFIFOSizeVal) {
+      unsigned TopOfFIFO = SchedDSW.size() - DSFIFOSizeVal;
+      unsigned TopOfFIFOIssue = SchedDSW[TopOfFIFO]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(TopOfFIFOIssue + DSLatencyFIFOVal, ReadyCycle);
+    }
+    if (SchedDSW.size()) {
+      unsigned LastDSRIssue = SchedDSW[SchedDSW.size() - 1]->TopReadyCycle;
+      // TODO -- should be release at cycle.
+      ReadyCycle = std::max(LastDSRIssue + DSLatencySplitVal, ReadyCycle);
+    }
+
+  }
+
+
   else if (const_cast<SIInstrInfo *>(SII)->isLDSDMA(MI->getOpcode())) {
     return 0;
   }
@@ -1553,7 +1593,13 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
       auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
       ReadyCycle =
           std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFenceVal);
-    } else if (!(IsPrologue || IsEpilogue)) {
+    } else if (SchedDSW.size()) {
+      auto PrevDSW = SchedDSW[SchedDSW.size() - 1];
+      ReadyCycle =
+          std::max(ReadyCycle, PrevDSW->TopReadyCycle + DSLatencyForFenceVal);
+    } 
+    
+    else if (!(IsPrologue || IsEpilogue)) {
       // TODO: Can we detect CFG carried loads?
       ReadyCycle = std::max(ReadyCycle, DSLatencyForFenceVal);
     }
@@ -1722,6 +1768,10 @@ bool CandidateHeuristics::tryAsyncPipe(
         auto PrevDSR = SchedDSR[SchedDSR.size() - 1];
         ReadyCycle =
             std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFenceVal);
+      } else if (SchedDSW.size()) {
+        auto PrevDSW = SchedDSW[SchedDSW.size() - 1];
+        ReadyCycle =
+            std::max(ReadyCycle, PrevDSW->TopReadyCycle + DSLatencyForFenceVal);
       } else {
         ReadyCycle = std::max(ReadyCycle, DSLatencyForFenceVal);
       }
@@ -2651,6 +2701,9 @@ void CandidateHeuristics::schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec) {
     }
     if (SII->isDS(*MI) && MI->mayLoad()) {
       SchedDSR.push_back(SU);
+    }
+    if (SII->isDS(*MI) && MI->mayStore()) {
+      SchedDSW.push_back(SU);
     }
 
     auto Opc = MI->getOpcode();

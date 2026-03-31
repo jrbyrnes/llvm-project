@@ -33,6 +33,7 @@ enum class InstructionFlavor : uint8_t {
   SALU,            // Scalar ALU
   DMA,             // Tensor DMA operations
   Fence,           // Fences and waits
+  DS_WRITE,        // DS_Write instructions
   Other,           // Everything else
   NUM_FLAVORS
 };
@@ -47,6 +48,7 @@ inline StringRef getFlavorName(InstructionFlavor F) {
     return "VALU(Nc)";
   case InstructionFlavor::VMEM:           return "VMEM";
   case InstructionFlavor::DS:             return "DS";
+  case InstructionFlavor::DS_WRITE:       return "DS_WRITE";
   case InstructionFlavor::SALU:           return "SALU";
   case InstructionFlavor::DMA:            return "DMA";
   case InstructionFlavor::Fence:          return "Fence";
@@ -66,6 +68,7 @@ inline StringRef getFlavorShortName(InstructionFlavor F) {
     return "C";
   case InstructionFlavor::VMEM:           return "M";
   case InstructionFlavor::DS:             return "D";
+  case InstructionFlavor::DS_WRITE:             return "DSW";
   case InstructionFlavor::SALU:           return "S";
   case InstructionFlavor::DMA:            return "X";
   case InstructionFlavor::Fence:          return "F";
@@ -630,6 +633,7 @@ public:
   const TargetSchedModel *SchedModel;
 
   SmallVector<SUnit *, 16> SchedDSR;
+  SmallVector<SUnit *, 16> SchedDSW;
 
   SmallVector<SUnit *, 16> SchedMFMA;
 
