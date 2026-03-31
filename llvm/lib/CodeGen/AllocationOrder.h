@@ -87,7 +87,16 @@ public:
   /// @param RegClassInfo Information about reserved and allocatable registers.
   static AllocationOrder create(Register VirtReg, const VirtRegMap &VRM,
                                 const RegisterClassInfo &RegClassInfo,
-                                const LiveRegMatrix *Matrix);
+                                const LiveRegMatrix *Matrix,
+                                bool SkipAntiHints = false);
+
+    /// Create an AllocationOrder without anti-hint filtering.                                                                                                                                                                                                                    
+    /// This is used as a fallback when the regular allocation fails and we want                                                                                                                                                                                                  
+    /// to try using anti-hinted registers to avoid spilling.                                                                                                                                                                                                                     
+    static AllocationOrder createWithoutAntiHints(Register VirtReg,                                                                                                                                                                                                               
+                                                  const VirtRegMap &VRM,                                                                                                                                                                                                          
+                                                  const RegisterClassInfo &RegClassInfo,                                                                                                                                                                                          
+                                                  const LiveRegMatrix *Matrix); 
 
   /// Create an AllocationOrder given the Hints, Order, and HardHints values.
   /// Use the create method above - the ctor is for unittests.

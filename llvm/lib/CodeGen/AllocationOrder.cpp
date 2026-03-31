@@ -28,7 +28,8 @@ using namespace llvm;
 // Compare VirtRegMap::getRegAllocPref().
 AllocationOrder AllocationOrder::create(Register VirtReg, const VirtRegMap &VRM,
                                         const RegisterClassInfo &RegClassInfo,
-                                        const LiveRegMatrix *Matrix) {
+                                        const LiveRegMatrix *Matrix,
+                                        bool SkipAntiHints) {
   const MachineFunction &MF = VRM.getMachineFunction();
   const MachineRegisterInfo &MRI = MF.getRegInfo();
   const TargetRegisterInfo *TRI = &VRM.getTargetRegInfo();
@@ -51,7 +52,7 @@ AllocationOrder AllocationOrder::create(Register VirtReg, const VirtRegMap &VRM,
   MRI.getPhysRegAntiHints(VirtReg, AntiHintedPhysRegs, VRM);
 
   LLVM_DEBUG({
-    if (!AntiHintedPhysRegs.empty()) {
+    if (!SkipAntiHints && !AntiHintedPhysRegs.empty()) {
       dbgs() << "anti-hints:";
       for (MCPhysReg AntiHint : AntiHintedPhysRegs)
         dbgs() << ' ' << printReg(AntiHint, TRI);
@@ -81,6 +82,20 @@ AllocationOrder AllocationOrder::create(Register VirtReg, const VirtRegMap &VRM,
          "Target hint is outside allocation order.");
   return AO;
 }
+
+  AllocationOrder AllocationOrder::createWithoutAntiHints(                                                                                                                                                                                                                        
+      Register VirtReg, const VirtRegMap &VRM,                   
+      const RegisterClassInfo &RegClassInfo, const LiveRegMatrix *Matrix) {                                                                                                                                                                                                       
+    const MachineFunction &MF = VRM.getMachineFunction();                                                                                                                                                                                                                         
+    const TargetRegisterInfo *TRI = &VRM.getTargetRegInfo();                                                                                                                                                                                                                      
+    auto Order = RegClassInfo.getOrder(MF.getRegInfo().getRegClass(VirtReg));                                                                                                                                                                                                     
+    SmallVector<MCPhysReg, 16> Hints;                                                                                                                                                                                                                                             
+    bool HardHints =                                                                                                                                                                                                                                                              
+        TRI->getRegAllocationHints(VirtReg, Order, Hints, MF, &VRM, Matrix);                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                                  
+    // Create allocation order without applying anti-hints                                                                                                                                                                                                                        
+    return AllocationOrder(std::move(Hints), Order, HardHints);                                                                                                                                                                                                                   
+  }     
 
 void AllocationOrder::applyAntiHints(ArrayRef<MCPhysReg> AntiHintedPhysRegs,
                                      const TargetRegisterInfo *TRI) {
