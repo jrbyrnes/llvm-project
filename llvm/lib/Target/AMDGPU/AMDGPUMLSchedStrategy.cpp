@@ -556,6 +556,29 @@ static cl::opt<bool> EnableWMMACooloff(
     cl::init(true));
 
 
+namespace {
+
+struct IncomingDSLatencyPercentParser : public cl::parser<unsigned> {
+  IncomingDSLatencyPercentParser(cl::Option &O) : cl::parser<unsigned>(O) {}
+
+  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg, unsigned &Value) {
+    if (Arg.getAsInteger(0, Value))
+      return O.error("'" + Arg + "' value invalid for uint argument!");
+
+    if (Value > 100)
+      return O.error("'" + Arg + "' value must be in the range [0, 100]!");
+
+    return false;
+  }
+};
+
+} // end anonymous namespace
+
+static cl::opt<unsigned, false, IncomingDSLatencyPercentParser> IncomingLoadLatencyPercent(
+    "amdgpu-loop-carried-load-percent", cl::init(100), cl::Hidden,
+    cl::desc(
+        "Percent of maximum load latency we should try to cover for loop carried loads"));
+
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
 //===----------------------------------------------------------------------===//
@@ -1555,12 +1578,15 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
           std::max(ReadyCycle, PrevDSR->TopReadyCycle + DSLatencyForFenceVal);
     } else if (!(IsPrologue || IsEpilogue)) {
       // TODO: Can we detect CFG carried loads?
-      ReadyCycle = std::max(ReadyCycle, DSLatencyForFenceVal);
+      unsigned LatencyToCover = IncomingLoadLatencyPercent * DSLatencyForFenceVal / 100;
+      ReadyCycle = std::max(ReadyCycle, LatencyToCover);
     }
   }
 
   else if (SII->isMFMAorWMMA(*MI)) {
-    ReadyCycle = std::max(ReadyCycle, DSLatency.getValue());
+      // TODO: Can we detect CFG carried loads?
+      unsigned LatencyToCover = IncomingLoadLatencyPercent * DSLatencyForFenceVal / 100;
+      ReadyCycle = std::max(ReadyCycle, LatencyToCover);
   }
 
   unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
