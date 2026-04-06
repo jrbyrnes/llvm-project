@@ -3789,12 +3789,7 @@ bool SIInsertWaitcnts::run() {
   Limits = AMDGPU::HardwareLimits(IV);
 
   if (ST.hasExtendedWaitCounts()) {
-    IsExpertMode = ST.hasExpertSchedulingMode() &&
-                   (ExpertSchedulingModeFlag.getNumOccurrences()
-                        ? ExpertSchedulingModeFlag
-                        : MF.getFunction()
-                              .getFnAttribute("amdgpu-expert-scheduling-mode")
-                              .getValueAsBool());
+    IsExpertMode = true;
     MaxCounter = IsExpertMode ? NUM_EXPERT_INST_CNTS : NUM_EXTENDED_INST_CNTS;
     // Initialize WCG per MF. It contains state that depends on MF attributes.
     WCG = std::make_unique<WaitcntGeneratorGFX12Plus>(MF, MaxCounter, Limits,
