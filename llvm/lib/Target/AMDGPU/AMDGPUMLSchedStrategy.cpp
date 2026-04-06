@@ -575,7 +575,7 @@ struct IncomingDSLatencyPercentParser : public cl::parser<unsigned> {
 } // end anonymous namespace
 
 static cl::opt<unsigned, false, IncomingDSLatencyPercentParser> IncomingLoadLatencyPercent(
-    "amdgpu-loop-carried-load-percent", cl::init(100), cl::Hidden,
+    "amdgpu-loop-carried-load-percent", cl::init(0), cl::Hidden,
     cl::desc(
         "Percent of maximum load latency we should try to cover for loop carried loads"));
 
