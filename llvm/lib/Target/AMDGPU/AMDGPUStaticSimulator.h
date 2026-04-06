@@ -1282,11 +1282,8 @@ struct GPUSimState {
       if (It != VRegScoreboard.end()) {
         unsigned SubRegIdx = Op.getSubReg();
         LaneBitmask UseMask = TRI->getSubRegIndexLaneMask(SubRegIdx);
-        errs() << "Checking overlap with: "; Op.dump();
         for (auto Entry : It->second) {
-          errs() << "Entry has mask: " << Entry.first.getAsInteger() << "\n";
           if ((UseMask & Entry.first).any() && Entry.second > CurrentCycle) {
-            //errs() << "Def cycle of entry: " << Entry.second << "\n";
             MaxStall = std::max(MaxStall, Entry.second - CurrentCycle);
           }
         }

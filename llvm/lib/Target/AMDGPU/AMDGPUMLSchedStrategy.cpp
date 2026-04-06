@@ -548,6 +548,14 @@ static cl::opt<bool> ShadowMixRulesEpi(
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
     cl::init(true));
 
+static cl::opt<bool> IsMemoryBound(
+    "amdgpu-memory-bound-sched", cl::Hidden,
+    cl::desc("Whether to schedule as if the kernel is memory bound."),
+    cl::init(false));
+
+
+
+
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
 //===----------------------------------------------------------------------===//
