@@ -59,6 +59,12 @@ static cl::opt<bool>
     EnableAntiHintsForAddr("amdgpu-anti-hints-for-addr", cl::Hidden,
                              cl::init(true));
 
+static cl::opt<bool>
+    EnableAntiHintsForVmVsrc("amdgpu-anti-hints-for-vm-vsrc", cl::Hidden,
+                             cl::desc("Enable anti-hints to reduce VM_VSRC "
+                                      "waits before LDS loads."),
+                             cl::init(false));
+
 static cl::opt<unsigned> VAVDSTLookbackWindow(
     "amdgpu-va-vdst-lookback-window", cl::Hidden,
     cl::desc("Lookback window for VA_VDST anti-hints"), cl::init(32));
@@ -66,6 +72,10 @@ static cl::opt<unsigned> VAVDSTLookbackWindow(
 static cl::opt<unsigned> AddrLookbackWindow(
     "amdgpu-addr-lookback-window", cl::Hidden,
     cl::desc("Lookback window for VA_VDST anti-hints"), cl::init(200));
+
+static cl::opt<unsigned> VmVsrcLookbackWindow(
+    "amdgpu-vm-vsrc-lookback-window", cl::Hidden,
+    cl::desc("Lookback window for VM_VSRC anti-hints"), cl::init(1));
 
 static cl::opt<bool>
     InsertPreftechInstructions("amdgpu-inst-prefetch-64kb", cl::Hidden,
@@ -660,6 +670,91 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
         }
 
 
+      }
+    }
+  }
+
+  // Add anti-hints to reduce VM_VSRC waits before LDS loads.
+  if (EnableAntiHintsForVmVsrc &&
+      ST.getGeneration() >= AMDGPUSubtarget::GFX12) {
+    const unsigned LookbackWindow = VmVsrcLookbackWindow;
+
+    for (const MachineBasicBlock &MBB : MF) {
+      SmallVector<Register, 64> RecentMemSrcs;
+
+      auto TrackMemSrc = [&](Register Reg) {
+        if (!llvm::is_contained(RecentMemSrcs, Reg)) {
+          RecentMemSrcs.push_back(Reg);
+          if (RecentMemSrcs.size() > LookbackWindow)
+            RecentMemSrcs.erase(RecentMemSrcs.begin());
+        }
+      };
+
+      auto addAntiHintsForDSLoad = [&](const MachineInstr &MI) {
+        SmallVector<Register, 8> CurrentMemSrcs;
+
+        for (const MachineOperand &MO : MI.uses()) {
+          if (!MO.isReg() || !MO.getReg().isVirtual())
+            continue;
+
+          Register Reg = MO.getReg();
+          const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+          if (!TRI->hasVGPRs(RC))
+            continue;
+
+          if (!llvm::is_contained(CurrentMemSrcs, Reg))
+            CurrentMemSrcs.push_back(Reg);
+        }
+
+        for (const MachineOperand &MO : MI.defs()) {
+          if (!MO.isReg() || !MO.getReg().isVirtual())
+            continue;
+
+          Register DSDestReg = MO.getReg();
+          const TargetRegisterClass *RC = MRI->getRegClass(DSDestReg);
+          if (!TRI->hasVGPRs(RC))
+            continue;
+
+          for (Register MemSrcReg : RecentMemSrcs) {
+            if (MemSrcReg == DSDestReg)
+              continue;
+            MRI->addRegAllocationAntiHints(DSDestReg, MemSrcReg);
+            MRI->addRegAllocationAntiHints(MemSrcReg, DSDestReg);
+          }
+
+          for (Register MemSrcReg : CurrentMemSrcs) {
+            if (MemSrcReg == DSDestReg)
+              continue;
+            MRI->addRegAllocationAntiHints(DSDestReg, MemSrcReg);
+            MRI->addRegAllocationAntiHints(MemSrcReg, DSDestReg);
+          }
+        }
+      };
+
+      for (const MachineInstr &MI : MBB) {
+        if (MI.isDebugInstr())
+          continue;
+
+        unsigned Opc = MI.getOpcode();
+        if (Opc == AMDGPU::DS_LOAD_TR8_B64 || Opc == AMDGPU::DS_LOAD_TR16_B128 ||
+            Opc == AMDGPU::DS_READ_B128 || Opc == AMDGPU::DS_READ_B128_gfx9) {
+          addAntiHintsForDSLoad(MI);
+        }
+
+        if (TII->isDS(MI) || TII->isFLAT(MI) || TII->isVMEM(MI) ||
+            TII->isVIMAGE(MI) || TII->isVSAMPLE(MI)) {
+          for (const MachineOperand &MO : MI.uses()) {
+            if (!MO.isReg() || !MO.getReg().isVirtual())
+              continue;
+
+            Register Reg = MO.getReg();
+            const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+            if (!TRI->hasVGPRs(RC))
+              continue;
+
+            TrackMemSrc(Reg);
+          }
+        }
       }
     }
   }
