@@ -75,7 +75,7 @@ static cl::opt<unsigned> AddrLookbackWindow(
 
 static cl::opt<unsigned> VmVsrcLookbackWindow(
     "amdgpu-vm-vsrc-lookback-window", cl::Hidden,
-    cl::desc("Lookback window for VM_VSRC anti-hints"), cl::init(1));
+    cl::desc("Lookback window for VM_VSRC anti-hints"), cl::init(16));
 
 static cl::opt<bool>
     InsertPreftechInstructions("amdgpu-inst-prefetch-64kb", cl::Hidden,
@@ -690,6 +690,29 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
         }
       };
 
+      auto addAntiHintsForVGPRDefs =
+          [&](const MachineInstr &MI, ArrayRef<Register> MemSrcs) {
+            if (MemSrcs.empty())
+              return;
+
+            for (const MachineOperand &MO : MI.defs()) {
+              if (!MO.isReg() || !MO.getReg().isVirtual())
+                continue;
+
+              Register DefReg = MO.getReg();
+              const TargetRegisterClass *RC = MRI->getRegClass(DefReg);
+              if (!TRI->hasVGPRs(RC))
+                continue;
+
+              for (Register MemSrcReg : MemSrcs) {
+                if (MemSrcReg == DefReg)
+                  continue;
+                MRI->addRegAllocationAntiHints(DefReg, MemSrcReg);
+                MRI->addRegAllocationAntiHints(MemSrcReg, DefReg);
+              }
+            }
+          };
+
       auto addAntiHintsForDSLoad = [&](const MachineInstr &MI) {
         SmallVector<Register, 8> CurrentMemSrcs;
 
@@ -740,6 +763,9 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
             Opc == AMDGPU::DS_READ_B128 || Opc == AMDGPU::DS_READ_B128_gfx9) {
           addAntiHintsForDSLoad(MI);
         }
+
+        if (TII->isVALU(MI) || TII->isWMMA(MI))
+          addAntiHintsForVGPRDefs(MI, RecentMemSrcs);
 
         if (TII->isDS(MI) || TII->isFLAT(MI) || TII->isVMEM(MI) ||
             TII->isVIMAGE(MI) || TII->isVSAMPLE(MI)) {
