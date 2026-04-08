@@ -63,7 +63,7 @@ static cl::opt<bool>
     EnableAntiHintsForVmVsrc("amdgpu-anti-hints-for-vm-vsrc", cl::Hidden,
                              cl::desc("Enable anti-hints to reduce VM_VSRC "
                                       "waits before LDS loads."),
-                             cl::init(false));
+                             cl::init(true));
 
 static cl::opt<unsigned> VAVDSTLookbackWindow(
     "amdgpu-va-vdst-lookback-window", cl::Hidden,

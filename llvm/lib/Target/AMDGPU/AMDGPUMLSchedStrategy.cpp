@@ -32,7 +32,7 @@ static cl::opt<unsigned>
 
 static cl::opt<unsigned>
     DSLatencyFIFO("amdgpu-ds-fifo-latency", cl::Hidden,
-                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(49));
+                  cl::desc("Hazard latency DS_LOAD FIFO full."), cl::init(0));
 
 static cl::opt<unsigned> LatencyForSignal(
     "amdgpu-signal-latency", cl::Hidden,
@@ -42,7 +42,7 @@ static cl::opt<unsigned> LatencyForSignal(
 static cl::opt<unsigned>
     DSLatencyForFence("amdgpu-ds-fence-latency", cl::Hidden,
                       cl::desc("Hazard latency between DS_LOAD and FENCE."),
-                      cl::init(52));
+                      cl::init(200));
 
 static cl::opt<unsigned> DSFIFOSize("amdgpu-ds-fifo-size", cl::Hidden,
                                     cl::desc("DS_LOAD FIFO size."),
@@ -547,6 +547,12 @@ static cl::opt<bool> ShadowMixRulesEpi(
     "amdgpu-use-shadow-mix-rules-epi", cl::Hidden,
     cl::desc("Whether to use instruction type rules in tryShadowMix."),
     cl::init(true));
+
+static cl::opt<bool> MemoryBoundSched(
+    "amdgpu-is-memory-bound", cl::Hidden,
+    cl::desc("Whether to use memory bound scheduling."),
+    cl::init(true));
+
 
 //===----------------------------------------------------------------------===//
 // Shadow Mix Lookahead Helpers
@@ -1400,6 +1406,10 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
     }
   }
 
+  if (SII->isMFMAorWMMA(*MI) && !SchedMFMA.size()) {
+    ReadyCycle = std::max(DSLatencyForFenceVal, ReadyCycle);
+  }
+
   if (IsPostRA) {
     if (SchedMFMA.size() && !SII->isMFMAorWMMA(*MI) &&
         (SII->isVALU(*MI) || SII->isTRANS(*MI))) {
@@ -1527,6 +1537,10 @@ bool CandidateHeuristics::tryAsyncPipe(
       return 0;
     }
 
+    if (MemoryBoundSched && SII->isDS(*MI)) {
+      return 0;
+    }
+
     else if (MI->getOpcode() == AMDGPU::S_BARRIER_WAIT && SchedTDM.size()) {
       auto PrevTDM = SchedTDM[SchedTDM.size() - 1];
 
@@ -1554,7 +1568,7 @@ bool CandidateHeuristics::tryAsyncPipe(
   };
 
   auto isAsyncPipe =
-      [](GenericSchedulerBase::SchedCandidate &SchedCand) -> bool {
+      [this](GenericSchedulerBase::SchedCandidate &SchedCand) -> bool {
     SUnit *SU = SchedCand.SU;
     MachineInstr *MI = SU->getInstr();
     unsigned Opc = MI->getOpcode();
@@ -1562,7 +1576,7 @@ bool CandidateHeuristics::tryAsyncPipe(
     return Opc == AMDGPU::TENSOR_LOAD_TO_LDS_D2 ||
            Opc == AMDGPU::S_BARRIER_WAIT ||
            Opc == AMDGPU::S_BARRIER_SIGNAL_IMM || Opc == AMDGPU::ATOMIC_FENCE ||
-           Opc == AMDGPU::S_WAIT_TENSORCNT;
+           Opc == AMDGPU::S_WAIT_TENSORCNT || (SII->isDS(*MI) && MemoryBoundSched);
   };
 
   bool CandIsAsync = isAsyncPipe(Cand);
