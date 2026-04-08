@@ -77,6 +77,10 @@ static cl::opt<unsigned> VmVsrcLookbackWindow(
     "amdgpu-vm-vsrc-lookback-window", cl::Hidden,
     cl::desc("Lookback window for VM_VSRC anti-hints"), cl::init(16));
 
+static cl::opt<unsigned> VmVsrcLookaheadkWindow(
+    "amdgpu-vm-vsrc-lookahead-window", cl::Hidden,
+    cl::desc("Lookback window for VM_VSRC anti-hints"), cl::init(100));
+
 static cl::opt<bool>
     InsertPreftechInstructions("amdgpu-inst-prefetch-64kb", cl::Hidden,
                              cl::init(false));
@@ -754,6 +758,8 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
         }
       };
 
+
+      unsigned VALUSinceDS = 0;
       for (const MachineInstr &MI : MBB) {
         if (MI.isDebugInstr())
           continue;
@@ -764,11 +770,14 @@ bool GCNPreRAOptimizationsImpl::run(MachineFunction &MF) {
           addAntiHintsForDSLoad(MI);
         }
 
-        if (TII->isVALU(MI) || TII->isWMMA(MI))
+        if ((TII->isVALU(MI) || TII->isWMMA(MI)) && VALUSinceDS < VmVsrcLookaheadkWindow) {
+          ++VALUSinceDS;
           addAntiHintsForVGPRDefs(MI, RecentMemSrcs);
+        }
 
         if (TII->isDS(MI) || TII->isFLAT(MI) || TII->isVMEM(MI) ||
             TII->isVIMAGE(MI) || TII->isVSAMPLE(MI)) {
+              VALUSinceDS = 0;
           for (const MachineOperand &MO : MI.uses()) {
             if (!MO.isReg() || !MO.getReg().isVirtual())
               continue;
