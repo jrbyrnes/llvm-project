@@ -95,8 +95,8 @@ inline StringRef getFlavorShortName(InstructionFlavor F) {
   llvm_unreachable("Unknown InstructionFlavor");
 }
 
-InstructionFlavor classifyFlavor(const MachineInstr &MI,
-                                 const SIInstrInfo &SII);
+InstructionFlavor classifyFlavor(const MachineInstr &MI, const SIInstrInfo &SII,
+                                 const TargetSchedModel *SchedModel);
 
 using FlavorGroup = SmallVector<InstructionFlavor, 4>;
 

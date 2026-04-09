@@ -42,8 +42,9 @@ static SUnit *pickOnlyChoice(SchedBoundary &Zone) {
   return OnlyChoice;
 }
 
-InstructionFlavor llvm::AMDGPU::classifyFlavor(const MachineInstr &MI,
-                                               const SIInstrInfo &SII) {
+InstructionFlavor
+llvm::AMDGPU::classifyFlavor(const MachineInstr &MI, const SIInstrInfo &SII,
+                             const TargetSchedModel *SchedModel) {
   if (MI.isDebugInstr())
     return InstructionFlavor::Other;
 
@@ -64,8 +65,21 @@ InstructionFlavor llvm::AMDGPU::classifyFlavor(const MachineInstr &MI,
   if (SII.isTRANS(MI))
     return InstructionFlavor::TRANS;
 
-  if (SII.isVALU(MI))
+  if (SII.isVALU(MI)) {
+    auto SchedClass = SchedModel->resolveSchedClass(&MI);
+    unsigned RepeatRate = 0;
+    for (TargetSchedModel::ProcResIter
+             PI = SchedModel->getWriteProcResBegin(SchedClass),
+             PE = SchedModel->getWriteProcResEnd(SchedClass);
+         PI != PE; ++PI) {
+      RepeatRate = std::max(RepeatRate, (unsigned)PI->RepeatRate);
+    }
+
+    if (RepeatRate > 1)
+      return InstructionFlavor::MultiCycleVALU;
+
     return InstructionFlavor::SingleCycleVALU;
+  }
 
   if (SII.isDS(MI))
     return InstructionFlavor::DS;
@@ -188,14 +202,15 @@ unsigned CandidateHeuristics::getHWUICyclesForInst(SUnit *SU) {
   for (TargetSchedModel::ProcResIter PI = SchedModel->getWriteProcResBegin(SC),
                                      PE = SchedModel->getWriteProcResEnd(SC);
        PI != PE; ++PI) {
-    ReleaseAtCycle = std::max(ReleaseAtCycle, (unsigned)PI->ReleaseAtCycle);
+    ReleaseAtCycle = std::max({ReleaseAtCycle, (unsigned)PI->ReleaseAtCycle,
+                               (unsigned)PI->RepeatRate});
   }
   return ReleaseAtCycle;
 }
 
 void CandidateHeuristics::updateForScheduling(SUnit *SU) {
   HardwareUnitInfo *HWUI =
-      getHWUIFromFlavor(classifyFlavor(*SU->getInstr(), *SII));
+      getHWUIFromFlavor(classifyFlavor(*SU->getInstr(), *SII, SchedModel));
   assert(HWUI);
   HWUI->markScheduled(SU, getHWUICyclesForInst(SU));
 }
@@ -229,7 +244,8 @@ void CandidateHeuristics::collectHWUIPressure() {
     return;
 
   for (auto &SU : DAG->SUnits) {
-    const InstructionFlavor Flavor = classifyFlavor(*SU.getInstr(), *SII);
+    const InstructionFlavor Flavor =
+        classifyFlavor(*SU.getInstr(), *SII, SchedModel);
     HWUInfo[(int)(Flavor)].insert(&SU, getHWUICyclesForInst(&SU));
   }
 
@@ -280,8 +296,9 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
   auto HasPrioritySU = [this, &Cand, &TryCand](unsigned ResourceIdx) {
     const HardwareUnitInfo &HWUI = HWUInfo[ResourceIdx];
 
-    auto CandFlavor = classifyFlavor(*Cand.SU->getInstr(), *SII);
-    auto TryCandFlavor = classifyFlavor(*TryCand.SU->getInstr(), *SII);
+    auto CandFlavor = classifyFlavor(*Cand.SU->getInstr(), *SII, SchedModel);
+    auto TryCandFlavor =
+        classifyFlavor(*TryCand.SU->getInstr(), *SII, SchedModel);
     bool LookDeep = (CandFlavor == InstructionFlavor::DS ||
                      TryCandFlavor == InstructionFlavor::DS) &&
                     HWUI.getType() == InstructionFlavor::WMMA;
@@ -296,7 +313,7 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
 
   auto TryEnablesResource = [&Cand, &TryCand, this](unsigned ResourceIdx) {
     const HardwareUnitInfo &HWUI = HWUInfo[ResourceIdx];
-    auto CandFlavor = classifyFlavor(*Cand.SU->getInstr(), *SII);
+    auto CandFlavor = classifyFlavor(*Cand.SU->getInstr(), *SII, SchedModel);
 
     // We want to ensure our DS order matches WMMA order.
     bool LookDeep = CandFlavor == InstructionFlavor::DS &&
@@ -556,7 +573,8 @@ void AMDGPUCoExecSchedStrategy::dumpPickSummary(SUnit *SU, bool IsTopNode,
 
   dbgs() << "=== Pick @ Cycle " << Cycle << " ===\n";
 
-  const InstructionFlavor Flavor = classifyFlavor(*SU->getInstr(), *SII);
+  const InstructionFlavor Flavor =
+      classifyFlavor(*SU->getInstr(), *SII, SchedModel);
   dbgs() << "Picked: SU(" << SU->NodeNum << ") ";
   SU->getInstr()->print(dbgs(), /*IsStandalone=*/true, /*SkipOpers=*/false,
                         /*SkipDebugLoc=*/true);
