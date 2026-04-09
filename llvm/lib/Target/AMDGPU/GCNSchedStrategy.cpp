@@ -85,11 +85,6 @@ static cl::opt<unsigned> PendingQueueLimit(
         "Max (Available+Pending) size to inspect pending queue (0 disables)"),
     cl::init(256));
 
-static cl::opt<bool> DumpPressure(
-    "amdgpu-print-rp", cl::Hidden,
-    cl::desc("Whether or not to print RP after scheduling each region."),
-    cl::init(false));
-
 namespace {
 
 struct VGPRThresholdParser : public cl::parser<unsigned> {
@@ -1951,10 +1946,6 @@ void PreRARematStage::finalizeGCNRegion() {
 void GCNSchedStage::checkScheduling() {
   // Check the results of scheduling.
   PressureAfter = DAG.getRealRegPressure(RegionIdx);
-  if (DumpPressure) {
-    errs() << "Pressure after for region: " << RegionIdx << ": "; PressureAfter.dump();
-  }
-
   DAG.Pressure[RegionIdx] = PressureAfter;
   SIMachineFunctionInfo *SMI = static_cast<SIMachineFunctionInfo *>(&DAG.MFI);
   SMI->setMaxRP(DAG.Pressure[RegionIdx].getArchVGPRNum());
