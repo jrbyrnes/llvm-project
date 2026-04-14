@@ -66,6 +66,7 @@ llvm::AMDGPU::classifyFlavor(const MachineInstr &MI, const SIInstrInfo &SII,
     return InstructionFlavor::TRANS;
 
   if (SII.isVALU(MI)) {
+    assert(SchedModel);
     auto SchedClass = SchedModel->resolveSchedClass(&MI);
     unsigned RepeatRate = 0;
     for (TargetSchedModel::ProcResIter

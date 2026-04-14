@@ -57,12 +57,17 @@ v_lshlrev_b64 v[26:27], v0, v[26:27]
 v_lshrrev_b64 v[28:29], v0, v[28:29]
 v_ashrrev_i64 v[30:31], v0, v[30:31]
 v_mov_b64 v[32:33], v[32:33]
-v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 v_trig_preop_f64 v[38:39], v[38:39], v0
 v_add_nc_u64 v[40:41], v[40:41], v[42:43]
 
 #
-# RepeatRate = 2, Write32BitRepeat2 (latency 5) - 64-bit integer comparisons
+# RepeatRate = 2, Write32BitREpeat2 (latency 5) - v_lshl_add_u64
+# TODO - does this really have 5 latency?
+#
+v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
+
+#
+# RepeatRate = 2, Write64BitRepeat2 (latency 6) - 64-bit integer comparisons
 #
 v_cmp_eq_i64 vcc_lo, v[0:1], v[2:3]
 v_cmp_le_i64 vcc_lo, v[4:5], v[6:7]
@@ -262,9 +267,9 @@ v_maximum_f64 v[114:115], v[114:115], v[116:117]
 # CHECK-NEXT:  1      6     1.00                  U     v_lshrrev_b64 v[28:29], v0, v[28:29]
 # CHECK-NEXT:  1      6     1.00                  U     v_ashrrev_i64 v[30:31], v0, v[30:31]
 # CHECK-NEXT:  1      6     1.00                  U     v_mov_b64_e32 v[32:33], v[32:33]
-# CHECK-NEXT:  1      5     1.00                  U     v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 # CHECK-NEXT:  1      37    1.00                  U     v_trig_preop_f64 v[38:39], v[38:39], v0
 # CHECK-NEXT:  1      6     1.00                  U     v_add_nc_u64_e32 v[40:41], v[40:41], v[42:43]
+# CHECK-NEXT:  1      5     1.00                  U     v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 # CHECK-NEXT:  1      6     1.00                  U     v_cmp_eq_i64_e32 vcc_lo, v[0:1], v[2:3]
 # CHECK-NEXT:  1      6     1.00                  U     v_cmp_le_i64_e32 vcc_lo, v[4:5], v[6:7]
 # CHECK-NEXT:  1      6     1.00                  U     v_cmp_ge_i64_e32 vcc_lo, v[8:9], v[10:11]
@@ -409,9 +414,9 @@ v_maximum_f64 v[114:115], v[114:115], v[116:117]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_lshrrev_b64 v[28:29], v0, v[28:29]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_ashrrev_i64 v[30:31], v0, v[30:31]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_mov_b64_e32 v[32:33], v[32:33]
-# CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_trig_preop_f64 v[38:39], v[38:39], v0
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_add_nc_u64_e32 v[40:41], v[40:41], v[42:43]
+# CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_cmp_eq_i64_e32 vcc_lo, v[0:1], v[2:3]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_cmp_le_i64_e32 vcc_lo, v[4:5], v[6:7]
 # CHECK-NEXT:  -      -      -     1.00    -      -     1.00    -      -     v_cmp_ge_i64_e32 vcc_lo, v[8:9], v[10:11]
@@ -543,9 +548,9 @@ v_maximum_f64 v[114:115], v[114:115], v[116:117]
 # CHECK-NEXT: [0,27]    .    .    .    .    .    .    . DeeeeeE .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_lshrrev_b64 v[28:29], v0, v[28:29]
 # CHECK-NEXT: [0,28]    .    .    .    .    .    .    .  DeeeeeE.    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_ashrrev_i64 v[30:31], v0, v[30:31]
 # CHECK-NEXT: [0,29]    .    .    .    .    .    .    .   DeeeeeE    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_mov_b64_e32 v[32:33], v[32:33]
-# CHECK-NEXT: [0,30]    .    .    .    .    .    .    .    DeeeeE    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
-# CHECK-NEXT: [0,31]    .    .    .    .    .    .    .    .DeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeE .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_trig_preop_f64 v[38:39], v[38:39], v0
-# CHECK-NEXT: [0,32]    .    .    .    .    .    .    .    .    .    .    .    .    .    . DeeeeeE .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_add_nc_u64_e32 v[40:41], v[40:41], v[42:43]
+# CHECK-NEXT: [0,30]    .    .    .    .    .    .    .    DeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeE  .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_trig_preop_f64 v[38:39], v[38:39], v0
+# CHECK-NEXT: [0,31]    .    .    .    .    .    .    .    .    .    .    .    .    .    .DeeeeeE  .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_add_nc_u64_e32 v[40:41], v[40:41], v[42:43]
+# CHECK-NEXT: [0,32]    .    .    .    .    .    .    .    .    .    .    .    .    .    . DeeeeE  .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 # CHECK-NEXT: [0,33]    .    .    .    .    .    .    .    .    .    .    .    .    .    .  DeeeeeE.    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_cmp_eq_i64_e32 vcc_lo, v[0:1], v[2:3]
 # CHECK-NEXT: [0,34]    .    .    .    .    .    .    .    .    .    .    .    .    .    .   DeeeeeE    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_cmp_le_i64_e32 vcc_lo, v[4:5], v[6:7]
 # CHECK-NEXT: [0,35]    .    .    .    .    .    .    .    .    .    .    .    .    .    .    DeeeeeE   .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    .    ..   v_cmp_ge_i64_e32 vcc_lo, v[8:9], v[10:11]
@@ -680,9 +685,9 @@ v_maximum_f64 v[114:115], v[114:115], v[116:117]
 # CHECK-NEXT: 27.    1     0.0    0.0    0.0       v_lshrrev_b64 v[28:29], v0, v[28:29]
 # CHECK-NEXT: 28.    1     0.0    0.0    0.0       v_ashrrev_i64 v[30:31], v0, v[30:31]
 # CHECK-NEXT: 29.    1     0.0    0.0    0.0       v_mov_b64_e32 v[32:33], v[32:33]
-# CHECK-NEXT: 30.    1     0.0    0.0    0.0       v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
-# CHECK-NEXT: 31.    1     0.0    0.0    0.0       v_trig_preop_f64 v[38:39], v[38:39], v0
-# CHECK-NEXT: 32.    1     0.0    0.0    0.0       v_add_nc_u64_e32 v[40:41], v[40:41], v[42:43]
+# CHECK-NEXT: 30.    1     0.0    0.0    0.0       v_trig_preop_f64 v[38:39], v[38:39], v0
+# CHECK-NEXT: 31.    1     0.0    0.0    0.0       v_add_nc_u64_e32 v[40:41], v[40:41], v[42:43]
+# CHECK-NEXT: 32.    1     0.0    0.0    0.0       v_lshl_add_u64 v[34:35], v[34:35], v0, v[36:37]
 # CHECK-NEXT: 33.    1     0.0    0.0    0.0       v_cmp_eq_i64_e32 vcc_lo, v[0:1], v[2:3]
 # CHECK-NEXT: 34.    1     0.0    0.0    0.0       v_cmp_le_i64_e32 vcc_lo, v[4:5], v[6:7]
 # CHECK-NEXT: 35.    1     0.0    0.0    0.0       v_cmp_ge_i64_e32 vcc_lo, v[8:9], v[10:11]
