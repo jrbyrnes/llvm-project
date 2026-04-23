@@ -36,7 +36,8 @@ enum class GCNSchedStageID : unsigned {
   ClusteredLowOccupancyReschedule = 3,
   PreRARematerialize = 4,
   ILPInitialSchedule = 5,
-  MemoryClauseInitialSchedule = 6
+  MemoryClauseInitialSchedule = 6,
+  RAPressureReschedule = 7
 };
 
 #ifndef NDEBUG
@@ -90,10 +91,6 @@ protected:
 
   std::vector<unsigned> MaxPressure;
 
-  unsigned SGPRExcessLimit;
-
-  unsigned VGPRExcessLimit;
-
   unsigned TargetOccupancy;
 
   MachineFunction *MF;
@@ -131,6 +128,10 @@ public:
 
   // Bias for VGPR limits under a high register pressure.
   const unsigned HighRPVGPRBias = 7;
+
+  unsigned SGPRExcessLimit;
+
+  unsigned VGPRExcessLimit;
 
   unsigned SGPRCriticalLimit;
 
@@ -264,6 +265,7 @@ class GCNScheduleDAGMILive final : public ScheduleDAGMILive {
   friend class ClusteredLowOccStage;
   friend class PreRARematStage;
   friend class ILPInitialScheduleStage;
+  friend class RAPressureRescheduleStage;
   friend class RegionPressureMap;
 
   const GCNSubtarget &ST;
@@ -806,6 +808,21 @@ public:
   MemoryClauseInitialScheduleStage(GCNSchedStageID StageID,
                                    GCNScheduleDAGMILive &DAG)
       : GCNSchedStage(StageID, DAG) {}
+};
+
+class RAPressureRescheduleStage : public GCNSchedStage {
+public:
+  bool initGCNSchedStage() override;
+  void finalizeGCNSchedStage() override;
+  bool initGCNRegion() override;
+  bool shouldRevertScheduling(unsigned WavesAfter) override;
+
+  RAPressureRescheduleStage(GCNSchedStageID StageID, GCNScheduleDAGMILive &DAG)
+      : GCNSchedStage(StageID, DAG) {}
+
+private:
+  unsigned computeRAPressureVGPRs(unsigned RegionIdx) const;
+  unsigned SavedVGPRThresholdPercent = 0;
 };
 
 class GCNPostScheduleDAGMILive final : public ScheduleDAGMI {
