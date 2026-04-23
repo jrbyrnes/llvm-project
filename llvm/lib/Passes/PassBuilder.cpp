@@ -331,6 +331,7 @@
 #include "llvm/Transforms/Scalar/PlaceSafepoints.h"
 #include "llvm/Transforms/Scalar/Reassociate.h"
 #include "llvm/Transforms/Scalar/Reg2Mem.h"
+#include "llvm/Transforms/Scalar/RevectorizeExtractPhi.h"
 #include "llvm/Transforms/Scalar/RewriteStatepointsForGC.h"
 #include "llvm/Transforms/Scalar/SCCP.h"
 #include "llvm/Transforms/Scalar/SROA.h"
