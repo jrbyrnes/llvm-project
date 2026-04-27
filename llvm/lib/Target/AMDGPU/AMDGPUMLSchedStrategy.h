@@ -320,6 +320,12 @@ public:
 
   unsigned getRemainingExposed() { return RemainingExposed; }
 
+  void setRemainingExposed(unsigned Count) {
+    RemainingExposed = Count;
+  }
+
+  unsigned getRemainingCount() const { return AllSUs.size(); }
+
   void reduceRemainingExposed() {
     if (RemainingExposed > 0)
       --RemainingExposed;
@@ -697,6 +703,7 @@ public:
   unsigned getHWUICyclesForInst(SUnit *SU, unsigned ReleaseAtCycle);
   void sortResources();
   void calculateHiddenLatency(GCNHazardRecognizer *HazardRec);
+  void recalculateDynamicRemainingExposed(SchedBoundary *Zone);
 
   void schedNode(SUnit *SU, GCNHazardRecognizer *HazardRec);
   void bumpNode(SUnit *SU, SchedBoundary *Zone);

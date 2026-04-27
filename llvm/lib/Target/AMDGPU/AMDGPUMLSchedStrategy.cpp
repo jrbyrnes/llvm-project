@@ -1020,6 +1020,82 @@ void CandidateHeuristics::calculateHiddenLatency(
   }
 }
 
+void CandidateHeuristics::recalculateDynamicRemainingExposed(
+    SchedBoundary *Zone) {
+  // The idea here is that as we approach the end of the scheduling region,
+  // certain instruction types (particularly DS loads for loop-carried
+  // dependencies) become more critical. We need to dynamically recalculate
+  // which instructions are "exposed" (cannot be hidden behind other work).
+  //
+  // For loop-carried loads with --amdgpu-loop-carried-load-percent=0, we want
+  // to prioritize placing DS loads at the end of the loop so they have time
+  // to complete before the WMMA instructions at the start of the next
+  // iteration.
+
+  if (IsPrologue || IsEpilogue)
+    return;
+
+  // Get counts of remaining instructions by type
+  unsigned RemainingDSCount = HWUInfo[(int)InstructionFlavor::DS].getRemainingCount();
+  unsigned RemainingWMMACount = HWUInfo[(int)InstructionFlavor::WMMA].getRemainingCount();
+  unsigned RemainingSALUCount = HWUInfo[(int)InstructionFlavor::SALU].getRemainingCount();
+  unsigned RemainingVALU1cCount = HWUInfo[(int)InstructionFlavor::SingleCycleVALU].getRemainingCount();
+
+  // Calculate total remaining cycles we can use for hiding DS latency
+  // Each DS load that is loop-carried needs ~60 cycles of padding
+  unsigned LoopCarriedLatency = (IncomingLoadLatencyPercent * DSLatencyForFenceVal) / 100;
+
+  // If loop-carried load percent is 0, we want to pad at the END of the loop.
+  // This means DS loads should become critical as we run out of other work to do.
+  if (IncomingLoadLatencyPercent == 0 && LoopCarriedLatency == 0) {
+    LoopCarriedLatency = DSLatencyForFenceVal;
+  }
+
+  // Calculate how much "work" is remaining that can fill the gap after DS loads
+  // WMMA can coexec with other things but also needs DS reads, so it's complex
+  // For now, focus on making DS critical when we're running low on WMMA
+  unsigned RemainingCyclesToFill = RemainingWMMACount * 8; // ~8 cycles per WMMA
+  RemainingCyclesToFill += RemainingSALUCount;
+  RemainingCyclesToFill += RemainingVALU1cCount;
+
+  // If we have DS loads remaining but not enough work to hide their latency,
+  // make DS loads critical (exposed)
+  if (RemainingDSCount > 0 && LoopCarriedLatency > 0) {
+    // For loop-carried loads with IncomingLoadLatencyPercent=0:
+    // DS loads need to be scheduled BEFORE the last 60 cycles of work,
+    // so that work provides padding AFTER the DS loads.
+    //
+    // Key insight: DS should be prioritized when there's APPROXIMATELY 60
+    // cycles of work remaining - not too early (waste padding), not too late
+    // (no padding left).
+    //
+    // We want to start prioritizing DS when:
+    //   RemainingCycles is between [LoopCarriedLatency, LoopCarriedLatency * 2]
+    // This gives us a window where DS should be scheduled.
+
+    unsigned RequiredPadding = LoopCarriedLatency;
+
+    // Prioritize DS when remaining cycles are in the "sweet spot":
+    // - Enough cycles left to provide padding (>= RequiredPadding)
+    // - But not too many cycles left (< RequiredPadding * 2 to start pushing)
+    // The upper bound ensures we start prioritizing DS before it's too late.
+    bool InPaddingWindow = (RemainingCyclesToFill >= RequiredPadding &&
+                            RemainingCyclesToFill < RequiredPadding * 3);
+
+    if (InPaddingWindow) {
+      // Make DS loads appear critical/exposed so they get scheduled NOW
+      // while there's still enough other work to provide padding after
+      HWUInfo[(int)InstructionFlavor::DS].setRemainingExposed(RemainingDSCount);
+    }
+  }
+
+  // Critical: if there's very little work left and DS still needs scheduling,
+  // it's already too late for optimal padding but we must still schedule them.
+  if (RemainingWMMACount <= 2 && RemainingDSCount > 0) {
+    HWUInfo[(int)InstructionFlavor::DS].setRemainingExposed(RemainingDSCount);
+  }
+}
+
 bool CandidateHeuristics::tryWMMACoolOff(
     GenericSchedulerBase::SchedCandidate &TryCand,
     GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone) {
@@ -1553,6 +1629,17 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
                                               ST.getVDstThreshold(DAG->MF));
       }
     }
+
+    // With IncomingLoadLatencyPercent=0, we need 60 cycles of padding AFTER
+    // the last DS load in the loop body. However, trying to delay DS loads
+    // is complex because their WMMA consumers also get delayed due to data
+    // dependencies.
+    //
+    // Instead, we don't add delay to DS loads here. The padding must come from
+    // ensuring that independent WMMAs/VALUs are available to be scheduled after
+    // all DS loads are done. This is handled by the main scheduling heuristics
+    // and the recalculateDynamicRemainingExposed() function which prioritizes
+    // DS loads when remaining non-DS work approaches 60 cycles.
   }
 
   else if (const_cast<SIInstrInfo *>(SII)->isLDSDMA(MI->getOpcode())) {
@@ -1584,9 +1671,45 @@ unsigned CandidateHeuristics::getLatencyStallCycles(SUnit *SU,
   }
 
   else if (SII->isMFMAorWMMA(*MI)) {
-      // TODO: Can we detect CFG carried loads?
-      unsigned LatencyToCover = IncomingLoadLatencyPercent * DSLatencyForFenceVal / 100;
-      ReadyCycle = std::max(ReadyCycle, LatencyToCover);
+    // For loop-carried dependencies, add delay based on IncomingLoadLatencyPercent:
+    // - 100% means all padding at START of loop (delay WMMAs until DS loads complete)
+    // - 0% means all padding at END of loop (WMMAs after last DS load provide padding)
+    if (!(IsPrologue || IsEpilogue)) {
+      if (IncomingLoadLatencyPercent > 0) {
+        // Padding at start: delay this WMMA
+        unsigned LatencyToCover =
+            IncomingLoadLatencyPercent * DSLatencyForFenceVal / 100;
+        ReadyCycle = std::max(ReadyCycle, LatencyToCover);
+      } else {
+        // Padding at end (IncomingLoadLatencyPercent == 0):
+        // We want ~60 cycles of WMMA/other work AFTER the last DS load.
+        // Strategy: When we're in the "padding zone" (remaining non-DS work
+        // <= 60 cycles) but DS loads are still remaining, delay this WMMA
+        // to give DS loads a chance to be scheduled first. This reserves
+        // the final WMMAs as padding after all DS loads are done.
+        unsigned RemainingDSCount =
+            HWUInfo[(int)InstructionFlavor::DS].getRemainingCount();
+        unsigned RemainingWMMACount =
+            HWUInfo[(int)InstructionFlavor::WMMA].getRemainingCount();
+        unsigned RemainingSALUCount =
+            HWUInfo[(int)InstructionFlavor::SALU].getRemainingCount();
+        unsigned RemainingVALU1cCount =
+            HWUInfo[(int)InstructionFlavor::SingleCycleVALU].getRemainingCount();
+
+        unsigned RemainingNonDSCycles = RemainingWMMACount * 8 +
+                                        RemainingSALUCount + RemainingVALU1cCount;
+
+        // If we're in the padding zone (<=60 cycles of non-DS work remaining)
+        // and there are still DS loads to schedule, delay this WMMA.
+        // This allows DS loads to be scheduled first, leaving WMMAs as padding.
+        if (RemainingDSCount > 0 && RemainingNonDSCycles <= DSLatencyForFenceVal) {
+          // Add delay to hold back this WMMA - let DS loads go first
+          // The delay should be enough to let DS loads get scheduled
+          unsigned DelayForDSPriority = DSLatencyForFenceVal;
+          ReadyCycle = std::max(ReadyCycle, DelayForDSPriority);
+        }
+      }
+    }
   }
 
   unsigned LongLatVALU = SII->isTRANS(*MI) ? 0 : SII->getRepeatRate(*MI);
@@ -2829,6 +2952,7 @@ bool AMDGPUMLSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+    Heurs.recalculateDynamicRemainingExposed(Zone);
     Heurs.sortResources();
     if (Heurs.tryCriticalResource(TryCand, Cand, Zone)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
@@ -2954,6 +3078,7 @@ bool AMDGPUMLSchedStrategy::tryCandidateBalanced(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+    Heurs.recalculateDynamicRemainingExposed(Zone);
     Heurs.sortResources();
     if (Heurs.tryCriticalResource(TryCand, Cand, Zone)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
@@ -3221,6 +3346,7 @@ bool AMDGPUMLPostSchedStrategy::tryCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+    Heurs.recalculateDynamicRemainingExposed(Zone);
     Heurs.sortResources();
     if (Heurs.tryCriticalResource(TryCand, Cand, Zone)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
@@ -3326,6 +3452,7 @@ bool AMDGPUMLPostSchedStrategy::tryPendingCandidate(SchedCandidate &Cand,
       return TryCand.Reason != NoCand;
     }
 
+    Heurs.recalculateDynamicRemainingExposed(Zone);
     Heurs.sortResources();
     if (Heurs.tryCriticalResource(TryCand, Cand, Zone)) {
       DEBUG_WITH_TYPE("machine-scheduler-verbose", dbgs() << "CritResource\n");
