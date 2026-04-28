@@ -1740,7 +1740,7 @@ bool WaitcntBrackets::counterOutOfOrder(AMDGPU::InstCounterType T) const {
   // event set since it never contributes to out-of-order completion with those
   // types. If neither CSMACC nor XDL is present, substitute CSMACC to preserve
   // out-of-order detection against TRANS/DPMACC.
-  if (T == VA_VDST) {
+  if (T == AMDGPU::VA_VDST) {
     return false;
   }
 
@@ -2904,7 +2904,7 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   auto Ret = generateWaitcnt(Wait, MI.getIterator(), *MI.getParent(), ScoreBrackets,
                          OldWaitcntInstr);
   if (Flushed)
-    Wait.set(VA_VDST, OldVDst);
+    Wait.set(AMDGPU::VA_VDST, OldVDst);
   
   return Ret;
 }
