@@ -1966,8 +1966,8 @@ void GCNSchedStage::checkScheduling() {
 
   unsigned DynamicVGPRBlockSize = DAG.MFI.getDynamicVGPRBlockSize();
 
-  if (PressureAfter.getSGPRNum() <= S.SGPRCriticalLimit &&
-      PressureAfter.getVGPRNum(ST.hasGFX90AInsts()) <= S.VGPRCriticalLimit) {
+  if (true || (PressureAfter.getSGPRNum() <= S.SGPRCriticalLimit &&
+      PressureAfter.getVGPRNum(ST.hasGFX90AInsts()) <= S.VGPRCriticalLimit)) {
     DAG.Pressure[RegionIdx] = PressureAfter;
 
     // Early out if we have achieved the occupancy target.

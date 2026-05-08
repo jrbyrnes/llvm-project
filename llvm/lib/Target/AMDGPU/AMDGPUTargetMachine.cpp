@@ -723,6 +723,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUAAWrapperPassPass(*PR);
   initializeAMDGPUExternalAAWrapperPass(*PR);
   initializeAMDGPUImageIntrinsicOptimizerPass(*PR);
+  initializeAMDGPUTensorDescriptorOptimizerPass(*PR);
   initializeAMDGPUPrintfRuntimeBindingPass(*PR);
   initializeAMDGPUResourceUsageAnalysisWrapperPassPass(*PR);
   initializeGCNNSAReassignLegacyPass(*PR);
@@ -1470,6 +1471,10 @@ void AMDGPUPassConfig::addIRPasses() {
   if (TM.getTargetTriple().isAMDGCN() &&
       isPassEnabled(EnableImageIntrinsicOptimizer))
     addPass(createAMDGPUImageIntrinsicOptimizerPass(&TM));
+
+  // Optimize tensor descriptor construction to reduce SGPR pressure.
+  if (TM.getTargetTriple().isAMDGCN())
+    addPass(createAMDGPUTensorDescriptorOptimizerPass(&TM));
 
   if (EnableUniformIntrinsicCombine)
     addPass(createAMDGPUUniformIntrinsicCombineLegacyPass());
@@ -2276,6 +2281,9 @@ void AMDGPUCodeGenPassBuilder::addIRPasses(PassManagerWrapper &PMW) const {
 
   if (isPassEnabled(EnableImageIntrinsicOptimizer))
     addFunctionPass(AMDGPUImageIntrinsicOptimizerPass(TM), PMW);
+
+  // Optimize tensor descriptor construction to reduce SGPR pressure.
+  addFunctionPass(AMDGPUTensorDescriptorOptimizerPass(TM), PMW);
 
   if (EnableUniformIntrinsicCombine)
     addFunctionPass(AMDGPUUniformIntrinsicCombinePass(), PMW);

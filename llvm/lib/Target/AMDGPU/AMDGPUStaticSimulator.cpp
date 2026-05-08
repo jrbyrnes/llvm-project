@@ -130,20 +130,28 @@ InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
   bool IsVALU = false;
   bool IsSALU = false;
 
+  // COPY pseudo-instructions: classify based on register class.
+  // VGPR↔VGPR or cross-class copies are VALU; SGPR↔SGPR is SALU.
   if (MI.isCopy()) {
-    Register Dest = MI.getOperand(0).getReg();
-    if (Dest.isVirtual()) {
-      auto &TRI = TII.getRegisterInfo();
-      auto &MRI = MI.getMF()->getRegInfo();
-      auto RC = MRI.getRegClass(Dest);
-      if (TRI.isSGPRClass(RC)) {
-        IsSALU = true;
-      }
-      if (TRI.isVGPRClass(RC)) {
-        IsVALU = true;
-      }
-    }
+    const MachineOperand &Dst = MI.getOperand(0);
+    const MachineOperand &Src = MI.getOperand(1);
+    const MachineRegisterInfo &MRI = MI.getMF()->getRegInfo();
+    const SIRegisterInfo &TRI =
+        *static_cast<const SIRegisterInfo *>(MRI.getTargetRegisterInfo());
 
+    auto isVGPR = [&](Register Reg) {
+      const TargetRegisterClass *RC =
+          Reg.isVirtual() ? MRI.getRegClass(Reg) : TRI.getPhysRegBaseClass(Reg);
+      return RC && TRI.isVGPRClass(RC);
+    };
+
+    bool DstIsVGPR = isVGPR(Dst.getReg());
+    bool SrcIsVGPR = isVGPR(Src.getReg());
+
+    // SGPR↔SGPR is SALU, everything else (VGPR↔VGPR or cross-class) is VALU.
+    if (!DstIsVGPR && !SrcIsVGPR)
+      return InstClass::SALU;
+    return InstClass::VALU;
   }
 
   if (Opc == AMDGPU::S_DELAY_ALU)

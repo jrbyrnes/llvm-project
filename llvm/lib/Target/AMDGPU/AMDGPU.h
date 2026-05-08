@@ -56,6 +56,7 @@ FunctionPass *createSIFormMemoryClausesLegacyPass();
 
 FunctionPass *createSIPostRABundlerPass();
 FunctionPass *createAMDGPUImageIntrinsicOptimizerPass(const TargetMachine *);
+FunctionPass *createAMDGPUTensorDescriptorOptimizerPass(const TargetMachine *);
 ModulePass *createAMDGPURemoveIncompatibleFunctionsPass(const TargetMachine *);
 FunctionPass *createAMDGPUCodeGenPreparePass();
 FunctionPass *createAMDGPULateCodeGenPrepareLegacyPass();
@@ -78,6 +79,15 @@ struct AMDGPUSimplifyLibCallsPass : PassInfoMixin<AMDGPUSimplifyLibCallsPass> {
 struct AMDGPUImageIntrinsicOptimizerPass
     : PassInfoMixin<AMDGPUImageIntrinsicOptimizerPass> {
   AMDGPUImageIntrinsicOptimizerPass(TargetMachine &TM) : TM(TM) {}
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+
+private:
+  TargetMachine &TM;
+};
+
+struct AMDGPUTensorDescriptorOptimizerPass
+    : PassInfoMixin<AMDGPUTensorDescriptorOptimizerPass> {
+  AMDGPUTensorDescriptorOptimizerPass(TargetMachine &TM) : TM(TM) {}
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 
 private:
@@ -237,6 +247,9 @@ extern char &SIPreAllocateWWMRegsLegacyID;
 
 void initializeAMDGPUImageIntrinsicOptimizerPass(PassRegistry &);
 extern char &AMDGPUImageIntrinsicOptimizerID;
+
+void initializeAMDGPUTensorDescriptorOptimizerPass(PassRegistry &);
+extern char &AMDGPUTensorDescriptorOptimizerID;
 
 void initializeAMDGPUPerfHintAnalysisLegacyPass(PassRegistry &);
 extern char &AMDGPUPerfHintAnalysisLegacyID;
