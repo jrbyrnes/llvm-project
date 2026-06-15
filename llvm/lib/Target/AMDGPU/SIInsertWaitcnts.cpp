@@ -2495,7 +2495,8 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
   // waits on VA_VDST if the instruction it would precede is not a VALU
   // instruction, since hardware handles VALU->VGPR->VALU hazards in
   // expert scheduling mode.
-  if (TII.isVALU(MI, /*AllowLDSDMA=*/true) && !SIInstrInfo::isLDSDMA(MI))
+// TODO: LDSDMA are marked as VALU but we need to treat them as vmem
+  if (TII.isVALU(MI) && !SIInstrInfo::isLDSDMA(MI))
     Wait.set(AMDGPU::VA_VDST, ~0u);
 
   // Since the translation for VMEM addresses occur in-order, we can apply the
