@@ -1871,9 +1871,17 @@ WaitcntGeneratorPreGFX12::getAllZeroWaitcnt(bool IncludeVSCnt) const {
 AMDGPU::Waitcnt
 WaitcntGeneratorGFX12Plus::getAllZeroWaitcnt(bool IncludeVSCnt) const {
   unsigned ExpertVal = IsExpertMode ? 0 : ~0u;
-  return AMDGPU::Waitcnt(0, 0, 0, IncludeVSCnt ? 0 : ~0u, 0, 0, 0,
-                         ~0u /* XCNT */, ~0u /* ASYNC_CNT */,
-                         ~0u /* TENSOR_CNT */, ExpertVal, ExpertVal);
+  // EXP_CNT, SAMPLE_CNT, and BVH_CNT are not available on all GFX12+ targets.
+  // gfx1250 does not have export or image instructions, so these counters
+  // should not be waited on.
+  unsigned ExpCntVal = ST.hasExportInsts() ? 0 : ~0u;
+  unsigned SampleBvhVal = ST.hasImageInsts() ? 0 : ~0u;
+  // X_CNT and ASYNC_CNT are only available on gfx1250+.
+  unsigned XCntVal = ST.hasWaitXcnt() ? 0 : ~0u;
+  unsigned AsyncCntVal = ST.hasGFX1250Insts() ? 0 : ~0u;
+  return AMDGPU::Waitcnt(0, ExpCntVal, 0, IncludeVSCnt ? 0 : ~0u, SampleBvhVal,
+                         SampleBvhVal, 0, XCntVal, AsyncCntVal, ExpertVal,
+                         ExpertVal);
 }
 
 /// Combine consecutive S_WAIT_*CNT instructions that precede \p It and
