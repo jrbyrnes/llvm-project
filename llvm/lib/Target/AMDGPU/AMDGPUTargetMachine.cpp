@@ -704,6 +704,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPULowerModuleLDSLegacyPass(*PR);
   initializeAMDGPULowerBufferFatPointersPass(*PR);
   initializeAMDGPULowerIntrinsicsLegacyPass(*PR);
+  initializeAMDGPULDSPrefetchPass(*PR);
   initializeAMDGPUReserveWWMRegsLegacyPass(*PR);
   initializeAMDGPURewriteAGPRCopyMFMALegacyPass(*PR);
   initializeAMDGPURewriteOutArgumentsPass(*PR);
@@ -1536,6 +1537,10 @@ void AMDGPUPassConfig::addIRPasses() {
   }
 
   TargetPassConfig::addIRPasses();
+
+  // Software pipelined LDS loads to hide latency before WMMA.
+  if (TM.getTargetTriple().isAMDGCN() && TM.getOptLevel() > CodeGenOptLevel::None)
+    addPass(createAMDGPULDSPrefetchPass());
 
   // EarlyCSE is not always strong enough to clean up what LSR produces. For
   // example, GVN can combine

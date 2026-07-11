@@ -70,6 +70,7 @@ ModulePass *createAMDGPULowerIntrinsicsLegacyPass();
 FunctionPass *createSIModeRegisterPass();
 FunctionPass *createGCNPreRAOptimizationsLegacyPass();
 FunctionPass *createAMDGPUPreloadKernArgPrologLegacyPass();
+FunctionPass *createAMDGPULDSPrefetchPass();
 ModulePass *createAMDGPUPreloadKernelArgumentsLegacyPass(const TargetMachine *);
 
 struct AMDGPUSimplifyLibCallsPass
@@ -162,6 +163,9 @@ private:
 };
 
 void initializeAMDGPULowerIntrinsicsLegacyPass(PassRegistry &);
+
+void initializeAMDGPULDSPrefetchPass(PassRegistry &);
+extern char &AMDGPULDSPrefetchID;
 
 struct AMDGPULowerIntrinsicsPass
     : OptionalPassInfoMixin<AMDGPULowerIntrinsicsPass> {
