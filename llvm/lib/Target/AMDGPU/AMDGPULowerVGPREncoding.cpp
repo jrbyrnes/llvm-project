@@ -201,6 +201,10 @@ private:
   /// must be preceded by S_NOP to avoid the hazard.
   bool needNopBeforeSetVGPRMSB(MachineBasicBlock::instr_iterator I);
 
+  /// Check if the previous non-meta instruction is SDWA with op_sel enabled.
+  /// If so, we need to insert an S_NOP before S_SET_VGPR_MSB.
+  bool needNopForSDWAOpSel(MachineBasicBlock::instr_iterator I);
+
   /// Handle S_SETREG_IMM32_B32 targeting MODE register. On certain hardware,
   /// this instruction clobbers VGPR MSB bits[12:19], so we need to restore
   /// the current mode. \returns true if the instruction was modified or a
@@ -255,6 +259,10 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   // S_SET_VGPR_MSB would land right after the setreg. Insert S_NOP to
   // prevent it from being silently dropped.
   if (needNopBeforeSetVGPRMSB(I))
+    BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
+  // If the previous instruction is SDWA with op_sel, insert S_NOP before
+  // S_SET_VGPR_MSB.
+  if (needNopForSDWAOpSel(InsertPt))
     BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
   MostRecentModeSet =
       BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
@@ -449,6 +457,24 @@ bool AMDGPULowerVGPREncoding::needNopBeforeSetVGPRMSB(
   }
   // FIXME: Return true if the previous MBB falls through and ends with
   // S_SETREG_IMM32_B32.
+  return false;
+}
+
+bool AMDGPULowerVGPREncoding::needNopForSDWAOpSel(
+    MachineBasicBlock::instr_iterator I) {
+  while (I != MBB->begin()) {
+    I = std::prev(I);
+    if (I->isMetaInstruction())
+      continue;
+    // Check if this is an SDWA instruction with op_sel set.
+    if (SIInstrInfo::isSDWA(*I)) {
+      const MachineOperand *OpSel =
+          TII->getNamedOperand(*I, AMDGPU::OpName::op_sel);
+      if (OpSel && OpSel->getImm() != 0)
+        return true;
+    }
+    return false;
+  }
   return false;
 }
 
