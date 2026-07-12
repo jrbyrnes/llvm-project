@@ -77,7 +77,7 @@ static void EmitExpandedWaitcnt(unsigned Outstanding, unsigned Target,
 }
 
 static unsigned ForceCount = 0;
-static unsigned ForceLimit = 1251;
+static unsigned ForceLimit = 1250;
 
 /// Integer IDs used to track vector memory locations we may have to wait on.
 /// Encoded as u16 chunks:

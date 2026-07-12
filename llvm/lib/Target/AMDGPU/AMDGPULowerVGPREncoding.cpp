@@ -256,18 +256,30 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   InsertPt = handleCoissue(InsertPt);
   // Case 2 match in handleSetregMode: the setreg's imm[12:19] matched
   // current MSBs, but the next VALU needs different MSBs, so this
-  // S_SET_VGPR_MSB would land right after the setreg. Insert S_NOP to
+  // S_SET_VGPR_MSB would land right after the setreg. Insert 1S_NOP to
   // prevent it from being silently dropped.
-  if (needNopBeforeSetVGPRMSB(I))
-    BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
+  bool NeedInsert = false;
+  if (needNopBeforeSetVGPRMSB(I)) {
+    NeedInsert = true;
+  }
   // If the previous instruction uses op_sel (e.g., VOP3P), insert S_NOP before
   // S_SET_VGPR_MSB. Check from the original position I, not InsertPt, since
   // handleCoissue may have moved InsertPt past program state instructions.
-  if (needNopForOpSel(I))
-    BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
+  if (needNopForOpSel(I)) {
+    NeedInsert = true;
+}
   MostRecentModeSet =
       BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
           .addImm(NewMode.encode() | OldModeBits);
+
+  if (NeedInsert && MostRecentModeSet != MostRecentModeSet->getParent()->end()) {
+   
+
+    BuildMI(*MBB, std::next(MostRecentModeSet), {}, TII->get(AMDGPU::V_NOP_e32));
+    BuildMI(*MBB, std::next(MostRecentModeSet), {}, TII->get(AMDGPU::V_NOP_e32));
+    BuildMI(*MBB, std::next(MostRecentModeSet), {}, TII->get(AMDGPU::V_NOP_e32));
+
+}
   LLVM_DEBUG(dbgs() << "    -> inserted new S_SET_VGPR_MSB: "
                     << *MostRecentModeSet);
 
