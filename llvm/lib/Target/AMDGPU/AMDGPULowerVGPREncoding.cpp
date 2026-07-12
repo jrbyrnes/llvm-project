@@ -201,9 +201,9 @@ private:
   /// must be preceded by S_NOP to avoid the hazard.
   bool needNopBeforeSetVGPRMSB(MachineBasicBlock::instr_iterator I);
 
-  /// Check if the previous non-meta instruction is SDWA with op_sel enabled.
+  /// Check if the previous non-meta instruction uses op_sel (e.g., VOP3P).
   /// If so, we need to insert an S_NOP before S_SET_VGPR_MSB.
-  bool needNopForSDWAOpSel(MachineBasicBlock::instr_iterator I);
+  bool needNopForOpSel(MachineBasicBlock::instr_iterator I);
 
   /// Handle S_SETREG_IMM32_B32 targeting MODE register. On certain hardware,
   /// this instruction clobbers VGPR MSB bits[12:19], so we need to restore
@@ -260,9 +260,10 @@ bool AMDGPULowerVGPREncoding::setMode(ModeTy NewMode,
   // prevent it from being silently dropped.
   if (needNopBeforeSetVGPRMSB(I))
     BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
-  // If the previous instruction is SDWA with op_sel, insert S_NOP before
-  // S_SET_VGPR_MSB.
-  if (needNopForSDWAOpSel(InsertPt))
+  // If the previous instruction uses op_sel (e.g., VOP3P), insert S_NOP before
+  // S_SET_VGPR_MSB. Check from the original position I, not InsertPt, since
+  // handleCoissue may have moved InsertPt past program state instructions.
+  if (needNopForOpSel(I))
     BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_NOP)).addImm(0);
   MostRecentModeSet =
       BuildMI(*MBB, InsertPt, {}, TII->get(AMDGPU::S_SET_VGPR_MSB))
@@ -460,17 +461,23 @@ bool AMDGPULowerVGPREncoding::needNopBeforeSetVGPRMSB(
   return false;
 }
 
-bool AMDGPULowerVGPREncoding::needNopForSDWAOpSel(
+bool AMDGPULowerVGPREncoding::needNopForOpSel(
     MachineBasicBlock::instr_iterator I) {
   while (I != MBB->begin()) {
     I = std::prev(I);
     if (I->isMetaInstruction())
       continue;
-    // Check if this is an SDWA instruction with op_sel set.
-    if (SIInstrInfo::isSDWA(*I)) {
-      const MachineOperand *OpSel =
-          TII->getNamedOperand(*I, AMDGPU::OpName::op_sel);
-      if (OpSel && OpSel->getImm() != 0)
+    // Only VOP3P instructions use op_sel_hi.
+    if (!SIInstrInfo::isVOP3P(*I))
+      return false;
+    // Check if this instruction uses op_sel_hi. op_sel_hi is encoded
+    // in the src*_modifiers as the OP_SEL_1 bit. The default for op_sel_hi is
+    // 1, so we check if any source has the OP_SEL_1 bit cleared.
+    for (AMDGPU::OpName ModOp :
+         {AMDGPU::OpName::src0_modifiers, AMDGPU::OpName::src1_modifiers,
+          AMDGPU::OpName::src2_modifiers}) {
+      const MachineOperand *Mod = TII->getNamedOperand(*I, ModOp);
+      if (Mod && !(Mod->getImm() & SISrcMods::OP_SEL_1))
         return true;
     }
     return false;

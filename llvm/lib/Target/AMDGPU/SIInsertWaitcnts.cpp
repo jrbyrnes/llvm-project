@@ -1880,7 +1880,7 @@ WaitcntGeneratorGFX12Plus::getAllZeroWaitcnt(bool IncludeVSCnt) const {
   unsigned XCntVal = ST.hasWaitXcnt() ? 0 : ~0u;
   unsigned AsyncCntVal = ST.hasGFX1250Insts() ? 0 : ~0u;
   return AMDGPU::Waitcnt(0, ExpCntVal, 0, IncludeVSCnt ? 0 : ~0u, SampleBvhVal,
-                         SampleBvhVal, 0, XCntVal, AsyncCntVal, ExpertVal,
+                         SampleBvhVal, 0, XCntVal, AsyncCntVal, ~0u /* TENSOR_CNT */, ExpertVal,
                          ExpertVal);
 }
 
