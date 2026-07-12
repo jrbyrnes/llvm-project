@@ -53,7 +53,7 @@ static cl::opt<bool>
     ForceEmitZeroFlag("amdgpu-waitcnt-forcezero",
                       cl::desc("Force all waitcnt instrs to be emitted as "
                                "s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)"),
-                      cl::init(false), cl::Hidden);
+                      cl::init(true), cl::Hidden);
 
 static cl::opt<bool> ForceEmitZeroLoadFlag(
     "amdgpu-waitcnt-load-forcezero",
@@ -75,6 +75,9 @@ static void EmitExpandedWaitcnt(unsigned Outstanding, unsigned Target,
     EmitWaitcnt(I);
   EmitWaitcnt(Target);
 }
+
+static unsigned ForceCount = 0;
+static unsigned ForceLimit = 1251;
 
 /// Integer IDs used to track vector memory locations we may have to wait on.
 /// Encoded as u16 chunks:
@@ -2580,8 +2583,11 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
 
   // When forcing emit, we need to skip terminators because that would break the
   // terminators of the MBB if we emit a waitcnt between terminators.
-  if (ForceEmitZeroFlag && !MI.isTerminator())
-    Wait = WCG->getAllZeroWaitcnt(/*IncludeVSCnt=*/false);
+  if (ForceEmitZeroFlag && !MI.isTerminator()) {
+    if (ForceCount <= ForceLimit) {
+      Wait = WCG->getAllZeroWaitcnt(/*IncludeVSCnt=*/false);
+    }
+  }
 
   // If we force waitcnt then update Wait accordingly.
   for (AMDGPU::InstCounterType T : AMDGPU::inst_counter_types()) {
@@ -2607,11 +2613,12 @@ bool SIInsertWaitcnts::generateWaitcntInstBefore(
 
   // Emit s_wait_tensorcnt 0 when forcing zero waits on gfx1250+.
   // Tensorcnt is not tracked by the Waitcnt class, so we emit it separately.
-  if (ForceEmitZeroFlag && !MI.isTerminator() && ST.hasGFX1250Insts()) {
+  if (ForceEmitZeroFlag && !MI.isTerminator() && ST.hasGFX1250Insts() && ForceCount <= ForceLimit) {
     BuildMI(*MI.getParent(), MI.getIterator(), MI.getDebugLoc(),
             TII.get(AMDGPU::S_WAIT_TENSORCNT))
         .addImm(0);
     Modified = true;
+    ++ForceCount;
   }
 
   return Modified;
@@ -3460,6 +3467,7 @@ SIInsertWaitcntsPass::run(MachineFunction &MF,
 
 bool SIInsertWaitcnts::run() {
   const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+  ForceCount = 0;
 
   AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
 
