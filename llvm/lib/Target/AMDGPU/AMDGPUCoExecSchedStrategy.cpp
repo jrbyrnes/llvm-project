@@ -2005,6 +2005,25 @@ bool CandidateHeuristics::tryMemoryPipeline(
     GenericSchedulerBase::SchedCandidate &TryCand,
     GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone) {
 
+
+  bool TryIsAsync = TryCand.SU->getInstr()->getOpcode() == AMDGPU::S_WAIT_ASYNCCNT;
+  bool CandIsAsync = Cand.SU->getInstr()->getOpcode() == AMDGPU::S_WAIT_ASYNCCNT;
+
+  if (TryIsAsync != CandIsAsync) {
+    if (TryIsAsync) {
+          if (Cand.Reason > GenericSchedulerBase::RegCritical)
+      Cand.Reason = GenericSchedulerBase::RegCritical;
+
+    return true;
+    }
+
+    TryCand.Reason = GenericSchedulerBase::RegCritical;
+    return true;
+
+  }
+
+
+
   InstructionFlavor TryFlavor = classifyFlavor(*TryCand.SU->getInstr(), *SII);
 
   InstructionFlavor CandFlavor = classifyFlavor(*Cand.SU->getInstr(), *SII);
