@@ -315,11 +315,54 @@ bool AMDGPULDSPrefetch::processLoop(Loop *L, LoopInfo &LI, ScalarEvolution &SE,
     for (Use *U : UsesToReplace)
       U->set(DataPHI);
 
+    // Find the last instruction that uses the PHI value.
+    // We need to move the load AFTER this instruction to enable coalescing.
+    // The PHI is live until its last user; the load must define its value
+    // after the PHI's live range ends.
+    Instruction *LastPHIUser = nullptr;
+    SmallVector<Instruction *, 16> Worklist;
+    SmallPtrSet<Instruction *, 16> Visited;
+
+    // Start with direct users of the PHI
+    for (User *U : DataPHI->users()) {
+      if (auto *UI = dyn_cast<Instruction>(U)) {
+        if (L->contains(UI))
+          Worklist.push_back(UI);
+      }
+    }
+
+    // Traverse through the use chain to find the ultimate consumers (WMMA or similar)
+    while (!Worklist.empty()) {
+      Instruction *I = Worklist.pop_back_val();
+      if (!Visited.insert(I).second)
+        continue;
+
+      // Track the last user in program order
+      if (!LastPHIUser || !DT.dominates(I, LastPHIUser))
+        LastPHIUser = I;
+
+      // Follow the use chain (shufflevector, bitcast, etc. leading to WMMA)
+      for (User *U : I->users()) {
+        if (auto *UI = dyn_cast<Instruction>(U)) {
+          if (L->contains(UI))
+            Worklist.push_back(UI);
+        }
+      }
+    }
+
+    if (LastPHIUser && LastPHIUser != Load) {
+      // Move load to after the last PHI user
+      // This ensures: WMMA uses PHI → PHI dies → Load can use same register
+      Load->moveAfter(LastPHIUser);
+      LLVM_DEBUG(dbgs() << "  Moved load after: " << *LastPHIUser << "\n");
+    }
+
     ++NumLoadsPrefetched;
     ++NumPrefetched;
     Changed = true;
 
-    LLVM_DEBUG(dbgs() << "  Created prefetch PHI: " << *DataPHI << "\n");
+    LLVM_DEBUG(dbgs() << "  Created prefetch PHI: " << *DataPHI << "\n"
+                      << "  Moved load to end of loop for coalescing\n");
   }
 
   if (Changed)
