@@ -49,7 +49,7 @@ using namespace llvm;
 #define DEBUG_TYPE "amdgpu-lds-prefetch"
 
 static cl::opt<bool> EnableLDSPrefetch(
-    "amdgpu-lds-prefetch", cl::init(false), cl::Hidden,
+    "amdgpu-enable-lds-prefetch", cl::init(false), cl::Hidden,
     cl::desc("Enable LDS prefetching one iteration ahead in loops"));
 
 static cl::opt<unsigned> LDSPrefetchMinLoads(
@@ -669,12 +669,35 @@ bool AMDGPULDSPrefetch::processLoopDoubleBuffer(Loop *L, LoopInfo &LI,
     LLVM_DEBUG(dbgs() << "  Cloning " << ToClone.size() << " instructions for load: " << *Load << "\n");
 
     // Find insertion point for prefetch loads
-    // We need to place the prefetch load at the END of the loop body (before the
-    // terminator) so that:
-    // 1. It's defined after the PHI nodes at the start of the block
-    // 2. It's defined before the back-edge is taken
-    // This ensures the PHI can reference the prefetch load from the previous iteration
-    Instruction *InsertPt = Latch->getTerminator();
+    // We want to place the prefetch load AFTER the WMMA instruction(s) that use
+    // the original load's value. This way, the prefetch happens right after the
+    // data is consumed, avoiding the need for copy optimization passes later.
+    // If no WMMA user is found, fall back to the end of the loop body.
+     Instruction *InsertPt = Latch->getTerminator();
+ 
+    // Find WMMA users of the original load (through the PHI we'll create)
+    // Since we haven't created the PHI yet, we look at current users of Load
+    for (User *U : Load->users()) {
+      if (auto *CI = dyn_cast<CallInst>(U)) {
+        if (Function *F = CI->getCalledFunction()) {
+          Intrinsic::ID IID = F->getIntrinsicID();
+          // Check for WMMA intrinsics
+          if (IID == Intrinsic::amdgcn_wmma_f32_16x16x32_bf16 ||
+              IID == Intrinsic::amdgcn_wmma_f32_16x16x16_bf16 ||
+              IID == Intrinsic::amdgcn_wmma_f16_16x16x16_f16 ||
+              IID == Intrinsic::amdgcn_wmma_bf16_16x16x16_bf16 ||
+              IID == Intrinsic::amdgcn_wmma_i32_16x16x16_iu8 ||
+              IID == Intrinsic::amdgcn_wmma_i32_16x16x16_iu4) {
+            // Insert after this WMMA instruction
+            InsertPt = CI->getNextNode();
+            LLVM_DEBUG(dbgs() << "  Found WMMA user, inserting prefetch after: "
+                              << *CI << "\n");
+            break;
+          }
+        }
+      }
+    }
+
 
     // Clone for alternate buffer (prefetch)
     DenseMap<Value *, Value *> VMap;
