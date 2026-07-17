@@ -2114,7 +2114,41 @@ bool WaitcntGeneratorGFX12Plus::applyPreexistingWaitcnt(
     }
   }
 
-  ScoreBrackets.simplifyWaitcnt(Wait.combined(RequiredWait), Wait);
+  // Simplify Wait based on the combined waits. Note that RequiredWait contains
+  // soft waits that we're keeping because we haven't seen all predecessor
+  // states yet. These soft waits might be deleted on a later pass.
+  //
+  // For most counters, using the combined waits for simplification is fine.
+  // However, for VM_VSRC we must be careful: if VM_VSRC is simplified away
+  // because a VMEM counter in RequiredWait implies it, and that VMEM counter
+  // is later deleted, we'd lose the VM_VSRC protection.
+  //
+  // To handle this, we save Wait before simplification. After, if VM_VSRC
+  // was cleared but RequiredWait has VMEM counters that could have caused
+  // this, we re-check using the original Wait and restore if needed.
+  AMDGPU::Waitcnt OrigWait = Wait;
+  AMDGPU::Waitcnt CombinedWait = Wait.combined(RequiredWait);
+  ScoreBrackets.simplifyWaitcnt(CombinedWait, Wait);
+
+  // If VM_VSRC was simplified away and RequiredWait has VMEM counters,
+  // check if the simplification was due to RequiredWait.
+  if (OrigWait.get(AMDGPU::VM_VSRC) != ~0u &&
+      Wait.get(AMDGPU::VM_VSRC) == ~0u &&
+      (RequiredWait.get(AMDGPU::DS_CNT) != ~0u ||
+       RequiredWait.get(AMDGPU::LOAD_CNT) != ~0u ||
+       RequiredWait.get(AMDGPU::STORE_CNT) != ~0u ||
+       RequiredWait.get(AMDGPU::SAMPLE_CNT) != ~0u ||
+       RequiredWait.get(AMDGPU::BVH_CNT) != ~0u)) {
+    // Re-check using only the original Wait (excluding RequiredWait).
+    // Create a test Waitcnt with just VM_VSRC and simplify against OrigWait.
+    AMDGPU::Waitcnt TestWait;
+    TestWait.set(AMDGPU::VM_VSRC, OrigWait.get(AMDGPU::VM_VSRC));
+    ScoreBrackets.simplifyVmVsrc(OrigWait, TestWait);
+    // If VM_VSRC wasn't simplified when using only OrigWait, restore it.
+    if (TestWait.get(AMDGPU::VM_VSRC) != ~0u)
+      Wait.set(AMDGPU::VM_VSRC, OrigWait.get(AMDGPU::VM_VSRC));
+  }
+
   Wait = Wait.combined(RequiredWait);
 
   if (CombinedLoadDsCntInstr) {
