@@ -43,6 +43,7 @@ enum class AMDGPUSchedReason : uint8_t {
   Stall,
   MemoryPipeline,
   CoexecSlot,
+  KillProximity,       // tryKillProximity chose to free registers sooner
   CritResourceBalance, // tryCriticalResource chose based on resource pressure
   CritResourceDep,     // tryCriticalResourceDependency chose based on enabling
   ShadowMix,           // tryShadowMix deferred/prioritized for co-exec filling
@@ -59,6 +60,8 @@ inline StringRef getReasonName(AMDGPUSchedReason R) {
     return "MemoryPipeline";
   case AMDGPUSchedReason::CoexecSlot:
     return "CoexecSlot";
+  case AMDGPUSchedReason::KillProximity:
+    return "KillProximity";
   case AMDGPUSchedReason::CritResourceBalance:
     return "CritResource";
   case AMDGPUSchedReason::CritResourceDep:
@@ -695,6 +698,10 @@ class AMDGPUCoExecSchedStrategy final : public GCNSchedStrategy {
 protected:
   AMDGPU::AMDGPUSchedReason LastAMDGPUReason = AMDGPU::AMDGPUSchedReason::None;
   CandidateHeuristics Heurs;
+  /// Per-pick flag indicating kill proximity should be active. Computed
+  /// from GCN tracker VGPR pressure at the start of each pickNodeFromQueue
+  /// call.
+  bool NeedKillProximity = false;
 
 #ifndef NDEBUG
   void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);
