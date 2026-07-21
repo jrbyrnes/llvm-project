@@ -26,6 +26,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
+#include <limits>
 #include <optional>
 #include <queue>
 
@@ -67,6 +68,70 @@ static cl::opt<AMDGPU::CarriedLatency> BlockCarriedLatency(
                    "Only pad latency for memory fence (e.g. those surrounding barrier_signal/wait)."),
         clEnumValN(AMDGPU::CarriedLatency::All, "all",
                    "Pad latency for any SU with an incoming ds_load dependency.")));
+
+namespace {
+// User-facing "effort" level for the coexec scheduler's O(N) reachability
+// lookahead heuristics (ShadowMix filler lookahead + critical-resource
+// dependency). Both walk the DAG per candidate-pair per pickNode; on large
+// dense regions that is superlinear and dominates compile time. The level is
+// resolved per-function so Triton can set it as an attribute per kernel,
+// mirroring "amdgpu-sched-strategy" and "amdgpu-ds-latency-mode".
+enum class CoexecLookaheadEffort {
+  Off,      // Skip the reachability lookaheads entirely (cheapest).
+  Fast,     // Tight bound on ShadowMix; critical-resource dep enabled (cached).
+  Balanced, // Looser bound on ShadowMix.
+  Full      // Unbounded lookahead (original behavior; slowest).
+};
+} // namespace
+
+static cl::opt<CoexecLookaheadEffort> CoexecLookahead(
+    "amdgpu-coexec-lookahead", cl::Hidden, cl::init(CoexecLookaheadEffort::Fast),
+    cl::desc("Effort level for coexec scheduler reachability lookaheads."),
+    cl::values(
+        clEnumValN(CoexecLookaheadEffort::Off, "off",
+                   "Skip ShadowMix and critical-resource-dependency lookaheads."),
+        clEnumValN(CoexecLookaheadEffort::Fast, "fast",
+                   "Tight ShadowMix bound; cached critical-resource dep."),
+        clEnumValN(CoexecLookaheadEffort::Balanced, "balanced",
+                   "Looser ShadowMix bound."),
+        clEnumValN(CoexecLookaheadEffort::Full, "full",
+                   "Unbounded lookahead (original behavior).")));
+
+// Hidden advanced override: when non-zero, forces the ShadowMix lookahead BFS
+// node budget regardless of the effort level (for tuning / testing).
+static cl::opt<unsigned> ShadowMixNodeBudgetOverride(
+    "amdgpu-coexec-shadowmix-lookahead-node-budget", cl::Hidden, cl::init(0),
+    cl::desc("Override coexec ShadowMix lookahead BFS node budget "
+             "(0 = use effort level; UINT_MAX = unbounded)."));
+
+// Region-size gate for the ShadowMix node budget. The budget exists to bound
+// compile time, which is only a problem on large regions; small regions are
+// cheap to fully explore. Regions with at most this many SUnits keep an
+// unbounded ShadowMix lookahead so their scheduling (and thus perf) is
+// unchanged by the effort level. Chosen to sit above the largest perf-corpus
+// regions and below the pathological MoE region this fixes.
+static cl::opt<unsigned> CoexecLookaheadRegionThreshold(
+    "amdgpu-coexec-lookahead-region-threshold", cl::Hidden, cl::init(3000),
+    cl::desc("Only bound the coexec ShadowMix lookahead for regions with more "
+             "than this many SUnits (0 = always bound)."));
+
+// Resolve the effort level for \p F: an explicit function attribute wins over
+// the command-line flag (which defaults to Fast).
+static CoexecLookaheadEffort getCoexecLookaheadEffort(const Function &F) {
+  Attribute A = F.getFnAttribute("amdgpu-coexec-lookahead");
+  if (A.isValid()) {
+    StringRef V = A.getValueAsString();
+    if (V == "off")
+      return CoexecLookaheadEffort::Off;
+    if (V == "fast")
+      return CoexecLookaheadEffort::Fast;
+    if (V == "balanced")
+      return CoexecLookaheadEffort::Balanced;
+    if (V == "full")
+      return CoexecLookaheadEffort::Full;
+  }
+  return CoexecLookahead;
+}
 
 namespace {
 
@@ -849,6 +914,39 @@ void CandidateHeuristics::initialize(ScheduleDAGMI *SchedDAG,
   SRI = static_cast<const SIRegisterInfo *>(TRI);
   SII = static_cast<const SIInstrInfo *>(DAG->TII);
   MLI = LoopInfo;
+
+  // Resolve the reachability-lookahead effort for this function and derive the
+  // per-region bounds. A hidden numeric override wins over the effort level.
+  CoexecLookaheadEffort Effort =
+      getCoexecLookaheadEffort(DAG->MF.getFunction());
+  switch (Effort) {
+  case CoexecLookaheadEffort::Off:
+    ShadowMixNodeBudget = 0; // skip ShadowMix lookahead entirely
+    CriticalResourceDepEnabled = false;
+    break;
+  case CoexecLookaheadEffort::Fast:
+    ShadowMixNodeBudget = 32;
+    CriticalResourceDepEnabled = true;
+    break;
+  case CoexecLookaheadEffort::Balanced:
+    ShadowMixNodeBudget = 128;
+    CriticalResourceDepEnabled = true;
+    break;
+  case CoexecLookaheadEffort::Full:
+    ShadowMixNodeBudget = std::numeric_limits<unsigned>::max(); // unbounded
+    CriticalResourceDepEnabled = true;
+    break;
+  }
+  if (ShadowMixNodeBudgetOverride.getNumOccurrences()) {
+    // Explicit override wins over both the effort level and the region gate.
+    ShadowMixNodeBudget = ShadowMixNodeBudgetOverride;
+  } else if (Effort != CoexecLookaheadEffort::Off &&
+             DAG->SUnits.size() <= CoexecLookaheadRegionThreshold) {
+    // Small region: bounding buys no compile time but can perturb scheduling,
+    // so keep the lookahead unbounded here regardless of effort level.
+    ShadowMixNodeBudget = std::numeric_limits<unsigned>::max();
+  }
+  AncestorCache.clear();
 
   HWUInfo.resize((int)InstructionFlavor::NUM_FLAVORS);
 
@@ -2215,9 +2313,9 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
     auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
 
     bool CandEnables =
-        TargetSU != Cand.SU && DAG->IsReachable(TargetSU, Cand.SU);
+        TargetSU != Cand.SU && candEnablesTarget(Cand.SU, TargetSU);
     bool TryCandEnables =
-        TargetSU != TryCand.SU && DAG->IsReachable(TargetSU, TryCand.SU);
+        TargetSU != TryCand.SU && candEnablesTarget(TryCand.SU, TargetSU);
 
     if (!CandEnables && !TryCandEnables)
       return false;
@@ -2237,15 +2335,20 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
     return false;
   };
 
-  for (unsigned I = 0; I < HWUInfo.size(); I++) {
-    // If we have encountered a resource that is not critical, then neither
-    // candidate enables a critical resource
-    if (!HasPrioritySU(I))
-      continue;
+  // The per-resource enablement test walks DAG reachability; skip it at the
+  // "off" effort level. The cheap loop-carried DS-read tie-break below still
+  // runs.
+  if (CriticalResourceDepEnabled) {
+    for (unsigned I = 0; I < HWUInfo.size(); I++) {
+      // If we have encountered a resource that is not critical, then neither
+      // candidate enables a critical resource
+      if (!HasPrioritySU(I))
+        continue;
 
-    // If neither has enabled the resource, continue to the next resource
-    if (TryEnablesResource(I))
-      return true;
+      // If neither has enabled the resource, continue to the next resource
+      if (TryEnablesResource(I))
+        return true;
+    }
   }
 
   // Fallback after the in-iter DS_READ → WMMA prioritization above: if
@@ -2343,6 +2446,16 @@ std::optional<unsigned> CandidateHeuristics::findNearestPendingByFlavor(
 
   std::optional<unsigned> BestDist;
   for (unsigned I = 0; I < Worklist.size(); ++I) {
+    // Bound total node expansions. This BFS only answers "does any pending
+    // filler of TargetFlavor exist within MaxDepth?"; without a cap it is an
+    // O(region) DFS run per candidate-pair per pickNode and dominates compile
+    // time on large dense DAGs. When the budget is exhausted we return the
+    // best distance found so far (possibly nullopt), which conservatively
+    // routes tryShadowMix to its greedy producer fallback. Budget is derived
+    // from the coexec lookahead effort level; UINT_MAX means unbounded.
+    if (I >= ShadowMixNodeBudget)
+      break;
+
     auto [SU, Depth] = Worklist[I];
     if (Depth > MaxDepth)
       continue;
@@ -2370,6 +2483,33 @@ std::optional<unsigned> CandidateHeuristics::findNearestPendingByFlavor(
 
 bool CandidateHeuristics::wouldHelpEnable(SUnit *SU, SUnit *TargetSU) {
   return DAG->IsReachable(TargetSU, SU);
+}
+
+bool CandidateHeuristics::candEnablesTarget(const SUnit *Cand,
+                                            const SUnit *TargetSU) const {
+  // Memoized equivalent of DAG->IsReachable(TargetSU, Cand): true iff Cand is
+  // in the predecessor closure of TargetSU. LLVM's IsReachable caches only
+  // negative results and re-runs a full DFS for every positive query, which is
+  // called per candidate-pair per pickNode. Instead, compute TargetSU's
+  // ancestor set once per region via a single predecessor BFS, then answer
+  // each query with an O(1) set lookup. Follows all (incl. weak) edges to
+  // match IsReachable's DFS over Succs.
+  auto It = AncestorCache.find(TargetSU);
+  if (It == AncestorCache.end()) {
+    DenseSet<unsigned> Ancestors;
+    SmallVector<const SUnit *, 32> Worklist;
+    Worklist.push_back(TargetSU);
+    while (!Worklist.empty()) {
+      const SUnit *Cur = Worklist.pop_back_val();
+      for (const SDep &Pred : Cur->Preds) {
+        const SUnit *P = Pred.getSUnit();
+        if (Ancestors.insert(P->NodeNum).second)
+          Worklist.push_back(P);
+      }
+    }
+    It = AncestorCache.try_emplace(TargetSU, std::move(Ancestors)).first;
+  }
+  return It->second.contains(Cand->NodeNum);
 }
 
 //===----------------------------------------------------------------------===//
@@ -2510,9 +2650,11 @@ bool CandidateHeuristics::tryShadowMix(
   // topological-order window. On large DAGs that is O(N) per call, and
   // unbounded iteration here dominated compile time. ShadowMixIsReachableBudget
   // caps the scan; the greedy fallback below still picks a producer when one
-  // is present.
-  auto NearestDist =
-      findNearestPendingByFlavor(NeededFlavor, ShadowMixLookaheadDepth);
+  // is present. At the "off" effort level (ShadowMixNodeBudget == 0) skip the
+  // lookahead outright, including findNearestPendingByFlavor's O(N) seed walk.
+  std::optional<unsigned> NearestDist;
+  if (ShadowMixNodeBudget)
+    NearestDist = findNearestPendingByFlavor(NeededFlavor, ShadowMixLookaheadDepth);
   if (NearestDist && ShadowMixIsReachableBudget > 0) {
     // Bail early if neither candidate can possibly contribute: producers
     // short-circuit their wouldHelpEnable check to false, so the loop body

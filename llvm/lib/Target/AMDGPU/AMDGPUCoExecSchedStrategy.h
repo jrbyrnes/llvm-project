@@ -17,6 +17,8 @@
 #include "AMDGPUCoExecInfo.h"
 #include "GCNHazardRecognizer.h"
 #include "GCNSchedStrategy.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 
 namespace llvm {
@@ -562,6 +564,30 @@ protected:
   /// by the loop-body gate of the DS_READ-by-consumer-order tie-breaker,
   /// which falls back to a self-edge check when MLI is unavailable.
   const MachineLoopInfo *MLI = nullptr;
+
+  /// Node-visit budget for the ShadowMix lookahead BFS
+  /// (findNearestPendingByFlavor). 0 = skip the lookahead entirely;
+  /// UINT_MAX = unbounded. Derived per-region from the coexec lookahead
+  /// effort level (see getCoexecLookaheadEffort).
+  unsigned ShadowMixNodeBudget = 32;
+
+  /// Whether the critical-resource-dependency reachability heuristic runs.
+  /// Disabled only at the "off" effort level.
+  bool CriticalResourceDepEnabled = true;
+
+  /// Region-lifetime cache of ancestor sets keyed by target SUnit: maps a
+  /// TargetSU to the NodeNums of every SUnit that can reach it (its
+  /// predecessor closure). Used to answer DAG->IsReachable(TargetSU, X)
+  /// == "does X enable TargetSU" in O(1) after one BFS, instead of the
+  /// per-query DFS that LLVM re-runs for every positive result. DAG
+  /// dependency edges are immutable during a region's list scheduling, so
+  /// the closure is valid for the whole region; cleared in initialize().
+  mutable DenseMap<const SUnit *, DenseSet<unsigned>> AncestorCache;
+
+  /// \returns true if scheduling \p Cand would enable \p TargetSU, i.e.
+  /// \p Cand is in the predecessor closure of \p TargetSU. Equivalent to
+  /// DAG->IsReachable(TargetSU, Cand) but memoized via AncestorCache.
+  bool candEnablesTarget(const SUnit *Cand, const SUnit *TargetSU) const;
 
 public:
   CandidateHeuristics() = default;
