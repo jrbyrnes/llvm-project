@@ -591,11 +591,12 @@ public:
   bool merge(const WaitcntBrackets &Other);
 
   bool counterOutOfOrder(AMDGPU::InstCounterType T) const;
-  void simplifyWaitcnt(AMDGPU::Waitcnt &Wait) const {
-    simplifyWaitcnt(Wait, Wait);
+  void simplifyWaitcnt(AMDGPU::Waitcnt &Wait, bool UseImpliedWait = true) const {
+    simplifyWaitcnt(Wait, Wait, UseImpliedWait);
   }
   void simplifyWaitcnt(const AMDGPU::Waitcnt &CheckWait,
-                       AMDGPU::Waitcnt &UpdateWait) const;
+                       AMDGPU::Waitcnt &UpdateWait,
+                       bool UseImpliedWait = true) const;
   void simplifyWaitcnt(AMDGPU::InstCounterType T, unsigned &Count) const;
   void simplifyWaitcnt(AMDGPU::Waitcnt &Wait, AMDGPU::InstCounterType T) const;
   void simplifyXcnt(const AMDGPU::Waitcnt &CheckWait,
@@ -1350,7 +1351,7 @@ void WaitcntBrackets::print(raw_ostream &OS) const {
 /// Simplify \p UpdateWait by removing waits that are redundant based on the
 /// current WaitcntBrackets and any other waits specified in \p CheckWait.
 void WaitcntBrackets::simplifyWaitcnt(const AMDGPU::Waitcnt &CheckWait,
-                                      AMDGPU::Waitcnt &UpdateWait) const {
+                                      AMDGPU::Waitcnt &UpdateWait, bool UseImpliedWait) const {
   simplifyWaitcnt(UpdateWait, AMDGPU::LOAD_CNT);
   simplifyWaitcnt(UpdateWait, AMDGPU::EXP_CNT);
   simplifyWaitcnt(UpdateWait, AMDGPU::DS_CNT);
@@ -1358,10 +1359,12 @@ void WaitcntBrackets::simplifyWaitcnt(const AMDGPU::Waitcnt &CheckWait,
   simplifyWaitcnt(UpdateWait, AMDGPU::SAMPLE_CNT);
   simplifyWaitcnt(UpdateWait, AMDGPU::BVH_CNT);
   simplifyWaitcnt(UpdateWait, AMDGPU::KM_CNT);
-  simplifyXcnt(CheckWait, UpdateWait);
+  if (UseImpliedWait)
+    simplifyXcnt(CheckWait, UpdateWait);
   simplifyWaitcnt(UpdateWait, AMDGPU::VA_VDST_RD);
   simplifyWaitcnt(UpdateWait, AMDGPU::VA_VDST_WR);
-  simplifyVmVsrc(CheckWait, UpdateWait);
+  if (UseImpliedWait)
+    simplifyVmVsrc(CheckWait, UpdateWait);
   simplifyWaitcnt(UpdateWait, AMDGPU::ASYNC_CNT);
 }
 
@@ -1412,7 +1415,7 @@ void WaitcntBrackets::simplifyVmVsrc(const AMDGPU::Waitcnt &CheckWait,
   // decremented VM_VSRC once its VGPR operands had been read.
   static constexpr AMDGPU::InstCounterType VmemCounters[] = {
       AMDGPU::LOAD_CNT, AMDGPU::STORE_CNT, AMDGPU::SAMPLE_CNT, AMDGPU::BVH_CNT,
-      AMDGPU::DS_CNT};
+      AMDGPU::DS_CNT, AMDGPU::ASYNC_CNT};
   HWEventSet VmemEvents = llvm::accumulate(
       VmemCounters, HWEventSet(), [&](HWEventSet Acc, AMDGPU::InstCounterType T) {
         return Acc | Context->getWaitEvents(T);
@@ -1430,6 +1433,7 @@ void WaitcntBrackets::simplifyVmVsrc(const AMDGPU::Waitcnt &CheckWait,
   Simplify(AMDGPU::SAMPLE_CNT);
   Simplify(AMDGPU::BVH_CNT);
   Simplify(AMDGPU::DS_CNT);
+  Simplify(AMDGPU::ASYNC_CNT);
   simplifyWaitcnt(UpdateWait, AMDGPU::VM_VSRC);
 }
 
@@ -1765,7 +1769,7 @@ bool WaitcntGeneratorPreGFX12::applyPreexistingWaitcnt(
     unsigned Opcode = SIInstrInfo::getNonSoftWaitcntOpcode(II.getOpcode());
     // Only try to simplify soft waits if we've seen all predecessor states.
     bool TrySimplify =
-        Opcode != II.getOpcode() && !OptNone && AllowWaitDeletion;
+        Opcode != II.getOpcode() && !OptNone;
 
     // Update required wait count. If this is a soft waitcnt (= it was added
     // by an earlier pass), it may be entirely removed.
@@ -2012,7 +2016,7 @@ bool WaitcntGeneratorGFX12Plus::applyPreexistingWaitcnt(
     unsigned Opcode = SIInstrInfo::getNonSoftWaitcntOpcode(II.getOpcode());
     // Only try to simplify soft waits if we've seen all predecessor states.
     bool TrySimplify =
-        Opcode != II.getOpcode() && !OptNone && AllowWaitDeletion;
+        Opcode != II.getOpcode() && !OptNone;
 
     // Don't crash if the programmer used legacy waitcnt intrinsics, but don't
     // attempt to do more than that either.
@@ -2058,8 +2062,7 @@ bool WaitcntGeneratorGFX12Plus::applyPreexistingWaitcnt(
       OldWait.set(AMDGPU::VA_VDST_RD, VaVdst);
       OldWait.set(AMDGPU::VA_VDST_WR, VaVdst);
       OldWait.set(AMDGPU::VM_VSRC, AMDGPU::DepCtr::decodeFieldVmVsrc(OldEnc));
-      if (TrySimplify)
-        ScoreBrackets.simplifyWaitcnt(OldWait);
+      assert(!TrySimplify);
       Wait = Wait.combined(OldWait);
       if (WaitcntDepctrInstr == nullptr) {
         WaitcntDepctrInstr = &II;
@@ -2114,56 +2117,41 @@ bool WaitcntGeneratorGFX12Plus::applyPreexistingWaitcnt(
     }
   }
 
-  // Simplify Wait based on the combined waits. Note that RequiredWait contains
-  // soft waits that we're keeping because we haven't seen all predecessor
-  // states yet. These soft waits might be deleted on a later pass.
-  //
-  // For most counters, using the combined waits for simplification is fine.
-  // However, for VM_VSRC and X_CNT we must be careful: these can be simplified
-  // away based on other counters (e.g., DS_CNT implies VM_VSRC, LOAD_CNT/KM_CNT
-  // implies X_CNT). If those counters are only in RequiredWait and get deleted
-  // later, we'd lose the VM_VSRC/X_CNT protection.
-  //
-  // To handle this, we save Wait before simplification. After, if VM_VSRC or
-  // X_CNT was cleared but RequiredWait has counters that could have caused
-  // this, we re-check using the original Wait and restore if needed.
-  AMDGPU::Waitcnt OrigWait = Wait;
-  AMDGPU::Waitcnt CombinedWait = Wait.combined(RequiredWait);
-  ScoreBrackets.simplifyWaitcnt(CombinedWait, Wait);
+  // Simplify Wait based on the combined waits. Note that we need to take care
+  // when using soft waits in our simplifications. In cases with loops, we may
+  // not have visited all predecessor edges of the block. The three possible
+  // states for a soft wait are: 1. it is required based on events from already
+  // visited predeccesors, 2. it is not required based on events from already
+  // visited predecesors, but is required after adding events from non-visited
+  // predecessors, or 3. it is not required based on events from already visited
+  // predecessors, and will not be required after adding events from non-visited
+  // predecessors.
 
-  // If VM_VSRC was simplified away and RequiredWait has VMEM counters,
-  // check if the simplification was due to RequiredWait.
-  if (OrigWait.get(AMDGPU::VM_VSRC) != ~0u &&
-      Wait.get(AMDGPU::VM_VSRC) == ~0u &&
-      (RequiredWait.get(AMDGPU::DS_CNT) != ~0u ||
-       RequiredWait.get(AMDGPU::LOAD_CNT) != ~0u ||
-       RequiredWait.get(AMDGPU::STORE_CNT) != ~0u ||
-       RequiredWait.get(AMDGPU::SAMPLE_CNT) != ~0u ||
-       RequiredWait.get(AMDGPU::BVH_CNT) != ~0u)) {
-    // Re-check using only the original Wait (excluding RequiredWait).
-    AMDGPU::Waitcnt TestWait;
-    TestWait.set(AMDGPU::VM_VSRC, OrigWait.get(AMDGPU::VM_VSRC));
-    ScoreBrackets.simplifyVmVsrc(OrigWait, TestWait);
-    // If VM_VSRC wasn't simplified when using only OrigWait, restore it.
-    if (TestWait.get(AMDGPU::VM_VSRC) != ~0u)
-      Wait.set(AMDGPU::VM_VSRC, OrigWait.get(AMDGPU::VM_VSRC));
-  }
+  // In case 1, we simply promote the soft wait to a regular wait. It will not
+  // be simplified by either call to simplifyWaitcnt. Since it is not simplified
+  // by the first call, it will be used to do implied wait simplifications in
+  // the second call. Then, given it is not simplified out and there is a
+  // meaningful wait, we will promote it.
 
-  // If X_CNT was simplified away and RequiredWait has KM_CNT or LOAD_CNT,
-  // check if the simplification was due to RequiredWait.
-  if (OrigWait.get(AMDGPU::X_CNT) != ~0u &&
-      Wait.get(AMDGPU::X_CNT) == ~0u &&
-      (RequiredWait.get(AMDGPU::KM_CNT) != ~0u ||
-       RequiredWait.get(AMDGPU::LOAD_CNT) != ~0u)) {
-    // Re-check using only the original Wait (excluding RequiredWait).
-    AMDGPU::Waitcnt TestWait;
-    TestWait.set(AMDGPU::X_CNT, OrigWait.get(AMDGPU::X_CNT));
-    ScoreBrackets.simplifyXcnt(OrigWait, TestWait);
-    // If X_CNT wasn't simplified when using only OrigWait, restore it.
-    if (TestWait.get(AMDGPU::X_CNT) != ~0u)
-      Wait.set(AMDGPU::X_CNT, OrigWait.get(AMDGPU::X_CNT));
-  }
+  // In case 2, we must simplify the soft wait out before using `Wait` for
+  // implied simplifications. For example, a S_WAIT_DSCNT_soft 0 will manifest
+  // as a 0 wait DS_CNT in `Wait`. If we use this (combined with RequiredWait)
+  // as the CheckWait in simplifyWaitcnt, we may have a case where we infer that
+  // a wait vm_vsrc is not required since the dscnt wait will cover all the
+  // oustanding events. However, since it is not a provably required soft wait
+  // we may end up deleting it, resulting in an incorrect implied
+  // simplification. Thus, we first do non-implied wait simplifications, to
+  // simplify out irrelevant softwaits, then use the simplified output to do
+  // implied simplifications. After simplifying in this way, the non provably
+  // required soft wait will not have a meaningful wait in the `Wait` Waitcnt,
+  // thus it will not be promoted. However, since we have not visited all
+  // predecessors we also do not delete it as we may find it is required later.
 
+  // In case 3, we handle the simpifications in the same way as case 2. The only
+  // difference is that when we reach the promote/delete decision, we recognize
+  // we have visited all the predecessor, so it is okay to remove the soft wait.
+  ScoreBrackets.simplifyWaitcnt(Wait, false);
+  ScoreBrackets.simplifyWaitcnt(Wait.combined(RequiredWait), Wait);
   Wait = Wait.combined(RequiredWait);
 
   if (CombinedLoadDsCntInstr) {
@@ -3745,12 +3733,23 @@ bool SIInsertWaitcnts::run() {
 
       if (ST.hasWaitXcnt())
         Modified |= removeRedundantSoftXcnts(*MBB);
-      // Only allow soft wait deletion if we've seen all predecessors.
+      // Only allow soft wait deletion if we've seen all reachable predecessors.
       // This prevents premature deletion on the first pass through loop headers
-      // before back-edge state is known.
-      bool AllowWaitDeletion = BI.SeenPredecessors.size() >= MBB->pred_size();
+      // before back-edge state is known. We only count predecessors that are
+      // in BlockInfos (i.e., reachable via RPO traversal) to avoid infinite
+      // loops when unreachable blocks exist.
+      unsigned ReachablePredCount = 0;
+      for (MachineBasicBlock *Pred : MBB->predecessors()) {
+        if (BlockInfos.count(Pred))
+          ++ReachablePredCount;
+      }
+      bool AllowWaitDeletion = BI.SeenPredecessors.size() >= ReachablePredCount;
       Modified |= insertWaitcntInBlock(MF, *MBB, *Brackets, AllowWaitDeletion);
       BI.Dirty = false;
+      if (!AllowWaitDeletion) {
+        BI.Dirty = true;
+        Repeat = true;
+      }
 
       // Track that this predecessor has been processed for all successors,
       // regardless of whether it has pending events. This ensures
