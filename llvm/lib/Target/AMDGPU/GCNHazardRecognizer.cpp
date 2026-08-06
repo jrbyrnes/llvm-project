@@ -228,11 +228,10 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
 }
 
 void GCNHazardRecognizer::updateWMMAWindowState(const MachineInstr &MI) {
-  if (!AMDGPU::isGFX1250(ST))
-    return;
-
-  // Check if this is a WMMA instruction.
-  if (!SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI))
+  bool IsWMMAGfx1250 = AMDGPU::isGFX1250(ST) &&
+                       (SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI));
+  bool IsMFMAGfx950 = ST.hasGFX950Insts() && SIInstrInfo::isMFMA(MI);
+  if (!IsWMMAGfx1250 && !IsMFMAGfx950)
     return;
 
   // If a previous window was still active, dump it before starting a new one.
@@ -283,9 +282,9 @@ void GCNHazardRecognizer::updateMultiCycleVALUState(const MachineInstr &MI) {
   if (!SIInstrInfo::isVALU(MI))
     return;
 
-  // Skip WMMA and TRANS - they have their own tracking.
+  // Skip WMMA, MFMA, and TRANS - they have their own tracking.
   if (SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI) ||
-      SIInstrInfo::isTRANS(MI))
+      SIInstrInfo::isMAI(MI) || SIInstrInfo::isTRANS(MI))
     return;
 
   unsigned RepeatRate = TII.getRepeatRate(MI);
