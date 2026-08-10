@@ -1041,6 +1041,7 @@ SUnit *HardwareUnitInfo::getNextTargetSU(bool LookDeep) const {
   if (!LookDeep)
     return nullptr;
 
+  // FIXME: should we reuse KillProximity heuristic here as well?
   unsigned MinDepth = std::numeric_limits<unsigned int>::max();
   SUnit *TargetSU = nullptr;
   for (auto *SU : AllSUs) {
@@ -1058,33 +1059,133 @@ SUnit *HardwareUnitInfo::getNextTargetSU(bool LookDeep) const {
   return TargetSU;
 }
 
-void HardwareUnitInfo::updatePrioritySUsWith(SUnit *SU) {
+int HardwareUnitInfo::compareDepth(SUnit *Cur, SUnit *Added) const {
+  const unsigned CurDepth = Cur->getDepth();
+  const unsigned AddedDepth = Added->getDepth();
+
+  if (AddedDepth > CurDepth)
+    return -1;
+  if (AddedDepth == CurDepth)
+    return 0;
+  return 1;
+}
+
+// Kill proximity: prefer the candidate which kills a register or gets us
+// closer to killing a register.
+// Compares minimum unscheduled data successors across data predecessors,
+// considers 1 unscheduled data successor as a kill.
+int HardwareUnitInfo::compareKillProximity(SUnit *Cur, SUnit *Added) const {
+  // FIXME: original tryKillProximity implementation ignored a bunch of
+  //        different instruction kinds (DS, FLAT, VMEM), but here we consider
+  //        them all. Do we want to address this?
+
+  // Estimate number of killed registers and min successors left for killing.
+  auto getKillStats = [](const SUnit *SU) {
+    // Group predecessor edges by base register to avoid counting subreg kills
+    // as several real kills.
+    SmallDenseMap<Register, unsigned, 8> RegMaxUnsched;
+
+    for (const SDep &Pred : SU->Preds) {
+      if (Pred.getKind() != SDep::Data)
+        continue;
+      Register Reg = Pred.getReg();
+      if (!Reg)
+        continue;
+      const SUnit *PredSU = Pred.getSUnit();
+      unsigned Unscheduled = 0;
+      for (const SDep &Succ : PredSU->Succs)
+        if (Succ.getKind() == SDep::Data && !Succ.getSUnit()->isScheduled)
+          ++Unscheduled;
+
+      LLVM_DEBUG({
+        dbgs() << "        pred SU(" << PredSU->NodeNum
+               << ") reg=" << printReg(Reg) << " unschedSuccs=" << Unscheduled
+               << " ";
+        if (PredSU->getInstr())
+          PredSU->getInstr()->print(dbgs(), /*IsStandalone=*/true,
+                                    /*SkipOpers=*/false, /*SkipDebugLoc=*/true);
+        else
+          dbgs() << "<no instr>";
+        dbgs() << "\n";
+      });
+      // Take the max across all producers of the same register.
+      // Consider the register is killed when all its producers have few
+      // unscheduled successors.
+      RegMaxUnsched[Reg] = std::max(RegMaxUnsched[Reg], Unscheduled);
+    }
+
+    unsigned Kills = 0;
+    unsigned MinOther = RegMaxUnsched.empty()
+                       ? 0
+                       : RegMaxUnsched.begin()->second;
+    for (auto &[Reg, MaxUnsched] : RegMaxUnsched) {
+      if (MaxUnsched < 2)
+        ++Kills;
+      else
+        MinOther = std::min(MinOther, MaxUnsched);
+    }
+    LLVM_DEBUG(dbgs() << "        => kills=" << Kills
+                      << " minOther=" << MinOther
+                      << " (regs=" << RegMaxUnsched.size() << ")\n");
+    return std::pair(Kills, MinOther);
+  };
+
+  auto [CurKills, CurMinOther] = getKillStats(Cur);
+  auto [AddedKills, AddedMinOther] = getKillStats(Cur);
+
+  // We first look at how many registers each SU is expected to free.
+  if (AddedKills > CurKills)
+    return 1;
+  if (AddedKills < CurKills)
+    return -1;
+
+  // If equal, prefer closer to killing among non-kill preds.
+  if (AddedMinOther < CurMinOther) {
+    // TODO: I (alsachko) wonder if this would cause to complete rebuild of
+    //       PrioritySUs way too often due to way too small differences.
+    return 1;
+  }
+  if (AddedMinOther > CurMinOther)
+    return -1;
+  return 0;
+}
+
+void HardwareUnitInfo::updatePrioritySUsWith(SUnit *SU,
+                                             bool NeedKillProximity) {
   if (PrioritySUs.empty()) {
     PrioritySUs.insert(SU);
     return;
   }
-  unsigned SUDepth = SU->getDepth();
-  unsigned CurrDepth = (*PrioritySUs.begin())->getDepth();
-  if (SUDepth > CurrDepth)
+
+  int Decision = 0;
+
+  if (CoexecKillProximity == KillProximityMode::Off ||
+      (CoexecKillProximity == KillProximityMode::Auto && !NeedKillProximity))
+    Decision = compareDepth((*PrioritySUs.begin()), SU);
+  else
+    Decision = compareKillProximity((*PrioritySUs.begin()), SU);
+
+  if (Decision < 0) // Candidate is worse than what we have
     return;
 
-  if (SUDepth == CurrDepth) {
+  if (Decision == 0) { // Candidate is on par with what we have
     PrioritySUs.insert(SU);
     return;
   }
 
-  // SU is lower depth and should be prioritized.
+  // Decision > 0, candidate is better than what we have
   PrioritySUs.clear();
   PrioritySUs.insert(SU);
 }
 
-void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles) {
+void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles,
+                              bool NeedKillProximity) {
   if (!AllSUs.insert(SU))
     llvm_unreachable("HardwareUnit already contains SU!");
 
   TotalCycles += BlockingCycles;
 
-  updatePrioritySUsWith(SU);
+  updatePrioritySUsWith(SU, NeedKillProximity);
 }
 
 void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
@@ -1763,7 +1864,8 @@ void CandidateHeuristics::collectRegionSummary() {
   for (auto &SU : DAG->SUnits) {
     MachineInstr *MI = SU.getInstr();
     const InstructionFlavor Flavor = classifyFlavor(*MI, *SII);
-    HWUInfo[(int)(Flavor)].insert(&SU, getHWUICyclesForSU(&SU));
+    HWUInfo[(int)(Flavor)].insert(&SU, getHWUICyclesForSU(&SU),
+                                  NeedKillProximity);
     unsigned CarriedLatency = getCarriedLatency(&SU);
     if (CarriedLatency)
       CarriedLatencies[MI] = CarriedLatency;
@@ -2711,113 +2813,6 @@ bool CandidateHeuristics::tryCriticalResourceDependency(
   return false;
 }
 
-// Kill proximity: prefer the candidate which kills a register or gets us
-// closer to killing a register.
-// Compares minimum unscheduled data successors across data predecessors,
-// considers 1 unscheduled data successor as a kill.
-static bool tryKillProximity(GenericSchedulerBase::SchedCandidate &Cand,
-                             GenericSchedulerBase::SchedCandidate &TryCand,
-                             bool NeedKillProximity) {
-  if (CoexecKillProximity == KillProximityMode::Off)
-    return false;
-  if (CoexecKillProximity == KillProximityMode::Auto && !NeedKillProximity)
-    return false;
-
-  // Skip memory operations — they unlikely to reduce pressure.
-  const MachineInstr *TryMI = TryCand.SU->getInstr();
-  const MachineInstr *CandMI = Cand.SU->getInstr();
-  if (SIInstrInfo::isDS(*TryMI) || SIInstrInfo::isDS(*CandMI) ||
-      SIInstrInfo::isFLAT(*TryMI) || SIInstrInfo::isFLAT(*CandMI) ||
-      SIInstrInfo::isVMEM(*TryMI) || SIInstrInfo::isVMEM(*CandMI))
-    return false;
-
-  // Estimate number of killed registers and min successors left for killing.
-  auto getKillStats = [](const SUnit *SU) {
-    // Group predecessor edges by base register to avoid counting subreg kills
-    // as several real kills.
-    SmallDenseMap<Register, int, 8> RegMaxUnsched;
-
-    for (const SDep &Pred : SU->Preds) {
-      if (Pred.getKind() != SDep::Data)
-        continue;
-      Register Reg = Pred.getReg();
-      if (!Reg)
-        continue;
-      const SUnit *PredSU = Pred.getSUnit();
-      int Unscheduled = 0;
-      for (const SDep &Succ : PredSU->Succs)
-        if (Succ.getKind() == SDep::Data && !Succ.getSUnit()->isScheduled)
-          ++Unscheduled;
-
-      LLVM_DEBUG({
-        dbgs() << "        pred SU(" << PredSU->NodeNum
-               << ") reg=" << printReg(Reg) << " unschedSuccs=" << Unscheduled
-               << " ";
-        if (PredSU->getInstr())
-          PredSU->getInstr()->print(dbgs(), /*IsStandalone=*/true,
-                                    /*SkipOpers=*/false, /*SkipDebugLoc=*/true);
-        else
-          dbgs() << "<no instr>";
-        dbgs() << "\n";
-      });
-      // Take the max across all producers of the same register.
-      // Consider the register is killed when all its producers have few
-      // unscheduled successors.
-      RegMaxUnsched[Reg] = std::max(RegMaxUnsched[Reg], Unscheduled);
-    }
-
-    int Kills = 0;
-    int MinOther = RegMaxUnsched.empty()
-                       ? 0
-                       : RegMaxUnsched.begin()->second;
-    for (auto &[Reg, MaxUnsched] : RegMaxUnsched) {
-      if (MaxUnsched < 2)
-        ++Kills;
-      else
-        MinOther = std::min(MinOther, MaxUnsched);
-    }
-    LLVM_DEBUG(dbgs() << "        => kills=" << Kills
-                      << " minOther=" << MinOther
-                      << " (regs=" << RegMaxUnsched.size() << ")\n");
-    return std::pair(Kills, MinOther);
-  };
-
-  LLVM_DEBUG(dbgs() << "      TryCand SU(" << TryCand.SU->NodeNum
-                    << ") preds:\n");
-  auto [TryKills, TryMinOther] = getKillStats(TryCand.SU);
-  LLVM_DEBUG(dbgs() << "      Cand SU(" << Cand.SU->NodeNum << ") preds:\n");
-  auto [CandKills, CandMinOther] = getKillStats(Cand.SU);
-
-  LLVM_DEBUG(dbgs() << "    KillProximity: SU(" << TryCand.SU->NodeNum
-                    << ") kills=" << TryKills << " minOther=" << TryMinOther
-                    << ", SU(" << Cand.SU->NodeNum << ") kills=" << CandKills
-                    << " minOther=" << CandMinOther << "\n");
-
-  // Prefer more kills.
-  if (tryGreater(TryKills, CandKills, TryCand, Cand,
-                 GenericSchedulerBase::RegCritical)) {
-    LLVM_DEBUG(dbgs() << " KillProximity(kills) -> SU("
-                      << (TryCand.Reason != GenericSchedulerBase::NoCand
-                              ? TryCand.SU->NodeNum
-                              : Cand.SU->NodeNum)
-                      << ")\n");
-    return true;
-  }
-
-  // Prefer closer to killing among non-kill preds.
-  if (tryLess(TryMinOther, CandMinOther, TryCand, Cand,
-              GenericSchedulerBase::RegCritical)) {
-    LLVM_DEBUG(dbgs() << " KillProximity(minOther) -> SU("
-                      << (TryCand.Reason != GenericSchedulerBase::NoCand
-                              ? TryCand.SU->NodeNum
-                              : Cand.SU->NodeNum)
-                      << ")\n");
-    return true;
-  }
-
-  return false;
-}
-
 bool CandidateHeuristics::tryCriticalResource(
     GenericSchedulerBase::SchedCandidate &TryCand,
     GenericSchedulerBase::SchedCandidate &Cand, SchedBoundary *Zone) const {
@@ -3313,12 +3308,13 @@ void AMDGPUCoExecSchedStrategy::pickNodeFromQueue(
     }
   }
 
-  NeedKillProximity =
+  const bool NeedKillProximity =
       DAG->isTrackingPressure() &&
       VGPRPressure + 2 * MaxVGPRPressureInc >= VGPRExcessLimit;
   LLVM_DEBUG(dbgs() << "NeedKillProximity=" << NeedKillProximity
                     << " (VGPR=" << VGPRPressure
                     << " limit=" << VGPRExcessLimit << ")\n");
+  Heurs.setNeedKillProximity(NeedKillProximity);
 
   auto EvaluateQueue = [&](ReadyQueue &Q, bool FromPending) {
     for (SUnit *SU : Q) {
@@ -3419,11 +3415,6 @@ bool AMDGPUCoExecSchedStrategy::tryCandidateCoexec(SchedCandidate &Cand,
 
     if (Heurs.tryShadowMix(TryCand, Cand, Zone)) {
       LastAMDGPUReason = AMDGPUSchedReason::ShadowMix;
-      return TryCand.Reason != NoCand;
-    }
-
-    if (tryKillProximity(Cand, TryCand, NeedKillProximity)) {
-      LastAMDGPUReason = AMDGPUSchedReason::KillProximity;
       return TryCand.Reason != NoCand;
     }
 

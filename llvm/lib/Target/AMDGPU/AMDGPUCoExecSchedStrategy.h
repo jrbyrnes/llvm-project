@@ -183,8 +183,11 @@ private:
 
   unsigned RemainingCycles = 0;
 
+  int compareDepth(SUnit *Cur, SUnit *Added) const;
+  int compareKillProximity(SUnit *Cur, SUnit *Added) const;
+
   /// Try to update PrioritySUs with a new \p SU
-  void updatePrioritySUsWith(SUnit *SU);
+  void updatePrioritySUsWith(SUnit *SU, bool NeedKillProximity = false);
 
 public:
   HardwareUnitInfo() {}
@@ -291,7 +294,7 @@ public:
   SUnit *getNextTargetSU(bool LookDeep = false) const;
   /// Insert the \p SU into AllSUs and account its \p BlockingCycles into
   /// the TotalCycles. This maintains the list of PrioritySUs.
-  void insert(SUnit *SU, unsigned BlockingCycles);
+  void insert(SUnit *SU, unsigned BlockingCycles, bool NeedKillProximity);
   /// Update the state for \p SU being scheduled by removing it from the AllSUs
   /// and reducing its \p BlockingCycles from the TotalCycles. This maintains
   /// the list of PrioritySUs.
@@ -594,6 +597,10 @@ protected:
   /// DAG->IsReachable(TargetSU, Cand) but memoized via AncestorCache.
   bool candEnablesTarget(const SUnit *Cand, const SUnit *TargetSU) const;
 
+  /// Controls whether or not the KillProximity heuristics is used when
+  /// selecting the next candidate SU for scheduling.
+  bool NeedKillProximity = false;
+
 public:
   CandidateHeuristics() = default;
 
@@ -695,16 +702,14 @@ public:
                             GenericSchedulerBase::SchedCandidate &Cand) const;
 
   void dumpRegionSummary();
+
+  void setNeedKillProximity(bool Value) { NeedKillProximity = Value; }
 };
 
 class AMDGPUCoExecSchedStrategy final : public GCNSchedStrategy {
 protected:
   AMDGPU::AMDGPUSchedReason LastAMDGPUReason = AMDGPU::AMDGPUSchedReason::None;
   CandidateHeuristics Heurs;
-  /// Per-pick flag indicating kill proximity should be active. Computed
-  /// from GCN tracker VGPR pressure at the start of each pickNodeFromQueue
-  /// call.
-  bool NeedKillProximity = false;
 
 #ifndef NDEBUG
   void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);

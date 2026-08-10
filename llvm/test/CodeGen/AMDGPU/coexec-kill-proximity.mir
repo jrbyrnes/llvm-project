@@ -9,7 +9,7 @@
 #
 # Without kill proximity: scheduled in program order (a1, b1, a2, b2, a3, b3).
 # With kill proximity: the heuristic groups adds by operand so that
-# registers are killed sooner (all a's first, then all b's).
+# registers are killed sooner.
 
 --- |
   define void @kill_proximity() #0 { ret void }
@@ -35,9 +35,9 @@ body: |
     ; CHECK-NEXT: %s3:vgpr_32 = COPY $vgpr3
     ; CHECK-NEXT: dead %s4:vgpr_32 = COPY $vgpr4
     ; CHECK-NEXT: %add_a1:vgpr_32 = V_ADD_U32_e32 %s0, %s1, implicit $exec
+    ; CHECK-NEXT: %add_b1:vgpr_32 = V_ADD_U32_e32 %s2, %s3, implicit $exec
     ; CHECK-NEXT: %add_a2:vgpr_32 = V_ADD_U32_e32 %s0, %s1, implicit $exec
     ; CHECK-NEXT: %add_a3:vgpr_32 = V_ADD_U32_e32 %s0, %s1, implicit $exec
-    ; CHECK-NEXT: %add_b1:vgpr_32 = V_ADD_U32_e32 %s2, %s3, implicit $exec
     ; CHECK-NEXT: %add_b2:vgpr_32 = V_ADD_U32_e32 %s2, %s3, implicit $exec
     ; CHECK-NEXT: %add_b3:vgpr_32 = V_ADD_U32_e32 %s2, %s3, implicit $exec
     ; CHECK-NEXT: S_ENDPGM 0, implicit %add_a1, implicit %add_b1, implicit %add_a2, implicit %add_b2, implicit %add_a3, implicit %add_b3
