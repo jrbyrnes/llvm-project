@@ -1058,12 +1058,7 @@ SUnit *HardwareUnitInfo::getNextTargetSU(bool LookDeep) const {
   return TargetSU;
 }
 
-void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles) {
-  if (!AllSUs.insert(SU))
-    llvm_unreachable("HardwareUnit already contains SU!");
-
-  TotalCycles += BlockingCycles;
-
+void HardwareUnitInfo::updatePrioritySUsWith(SUnit *SU) {
   if (PrioritySUs.empty()) {
     PrioritySUs.insert(SU);
     return;
@@ -1081,6 +1076,15 @@ void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles) {
   // SU is lower depth and should be prioritized.
   PrioritySUs.clear();
   PrioritySUs.insert(SU);
+}
+
+void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles) {
+  if (!AllSUs.insert(SU))
+    llvm_unreachable("HardwareUnit already contains SU!");
+
+  TotalCycles += BlockingCycles;
+
+  updatePrioritySUsWith(SU);
 }
 
 void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
@@ -1108,19 +1112,8 @@ void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
         PrioritySUs.insert(SU);
         continue;
       }
-      unsigned SUDepth = SU->getDepth();
-      unsigned CurrDepth = (*PrioritySUs.begin())->getDepth();
-      if (SUDepth > CurrDepth)
-        continue;
 
-      if (SUDepth == CurrDepth) {
-        PrioritySUs.insert(SU);
-        continue;
-      }
-
-      // SU is lower depth and should be prioritized.
-      PrioritySUs.clear();
-      PrioritySUs.insert(SU);
+      updatePrioritySUsWith(SU);
     }
   }
 }

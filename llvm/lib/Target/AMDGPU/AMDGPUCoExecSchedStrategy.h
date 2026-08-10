@@ -183,6 +183,9 @@ private:
 
   unsigned RemainingCycles = 0;
 
+  /// Try to update PrioritySUs with a new \p SU
+  void updatePrioritySUsWith(SUnit *SU);
+
 public:
   HardwareUnitInfo() {}
 
