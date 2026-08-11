@@ -10,6 +10,7 @@ Usage:
     ./perf_test.py --update                     # Update both baseline.json and sched_baseline.json
     ./perf_test.py --update-on-pass             # Update both baselines only if all tests pass
     ./perf_test.py --verbose                    # Show detailed output
+    ./perf_test.py --llc-flag=--foo=1 --llc-flag=--bar  # Pass extra llc flags to every kernel run
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
@@ -169,7 +171,7 @@ def run_llc(llc_path: Path, ll_file: Path, extra_flags: Optional[List[str]] = No
     if sched_only:
         cmd.append("--amdgpu-static-sim-measure-sched=1")
 
-    # Add any extra flags from note.txt
+    # Add any extra flags (from note.txt and/or --llc-flag).
     if extra_flags:
         cmd.extend(extra_flags)
 
@@ -257,7 +259,7 @@ def save_baseline(baseline: Dict[str, int], sched_only: bool = False) -> None:
         f.write("\n")
 
 
-def run_tests(verbose: bool = False, migration_target: bool = False, sched_only: bool = False) -> List[TestResult]:
+def run_tests(verbose: bool = False, migration_target: bool = False, sched_only: bool = False, user_flags: Optional[List[str]] = None) -> List[TestResult]:
     """Run all tests and return results."""
     llc_path = get_llc_path()
     if migration_target:
@@ -284,7 +286,12 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
         note_file = ll_file.parent / "note.txt"
         extra_flags = parse_flags_from_note(note_file)
 
+        if user_flags:
+            extra_flags += user_flags
+
+        start = time.monotonic()
         warm_cycles, error = run_llc(llc_path, ll_file, extra_flags, sched_only=sched_only)
+        elapsed = time.monotonic() - start
         baseline_cycles = baseline.get(test_name)
 
         if error:
@@ -306,21 +313,22 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
         results.append(result)
 
         if verbose:
+            timing = f" [{elapsed:.2f}s]"
             if error:
-                print(f"ERROR: {error}")
+                print(f"ERROR: {error}{timing}")
             elif baseline_cycles is None:
                 if migration_target or sched_only:
-                    print(f"NO TARGET ({warm_cycles} cycles)")
+                    print(f"NO TARGET ({warm_cycles} cycles){timing}")
                 else:
-                    print(f"NEW ({warm_cycles} cycles)")
+                    print(f"NEW ({warm_cycles} cycles){timing}")
             elif passed:
                 delta = result.delta
                 if delta == 0:
-                    print(f"PASS ({warm_cycles} cycles, unchanged)")
+                    print(f"PASS ({warm_cycles} cycles, unchanged){timing}")
                 else:
-                    print(f"PASS ({warm_cycles} cycles, {delta:+d} = {result.delta_percent:+.2f}%)")
+                    print(f"PASS ({warm_cycles} cycles, {delta:+d} = {result.delta_percent:+.2f}%){timing}")
             else:
-                print(f"FAIL ({warm_cycles} cycles, baseline {baseline_cycles}, +{result.delta} = +{result.delta_percent:.2f}%)")
+                print(f"FAIL ({warm_cycles} cycles, baseline {baseline_cycles}, +{result.delta} = +{result.delta_percent:.2f}%){timing}")
 
     return results
 
@@ -380,6 +388,9 @@ def main():
                         help="Use warm cycles from note.txt files as baseline instead of baseline.json")
     parser.add_argument("--sched-only", action="store_true",
                         help="Use Sched Perf entries from note.txt and add --amdgpu-static-sim-measure-sched=1 to llc")
+    parser.add_argument("--llc-flag", action="append", default=[], metavar="FLAG",
+                        dest="llc_flags",
+                        help="Extra llc flag applied to every kernel run (repeatable).")
     args = parser.parse_args()
 
     if args.list:
@@ -389,12 +400,14 @@ def main():
 
     print(f"Running performance tests...")
     print(f"LLC: {get_llc_path()}")
+    if args.llc_flags:
+        print(f"Extra llc flags: {' '.join(args.llc_flags)}")
 
     # --update updates both baselines, ignoring --sched-only
     if args.update or args.update_on_pass:
         print(f"Baseline: {BASELINE_FILE}")
         print()
-        results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=False)
+        results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=False, user_flags=args.llc_flags)
         print_summary(results, migration_target=args.migration_target, sched_only=False)
         all_passed = all(r.passed for r in results)
 
@@ -402,7 +415,7 @@ def main():
         print(f"Baseline: {SCHED_BASELINE_FILE}")
         print(f"Mode: sched-only (--amdgpu-static-sim-measure-sched=1)")
         print()
-        sched_results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=True)
+        sched_results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=True, user_flags=args.llc_flags)
         print_summary(sched_results, migration_target=args.migration_target, sched_only=True)
         sched_all_passed = all(r.passed for r in sched_results)
 
@@ -428,7 +441,7 @@ def main():
         print(f"Baseline: {BASELINE_FILE}")
     print()
 
-    results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=args.sched_only)
+    results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=args.sched_only, user_flags=args.llc_flags)
     print_summary(results, migration_target=args.migration_target, sched_only=args.sched_only)
 
     all_passed = all(r.passed for r in results)

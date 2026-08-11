@@ -27,6 +27,7 @@
 #include "AMDGPUIGroupLP.h"
 #include "GCNHazardRecognizer.h"
 #include "GCNRegPressure.h"
+#include "LIRP.h"
 #include "SIMachineFunctionInfo.h"
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/BitVector.h"
@@ -77,6 +78,11 @@ static cl::opt<bool>
 static cl::opt<bool> GCNTrackers(
     "amdgpu-use-amdgpu-trackers", cl::Hidden,
     cl::desc("Use the AMDGPU specific RPTrackers during scheduling"),
+    cl::init(false));
+
+static cl::opt<bool> EnableLIRPTracker(
+    "amdgpu-lirp-tracker", cl::Hidden,
+    cl::desc("Enable live interval-based RP (LIRP) tracker"),
     cl::init(false));
 
 static cl::opt<unsigned> PendingQueueLimit(
@@ -403,6 +409,26 @@ void GCNSchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
       Cand.RPDelta.CriticalMax.setUnitInc(VGPRDelta);
     }
   }
+
+  if (EnableLIRPTracker && AtTop && useGCNTrackers()) {
+    SmallVector<LIRPTracker::Event, 8> Events;
+    DownwardTracker.forEachDownwardTransition(
+        SU->getInstr(), SRI,
+        [&](Register Reg, LaneBitmask PrevMask, LaneBitmask NewMask) {
+          Events.push_back({Reg, PrevMask, NewMask});
+        });
+    auto [NewSGPRNum, NewVGPRNum] = LIRP.speculate(Events);
+
+    if (NewVGPRNum >= VGPRExcessLimit) {
+      Cand.RPDelta.Excess =
+          PressureChange(AMDGPU::RegisterPressureSets::VGPR_32);
+      Cand.RPDelta.Excess.setUnitInc(NewVGPRNum - VGPRExcessLimit);
+    } else if (NewSGPRNum >= SGPRExcessLimit) {
+      Cand.RPDelta.Excess =
+          PressureChange(AMDGPU::RegisterPressureSets::SReg_32);
+      Cand.RPDelta.Excess.setUnitInc(NewSGPRNum - SGPRExcessLimit);
+    }
+  }
 }
 
 static bool shouldCheckPending(SchedBoundary &Zone,
@@ -677,6 +703,18 @@ SUnit *GCNSchedStrategy::pickNode(bool &IsTopNode) {
 void GCNSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   if (useGCNTrackers()) {
     MachineInstr *MI = SU->getInstr();
+
+    if (EnableLIRPTracker && IsTopNode) {
+      // Permanently apply the scheduled instruction's transitions to LIRP before
+      // the downward tracker advances.
+      const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+      DownwardTracker.forEachDownwardTransition(
+          MI, SRI,
+          [&](Register Reg, LaneBitmask PrevMask, LaneBitmask NewMask) {
+            LIRP.update(Reg, PrevMask, NewMask);
+          });
+    }
+
     IsTopNode ? (void)DownwardTracker.advance(MI, false)
               : UpwardTracker.recede(*MI);
   }
@@ -1223,9 +1261,12 @@ void GCNScheduleDAGMILive::runSchedStages() {
 
       if (S.useGCNTrackers()) {
         const unsigned RegionIdx = Stage->getRegionIdx();
+        S.setCurrentRegionIdx(RegionIdx);
         S.getDownwardTracker()->reset(MRI, LiveIns[RegionIdx]);
         S.getUpwardTracker()->reset(
             MRI, RegionLiveOuts.getLiveRegsForRegionIdx(RegionIdx));
+        if (EnableLIRPTracker)
+          S.getLIRPTracker()->reset(MRI, LiveIns[RegionIdx]);
       }
 
       ScheduleDAGMILive::schedule();

@@ -14,6 +14,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_GCNSCHEDSTRATEGY_H
 
 #include "GCNRegPressure.h"
+#include "LIRP.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
@@ -27,6 +28,7 @@ class SIMachineFunctionInfo;
 class SIRegisterInfo;
 class GCNSubtarget;
 class GCNSchedStage;
+class MachineRegisterInfo;
 
 enum class GCNSchedStageID : unsigned {
   OccInitialSchedule = 0,
@@ -101,6 +103,9 @@ protected:
   // GCN RP Tracker for botttom-up scheduling
   mutable GCNUpwardRPTracker UpwardTracker;
 
+  // Live interval-based RP tracker.
+  LIRPTracker LIRP;
+
   bool UseGCNTrackers = false;
 
   std::optional<bool> GCNTrackersOverride;
@@ -167,6 +172,16 @@ public:
   GCNDownwardRPTracker *getDownwardTracker() { return &DownwardTracker; }
 
   GCNUpwardRPTracker *getUpwardTracker() { return &UpwardTracker; }
+
+  /// \returns the LIRP tracker.
+  LIRPTracker *getLIRPTracker() { return &LIRP; }
+
+  // Index of the region currently being scheduled.
+  void setCurrentRegionIdx(unsigned Idx) { CurrentRegionIdx = Idx; }
+  unsigned getCurrentRegionIdx() const { return CurrentRegionIdx; }
+
+private:
+  unsigned CurrentRegionIdx = 0;
 };
 
 /// The goal of this scheduling strategy is to maximize kernel occupancy (i.e.

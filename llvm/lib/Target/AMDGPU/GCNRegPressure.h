@@ -18,6 +18,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_GCNREGPRESSURE_H
 
 #include "GCNSubtarget.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/RegisterPressure.h"
 #include <algorithm>
@@ -472,6 +473,13 @@ public:
   bool advance(MachineBasicBlock::const_iterator Begin,
                MachineBasicBlock::const_iterator End,
                const LiveRegSet *LiveRegsCopy = nullptr);
+
+  /// Report the per-vreg live-lane transitions \p MI would cause at the current
+  /// position.
+  void forEachDownwardTransition(
+      const MachineInstr *MI, const SIRegisterInfo *TRI,
+      function_ref<void(Register Reg, LaneBitmask PrevMask, LaneBitmask NewMask)>
+          Cb) const;
 
   /// Mostly copy/paste from CodeGen/RegisterPressure.cpp
   /// Calculate the impact \p MI will have on CurPressure and \return the
