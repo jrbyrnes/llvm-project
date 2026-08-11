@@ -313,7 +313,8 @@ public:
   /// Update the state for \p SU being scheduled by removing it from the AllSUs
   /// and reducing its \p BlockingCycles from the TotalCycles. This maintains
   /// the list of PrioritySUs.
-  void markScheduled(SUnit *SU, unsigned BlockingCycles);
+  void markScheduled(SUnit *SU, unsigned BlockingCycles,
+                     bool NeedKillProximity);
   /// After we've collected all the region pressure for this HWUI, correct for
   /// any specifics of the behavior of this resource. For example, if we the
   /// HardwareUnit can hold N instructions simultaneously, then there is no

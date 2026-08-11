@@ -1185,7 +1185,8 @@ void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles,
   updatePrioritySUsWith(SU, NeedKillProximity);
 }
 
-void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
+void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles,
+                                     bool NeedKillProximity) {
   if (RemainingCycles)
     RemainingCycles -= BlockingCycles;
 
@@ -1211,7 +1212,7 @@ void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
         continue;
       }
 
-      updatePrioritySUsWith(SU);
+      updatePrioritySUsWith(SU, NeedKillProximity);
     }
   }
 }
@@ -1299,7 +1300,7 @@ void CandidateHeuristics::updateForScheduling(SUnit *SU,
   unsigned Latency = getHWUICyclesForSU(SU);
   HardwareUnitInfo *HWUI = getHWUIFromFlavor(Flavor);
   assert(HWUI);
-  HWUI->markScheduled(SU, Latency);
+  HWUI->markScheduled(SU, Latency, NeedKillProximity);
   MixInfo.recordScheduled(Flavor);
   // Mix snapshot is now stale; tryShadowMix will refresh on its next call.
   MixInfo.invalidate();
