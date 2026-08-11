@@ -18,6 +18,7 @@ This directory contains IR test files and tooling for tracking performance of th
 PerfCorpus/
 ├── perf_test.py      # Test runner script
 ├── baseline.json     # Tracked warm cycle counts
+├── PERF_REPORT.md    # Generated: CoExec off vs on, per kernel
 ├── README.md
 └── MI450/            # Test corpus organized by source
     ├── AAI/
@@ -82,19 +83,47 @@ Some test directories contain a `note.txt` file with migration target warm cycle
 
 Tests without a corresponding `note.txt` automatically pass (any cycle count is acceptable).
 
+## Perf Report
+
+`PERF_REPORT.md` is a generated page summarizing performance with and without the
+CoExec scheduler across the whole corpus:
+
+```bash
+./perf_test.py --report
+```
+
+It measures Off versus On+tuned per kernel and writes a table with per-kernel deltas
+and a geomean summary. Regenerate and commit it after compiler changes that move the
+numbers.
+
+## Configurations
+
+All configurations share a **base** flag set, which is the measurement environment
+rather than scheduler tuning:
+
+```
+-mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 \
+    --amdgpu-enable-static-simulator=1 \   # emits the Warm= cycle annotations
+    --fp-contract=fast \                   # affects the IR lowering all configs share
+    --amdgpu-expert-scheduling-mode \
+    --enable-post-misched=0                # disable post-RA scheduling
+```
+
+| Config     | Flags on top of base                                             |
+|------------|-----------------------------------------------------------------|
+| Off        | (none) - default scheduler                                      |
+| On+tuned   | `--amdgpu-sched-strategy=coexec --amdgpu-anti-hints-for-va-vdst` + the per-test flags from each kernel's `note.txt` Flags section |
+
+The report compares **Off** versus **On+tuned**.
+
+The regression gate (plain `./perf_test.py`) and `baseline.json` measure the
+**On+tuned** configuration.
+
 ## How It Works
 
-The script runs each `.ll` file through `llc` with:
-
-```
-llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 <file.ll> \
-    --amdgpu-sched-strategy=coexec \
-    --amdgpu-enable-static-simulator=1 \
-    --fp-contract=fast \
-    --enable-post-misched=0
-```
-
-It extracts the `Warm=` cycle count from the innermost loop block annotation and compares against the stored baseline.
+The script runs each `.ll` file through `llc` under the configuration above and
+extracts the `Warm=` cycle count from the innermost loop block annotation, comparing
+against the stored baseline.
 
 ## Configuration
 
