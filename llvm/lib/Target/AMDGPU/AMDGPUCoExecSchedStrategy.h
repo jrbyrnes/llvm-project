@@ -43,7 +43,6 @@ enum class AMDGPUSchedReason : uint8_t {
   Stall,
   MemoryPipeline,
   CoexecSlot,
-  KillProximity,       // tryKillProximity chose to free registers sooner
   CritResourceBalance, // tryCriticalResource chose based on resource pressure
   CritResourceDep,     // tryCriticalResourceDependency chose based on enabling
   ShadowMix,           // tryShadowMix deferred/prioritized for co-exec filling
@@ -60,8 +59,6 @@ inline StringRef getReasonName(AMDGPUSchedReason R) {
     return "MemoryPipeline";
   case AMDGPUSchedReason::CoexecSlot:
     return "CoexecSlot";
-  case AMDGPUSchedReason::KillProximity:
-    return "KillProximity";
   case AMDGPUSchedReason::CritResourceBalance:
     return "CritResource";
   case AMDGPUSchedReason::CritResourceDep:
@@ -183,8 +180,24 @@ private:
 
   unsigned RemainingCycles = 0;
 
-  int compareDepth(SUnit *Cur, SUnit *Added) const;
-  int compareKillProximity(SUnit *Cur, SUnit *Added) const;
+  /// Compares depth of two SUnits, considers one with lesser depth better.
+  ///
+  /// Works like the spaceship operator (<=>), i.e.:
+  /// \returns -1, if \p Candidate is worse than \p Existing
+  ///           0, if \p Candidate and \p Existing are equal
+  ///           1, if \p Candidate is better than \p Existing
+  int compareDepth(SUnit *Candidate, SUnit *Existing) const;
+
+  /// Compares two SUnits to see which one kills a register, or gets us closer
+  /// to killing a register.
+  /// To do so it compares minimum unscheduled data successors across data
+  /// predecessors, considers 1 unscheduled data successor as a kill.
+  ///
+  /// Works like the spaceship operator (<=>), i.e.:
+  /// \returns -1, if \p Candidate is worse than \p Existing
+  ///           0, if \p Candidate and \p Existing are equal
+  ///           1, if \p Candidate is better than \p Existing
+  int compareKillProximity(SUnit *Candidate, SUnit *Existing) const;
 
   /// Try to update PrioritySUs with a new \p SU
   void updatePrioritySUsWith(SUnit *SU, bool NeedKillProximity = false);
@@ -294,6 +307,8 @@ public:
   SUnit *getNextTargetSU(bool LookDeep = false) const;
   /// Insert the \p SU into AllSUs and account its \p BlockingCycles into
   /// the TotalCycles. This maintains the list of PrioritySUs.
+  /// \p NeedKillProximity specifies which comparison method is used to decide
+  /// if \p SU should be put into the list of PrioritySUs.
   void insert(SUnit *SU, unsigned BlockingCycles, bool NeedKillProximity);
   /// Update the state for \p SU being scheduled by removing it from the AllSUs
   /// and reducing its \p BlockingCycles from the TotalCycles. This maintains

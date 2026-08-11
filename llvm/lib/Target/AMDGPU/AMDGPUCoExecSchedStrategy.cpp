@@ -406,14 +406,13 @@ enum class KillProximityMode { Off, Auto, Always };
 static cl::opt<KillProximityMode> CoexecKillProximity(
     "amdgpu-coexec-kill-proximity", cl::Hidden,
     cl::init(KillProximityMode::Auto),
-    cl::desc("Tiebreak in tryCriticalResource by preferring candidates closer "
-             "to killing a register (lower min NumSuccsLeft)."),
-    cl::values(
-        clEnumValN(KillProximityMode::Off, "off", "Disabled."),
-        clEnumValN(KillProximityMode::Auto, "auto",
-                   "Enabled when HighPressure is set."),
-        clEnumValN(KillProximityMode::Always, "always",
-                   "Always enabled.")));
+    cl::desc("Prioritize instructions which are expected to kill a register "
+             "sooner (lower min NumSuccsLeft)."),
+    cl::values(clEnumValN(KillProximityMode::Off, "off", "Disabled."),
+               clEnumValN(KillProximityMode::Auto, "auto",
+                          "Enabled when HighPressure is set."),
+               clEnumValN(KillProximityMode::Always, "always",
+                          "Always enabled.")));
 
 namespace {
 // User-facing "effort" level for the coexec scheduler's O(N) reachability
@@ -1059,22 +1058,19 @@ SUnit *HardwareUnitInfo::getNextTargetSU(bool LookDeep) const {
   return TargetSU;
 }
 
-int HardwareUnitInfo::compareDepth(SUnit *Cur, SUnit *Added) const {
-  const unsigned CurDepth = Cur->getDepth();
-  const unsigned AddedDepth = Added->getDepth();
+int HardwareUnitInfo::compareDepth(SUnit *Candidate, SUnit *Existing) const {
+  const unsigned CurDepth = Existing->getDepth();
+  const unsigned CandDepth = Candidate->getDepth();
 
-  if (AddedDepth > CurDepth)
+  if (CandDepth > CurDepth)
     return -1;
-  if (AddedDepth == CurDepth)
+  if (CandDepth == CurDepth)
     return 0;
   return 1;
 }
 
-// Kill proximity: prefer the candidate which kills a register or gets us
-// closer to killing a register.
-// Compares minimum unscheduled data successors across data predecessors,
-// considers 1 unscheduled data successor as a kill.
-int HardwareUnitInfo::compareKillProximity(SUnit *Cur, SUnit *Added) const {
+int HardwareUnitInfo::compareKillProximity(SUnit *Candidate,
+                                           SUnit *Existing) const {
   // FIXME: original tryKillProximity implementation ignored a bunch of
   //        different instruction kinds (DS, FLAT, VMEM), but here we consider
   //        them all. Do we want to address this?
@@ -1130,52 +1126,53 @@ int HardwareUnitInfo::compareKillProximity(SUnit *Cur, SUnit *Added) const {
     return std::pair(Kills, MinOther);
   };
 
-  auto [CurKills, CurMinOther] = getKillStats(Cur);
-  auto [AddedKills, AddedMinOther] = getKillStats(Cur);
+  auto [CurKills, CurMinOther] = getKillStats(Existing);
+  auto [CandKills, CandMinOther] = getKillStats(Candidate);
 
   // We first look at how many registers each SU is expected to free.
-  if (AddedKills > CurKills)
+  if (CandKills > CurKills)
     return 1;
-  if (AddedKills < CurKills)
+  if (CandKills < CurKills)
     return -1;
 
   // If equal, prefer closer to killing among non-kill preds.
-  if (AddedMinOther < CurMinOther) {
+  if (CandMinOther < CurMinOther) {
     // TODO: I (alsachko) wonder if this would cause to complete rebuild of
     //       PrioritySUs way too often due to way too small differences.
     return 1;
   }
-  if (AddedMinOther > CurMinOther)
+  if (CandMinOther > CurMinOther)
     return -1;
   return 0;
 }
 
-void HardwareUnitInfo::updatePrioritySUsWith(SUnit *SU,
+void HardwareUnitInfo::updatePrioritySUsWith(SUnit *Cand,
                                              bool NeedKillProximity) {
   if (PrioritySUs.empty()) {
-    PrioritySUs.insert(SU);
+    PrioritySUs.insert(Cand);
     return;
   }
 
   int Decision = 0;
 
+  SUnit *Existing = *PrioritySUs.begin();
   if (CoexecKillProximity == KillProximityMode::Off ||
       (CoexecKillProximity == KillProximityMode::Auto && !NeedKillProximity))
-    Decision = compareDepth((*PrioritySUs.begin()), SU);
+    Decision = compareDepth(Cand, Existing);
   else
-    Decision = compareKillProximity((*PrioritySUs.begin()), SU);
+    Decision = compareKillProximity(Cand, Existing);
 
   if (Decision < 0) // Candidate is worse than what we have
     return;
 
   if (Decision == 0) { // Candidate is on par with what we have
-    PrioritySUs.insert(SU);
+    PrioritySUs.insert(Cand);
     return;
   }
 
   // Decision > 0, candidate is better than what we have
   PrioritySUs.clear();
-  PrioritySUs.insert(SU);
+  PrioritySUs.insert(Cand);
 }
 
 void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles,
