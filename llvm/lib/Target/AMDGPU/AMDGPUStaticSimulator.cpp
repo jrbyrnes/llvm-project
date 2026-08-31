@@ -1593,6 +1593,11 @@ void recordInstruction(const MachineInstr &MI, const InstTiming &T,
 // Verbose Logging Helpers
 //===----------------------------------------------------------------------===//
 
+// These print instruction classes and functional unit names, which are only
+// available in builds with assertions enabled. Their callers are guarded by
+// LLVM_DEBUG so that the whole facility disappears alongside them.
+#ifndef NDEBUG
+
 void logInstHeader(unsigned Cycle, const MachineInstr &MI, const InstTiming &T,
                    const SIInstrInfo &TII, const GPUSimState &State) {
   dbgs() << "\n[Cycle " << Cycle << "] ";
@@ -1740,6 +1745,8 @@ void logUnitAndMemState(const GPUSimState &State, const InstTiming &T) {
   }
 }
 
+#endif // NDEBUG
+
 //===----------------------------------------------------------------------===//
 // WMMA Window State Capture
 //===----------------------------------------------------------------------===//
@@ -1865,8 +1872,8 @@ void simulateInst(const MachineInstr &MI, const SIInstrInfo &TII,
   if (handleMSBSet(T.IC, State, Metrics, Report, MI, TII, EntryCycle))
     return;
 
-  if (VerboseSimulation)
-    logInstHeader(EntryCycle, MI, T, TII, State);
+  LLVM_DEBUG(if (VerboseSimulation)
+                 logInstHeader(EntryCycle, MI, T, TII, State));
 
   if (T.IC == InstClass::WAITCNT) {
     const MachineBasicBlock *MBB = MI.getParent();
@@ -1899,8 +1906,7 @@ void simulateInst(const MachineInstr &MI, const SIInstrInfo &TII,
     }
   }
 
-  if (VerboseSimulation)
-    logStalls(Stalls, State);
+  LLVM_DEBUG(if (VerboseSimulation) logStalls(Stalls, State));
 
   attributeStall(Stalls, T.Unit, T.IC, Metrics);
 
@@ -1950,14 +1956,12 @@ void simulateInst(const MachineInstr &MI, const SIInstrInfo &TII,
 
   trackWMMACoExec(T.IC, Stalls, State, Metrics);
 
-  if (VerboseSimulation)
-    logWMMAWindow(State, T.IC);
+  LLVM_DEBUG(if (VerboseSimulation) logWMMAWindow(State, T.IC));
 
   recordInstruction(MI, T, TII, Stalls, State, Metrics);
   State.RegFile.invalidateWrites(MI);
 
-  if (VerboseSimulation)
-    logUnitAndMemState(State, T);
+  LLVM_DEBUG(if (VerboseSimulation) logUnitAndMemState(State, T));
 
   State.advanceCycle(1);
   State.PreviousInstClass = T.IC;
