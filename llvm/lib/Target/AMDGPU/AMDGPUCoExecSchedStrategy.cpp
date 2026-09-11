@@ -1071,9 +1071,23 @@ int HardwareUnitInfo::compareDepth(SUnit *Candidate, SUnit *Existing) const {
 
 int HardwareUnitInfo::compareKillProximity(SUnit *Candidate,
                                            SUnit *Existing) const {
-  // FIXME: original tryKillProximity implementation ignored a bunch of
-  //        different instruction kinds (DS, FLAT, VMEM), but here we consider
-  //        them all. Do we want to address this?
+  const MachineInstr *ExistingMI = Existing->getInstr();
+  const MachineInstr *CandMI = Candidate->getInstr();
+
+  const bool CandIsMemOp = SIInstrInfo::isDS(*CandMI) ||
+                           SIInstrInfo::isFLAT(*CandMI) ||
+                           SIInstrInfo::isVMEM(*CandMI);
+  const bool ExistingIsMemOp = SIInstrInfo::isDS(*ExistingMI) ||
+                               SIInstrInfo::isFLAT(*ExistingMI) ||
+                               SIInstrInfo::isVMEM(*ExistingMI);
+  // Memory operation instructions do not generally help reduce register
+  // pressure, hence a number of early exist.
+  if (!ExistingIsMemOp && CandIsMemOp)
+    return -1;
+  if (ExistingIsMemOp && !CandIsMemOp)
+    return 1;
+  if (ExistingIsMemOp && CandIsMemOp)
+    return compareDepth(Candidate, Existing);
 
   // Estimate number of killed registers and min successors left for killing.
   auto getKillStats = [](const SUnit *SU) {
@@ -1111,9 +1125,8 @@ int HardwareUnitInfo::compareKillProximity(SUnit *Candidate,
     }
 
     unsigned Kills = 0;
-    unsigned MinOther = RegMaxUnsched.empty()
-                       ? 0
-                       : RegMaxUnsched.begin()->second;
+    unsigned MinOther =
+        RegMaxUnsched.empty() ? 0 : RegMaxUnsched.begin()->second;
     for (auto &[Reg, MaxUnsched] : RegMaxUnsched) {
       if (MaxUnsched < 2)
         ++Kills;
@@ -1147,7 +1160,7 @@ int HardwareUnitInfo::compareKillProximity(SUnit *Candidate,
 }
 
 void HardwareUnitInfo::updatePrioritySUsWith(SUnit *Cand,
-                                             bool NeedKillProximity) {
+                                             bool IsCloseToRegPressureLimit) {
   if (PrioritySUs.empty()) {
     PrioritySUs.insert(Cand);
     return;
@@ -1157,7 +1170,7 @@ void HardwareUnitInfo::updatePrioritySUsWith(SUnit *Cand,
 
   SUnit *Existing = *PrioritySUs.begin();
   if (CoexecKillProximity == KillProximityMode::Off ||
-      (CoexecKillProximity == KillProximityMode::Auto && !NeedKillProximity))
+      (CoexecKillProximity == KillProximityMode::Auto && !IsCloseToRegPressureLimit))
     Decision = compareDepth(Cand, Existing);
   else
     Decision = compareKillProximity(Cand, Existing);
@@ -1176,17 +1189,17 @@ void HardwareUnitInfo::updatePrioritySUsWith(SUnit *Cand,
 }
 
 void HardwareUnitInfo::insert(SUnit *SU, unsigned BlockingCycles,
-                              bool NeedKillProximity) {
+                              bool IsCloseToRegPressureLimit) {
   if (!AllSUs.insert(SU))
     llvm_unreachable("HardwareUnit already contains SU!");
 
   TotalCycles += BlockingCycles;
 
-  updatePrioritySUsWith(SU, NeedKillProximity);
+  updatePrioritySUsWith(SU, IsCloseToRegPressureLimit);
 }
 
 void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles,
-                                     bool NeedKillProximity) {
+                                     bool IsCloseToRegPressureLimit) {
   if (RemainingCycles)
     RemainingCycles -= BlockingCycles;
 
@@ -1206,14 +1219,8 @@ void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles,
   if (AllSUs.empty())
     return;
   if (PrioritySUs.empty()) {
-    for (auto SU : AllSUs) {
-      if (PrioritySUs.empty()) {
-        PrioritySUs.insert(SU);
-        continue;
-      }
-
-      updatePrioritySUsWith(SU, NeedKillProximity);
-    }
+    for (auto SU : AllSUs)
+      updatePrioritySUsWith(SU, IsCloseToRegPressureLimit);
   }
 }
 
@@ -1300,7 +1307,7 @@ void CandidateHeuristics::updateForScheduling(SUnit *SU,
   unsigned Latency = getHWUICyclesForSU(SU);
   HardwareUnitInfo *HWUI = getHWUIFromFlavor(Flavor);
   assert(HWUI);
-  HWUI->markScheduled(SU, Latency, NeedKillProximity);
+  HWUI->markScheduled(SU, Latency, IsCloseToRegPressureLimit);
   MixInfo.recordScheduled(Flavor);
   // Mix snapshot is now stale; tryShadowMix will refresh on its next call.
   MixInfo.invalidate();
@@ -1863,7 +1870,7 @@ void CandidateHeuristics::collectRegionSummary() {
     MachineInstr *MI = SU.getInstr();
     const InstructionFlavor Flavor = classifyFlavor(*MI, *SII);
     HWUInfo[(int)(Flavor)].insert(&SU, getHWUICyclesForSU(&SU),
-                                  NeedKillProximity);
+                                  IsCloseToRegPressureLimit);
     unsigned CarriedLatency = getCarriedLatency(&SU);
     if (CarriedLatency)
       CarriedLatencies[MI] = CarriedLatency;
@@ -3306,13 +3313,13 @@ void AMDGPUCoExecSchedStrategy::pickNodeFromQueue(
     }
   }
 
-  const bool NeedKillProximity =
+  const bool IsCloseToRegPressureLimit =
       DAG->isTrackingPressure() &&
       VGPRPressure + 2 * MaxVGPRPressureInc >= VGPRExcessLimit;
-  LLVM_DEBUG(dbgs() << "NeedKillProximity=" << NeedKillProximity
+  LLVM_DEBUG(dbgs() << "IsCloseToRegPressureLimit=" << IsCloseToRegPressureLimit
                     << " (VGPR=" << VGPRPressure
                     << " limit=" << VGPRExcessLimit << ")\n");
-  Heurs.setNeedKillProximity(NeedKillProximity);
+  Heurs.setIsCloseToRegPressureLimit(IsCloseToRegPressureLimit);
 
   auto EvaluateQueue = [&](ReadyQueue &Q, bool FromPending) {
     for (SUnit *SU : Q) {
