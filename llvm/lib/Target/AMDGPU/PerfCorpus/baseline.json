@@ -6,6 +6,6 @@
   "Gluon/bf16FA/bf16_fa": 2135,
   "Gluon/bf16_GEMM/bf16_GEMM": 2067,
   "Gluon/fo4_GEMM/fp4_GEMM": 714,
-  "Gluon/fp8_FA/fp8_fa": 1790,
+  "Gluon/fp8_FA/fp8_fa": 1776,
   "Gluon/fp8_GEMM/fo8_GEMM": 1251
 }

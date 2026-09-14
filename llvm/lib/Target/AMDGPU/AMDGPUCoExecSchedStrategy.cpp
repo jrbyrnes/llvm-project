@@ -976,7 +976,6 @@ void CandidateHeuristics::initialize(ScheduleDAGMI *SchedDAG,
   LLVM_DEBUG(dumpRegionSummary());
   CurrentWindow.clear();
   NextWindow.clear();
-  RegionCarriedLatency = BlockCarriedLatency.getNumOccurrences() ? BlockCarriedLatency : AMDGPU::CarriedLatency::Off;
 
   // Populate the initial window for the first producer.
   // Note: At initialization time, MixInfo is reset so no ready counts yet.
@@ -1379,6 +1378,8 @@ void CandidateHeuristics::collectRegionSummary() {
   if (!SchedModel || !SchedModel->hasInstrSchedModel())
     return;
 
+  if (BlockCarriedLatency.getNumOccurrences())
+    RegionCarriedLatency = BlockCarriedLatency;
 
   if (!BlockCarriedLatency.getNumOccurrences()) {
     SmallVector<SUnit *, 16> RegionWMMAs;
