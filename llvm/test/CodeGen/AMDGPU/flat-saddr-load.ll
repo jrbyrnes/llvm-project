@@ -3422,7 +3422,6 @@ define amdgpu_ps void @flat_addr_64bit_lsr_iv(ptr inreg %arg) {
 ; GFX1250-SDAG-NEXT:    s_movk_i32 s0, 0x100
 ; GFX1250-SDAG-NEXT:  .LBB116_1: ; %bb3
 ; GFX1250-SDAG-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX1250-SDAG-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-SDAG-NEXT:    s_wait_dscnt 0x0
 ; GFX1250-SDAG-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
 ; GFX1250-SDAG-NEXT:    s_wait_loadcnt 0x0
@@ -3442,7 +3441,6 @@ define amdgpu_ps void @flat_addr_64bit_lsr_iv(ptr inreg %arg) {
 ; GFX1250-GISEL-NEXT:    s_movk_i32 s0, 0x100
 ; GFX1250-GISEL-NEXT:  .LBB116_1: ; %bb3
 ; GFX1250-GISEL-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX1250-GISEL-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-GISEL-NEXT:    s_wait_dscnt 0x0
 ; GFX1250-GISEL-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
 ; GFX1250-GISEL-NEXT:    s_wait_loadcnt 0x0
@@ -3463,7 +3461,6 @@ define amdgpu_ps void @flat_addr_64bit_lsr_iv(ptr inreg %arg) {
 ; GFX1250-NOECC-NEXT:    s_movk_i32 s0, 0x100
 ; GFX1250-NOECC-NEXT:  .LBB116_1: ; %bb3
 ; GFX1250-NOECC-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX1250-NOECC-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-NOECC-NEXT:    s_wait_dscnt 0x0
 ; GFX1250-NOECC-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
 ; GFX1250-NOECC-NEXT:    s_wait_loadcnt 0x0
@@ -3501,10 +3498,8 @@ define amdgpu_ps void @flat_addr_64bit_lsr_iv_multiload(ptr inreg %arg, ptr inre
 ; GFX1250-SDAG-NEXT:    s_movk_i32 s0, 0x100
 ; GFX1250-SDAG-NEXT:  .LBB117_1: ; %bb3
 ; GFX1250-SDAG-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX1250-SDAG-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-SDAG-NEXT:    s_wait_dscnt 0x0
 ; GFX1250-SDAG-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
-; GFX1250-SDAG-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-SDAG-NEXT:    s_wait_loadcnt_dscnt 0x0
 ; GFX1250-SDAG-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
 ; GFX1250-SDAG-NEXT:    s_wait_loadcnt 0x0
@@ -3524,10 +3519,8 @@ define amdgpu_ps void @flat_addr_64bit_lsr_iv_multiload(ptr inreg %arg, ptr inre
 ; GFX1250-GISEL-NEXT:    s_movk_i32 s0, 0x100
 ; GFX1250-GISEL-NEXT:  .LBB117_1: ; %bb3
 ; GFX1250-GISEL-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX1250-GISEL-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-GISEL-NEXT:    s_wait_dscnt 0x0
 ; GFX1250-GISEL-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
-; GFX1250-GISEL-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-GISEL-NEXT:    s_wait_loadcnt_dscnt 0x0
 ; GFX1250-GISEL-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
 ; GFX1250-GISEL-NEXT:    s_wait_loadcnt 0x0
@@ -3548,10 +3541,8 @@ define amdgpu_ps void @flat_addr_64bit_lsr_iv_multiload(ptr inreg %arg, ptr inre
 ; GFX1250-NOECC-NEXT:    s_movk_i32 s0, 0x100
 ; GFX1250-NOECC-NEXT:  .LBB117_1: ; %bb3
 ; GFX1250-NOECC-NEXT:    ; =>This Inner Loop Header: Depth=1
-; GFX1250-NOECC-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-NOECC-NEXT:    s_wait_dscnt 0x0
 ; GFX1250-NOECC-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
-; GFX1250-NOECC-NEXT:    s_wait_xcnt 0x0
 ; GFX1250-NOECC-NEXT:    s_wait_loadcnt_dscnt 0x0
 ; GFX1250-NOECC-NEXT:    flat_load_b32 v1, v0, s[2:3] scope:SCOPE_SYS
 ; GFX1250-NOECC-NEXT:    s_wait_loadcnt 0x0

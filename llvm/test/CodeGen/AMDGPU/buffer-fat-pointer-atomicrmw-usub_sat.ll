@@ -48,9 +48,8 @@ define i32 @buffer_fat_ptr_agent_atomic_usub_sat_ret_u32__offset__amdgpu_no_fine
 ; GFX9-NEXT:    v_mov_b32_e32 v5, s20
 ; GFX9-NEXT:    v_mov_b32_e32 v0, v3
 ; GFX9-NEXT:    v_mov_b32_e32 v1, v4
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    buffer_atomic_cmpswap v[0:1], v5, s[16:19], 0 offen offset:1024 glc
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
+; GFX9-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-NEXT:    buffer_wbinvl1
 ; GFX9-NEXT:    v_cmp_eq_u32_e32 vcc, v0, v4
 ; GFX9-NEXT:    s_or_b64 s[4:5], vcc, s[4:5]
@@ -103,9 +102,8 @@ define void @buffer_fat_ptr_agent_atomic_usub_sat_noret_u32__offset__amdgpu_no_f
 ; GFX9-NEXT:    v_mov_b32_e32 v5, s20
 ; GFX9-NEXT:    v_mov_b32_e32 v4, v2
 ; GFX9-NEXT:    v_mov_b32_e32 v3, v1
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    buffer_atomic_cmpswap v[3:4], v5, s[16:19], 0 offen offset:1024 glc
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
+; GFX9-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-NEXT:    buffer_wbinvl1
 ; GFX9-NEXT:    v_cmp_eq_u32_e32 vcc, v3, v2
 ; GFX9-NEXT:    s_or_b64 s[4:5], vcc, s[4:5]
@@ -161,9 +159,8 @@ define i32 @buffer_fat_ptr_agent_atomic_usub_sat_ret_u32__offset__amdgpu_no_remo
 ; GFX9-NEXT:    v_mov_b32_e32 v5, s20
 ; GFX9-NEXT:    v_mov_b32_e32 v0, v3
 ; GFX9-NEXT:    v_mov_b32_e32 v1, v4
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    buffer_atomic_cmpswap v[0:1], v5, s[16:19], 0 offen offset:1024 glc
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
+; GFX9-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-NEXT:    buffer_wbinvl1
 ; GFX9-NEXT:    v_cmp_eq_u32_e32 vcc, v0, v4
 ; GFX9-NEXT:    s_or_b64 s[4:5], vcc, s[4:5]
@@ -218,9 +215,8 @@ define i32 @buffer_fat_ptr_agent_atomic_usub_sat_ret_u32__offset__amdgpu_no_fine
 ; GFX9-NEXT:    v_mov_b32_e32 v5, s20
 ; GFX9-NEXT:    v_mov_b32_e32 v0, v3
 ; GFX9-NEXT:    v_mov_b32_e32 v1, v4
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    buffer_atomic_cmpswap v[0:1], v5, s[16:19], 0 offen offset:1024 glc
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
+; GFX9-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-NEXT:    buffer_wbinvl1
 ; GFX9-NEXT:    v_cmp_eq_u32_e32 vcc, v0, v4
 ; GFX9-NEXT:    s_or_b64 s[4:5], vcc, s[4:5]
@@ -280,9 +276,8 @@ define i32 @buffer_fat_ptr_system_atomic_usub_sat_ret_u32__offset__amdgpu_no_fin
 ; GFX9-NEXT:    v_mov_b32_e32 v5, s20
 ; GFX9-NEXT:    v_mov_b32_e32 v0, v3
 ; GFX9-NEXT:    v_mov_b32_e32 v1, v4
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
 ; GFX9-NEXT:    buffer_atomic_cmpswap v[0:1], v5, s[16:19], 0 offen offset:1024 glc
-; GFX9-NEXT:    s_waitcnt vmcnt(0) lgkmcnt(0)
+; GFX9-NEXT:    s_waitcnt vmcnt(0)
 ; GFX9-NEXT:    buffer_wbinvl1
 ; GFX9-NEXT:    v_cmp_eq_u32_e32 vcc, v0, v4
 ; GFX9-NEXT:    s_or_b64 s[4:5], vcc, s[4:5]
