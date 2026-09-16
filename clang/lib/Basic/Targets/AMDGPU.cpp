@@ -197,7 +197,7 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
                                             Triple.getSubArch())
                                       : llvm::AMDGPU::parseArchAMDGCN(Opts.CPU))
                   : llvm::AMDGPU::parseArchR600(Opts.CPU)),
-      GPUFeatures(Triple.isAMDGCN() ? llvm::AMDGPU::getArchAttrAMDGCN(GPUKind)
+      GPUFeatures(Triple.isAMDGCN() ? llvm::AMDGPU::FEATURE_NONE
                                     : llvm::AMDGPU::getArchAttrR600(GPUKind)) {
   resetDataLayout();
 
@@ -215,7 +215,10 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   // should just be assumed true for the dummy target.
   HasFastHalfType = true;
   HasFloat16 = true;
-  WavefrontSize = (GPUFeatures & llvm::AMDGPU::FEATURE_WAVE32) ? 32 : 64;
+  WavefrontSize = llvm::AMDGPU::getFeatureBitset(GPUKind).test(
+                      llvm::AMDGPU::FEAT_SUPPORTS_WAVE32)
+                      ? 32
+                      : 64;
 
   // Set pointer width and alignment for the generic address space.
   PointerWidth = PointerAlign = getPointerWidthV(LangAS::Default);
@@ -224,29 +227,30 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
     SizeType = UnsignedLong;
     PtrDiffType = SignedLong;
     IntPtrType = SignedLong;
+    Int64Type = SignedLong;
+    IntMaxType = SignedLong;
   }
 
   MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
-  CUMode = !(GPUFeatures & llvm::AMDGPU::FEATURE_WGP);
+  CUMode = !llvm::AMDGPU::getFeatureBitset(GPUKind).test(
+      llvm::AMDGPU::FEAT_SUPPORTS_WGP);
 
-  for (auto F : {"image-insts", "gws", "vmem-to-lds-load-insts"}) {
+  for (auto F : {"image-insts", "gws", "vmem-to-lds-load-insts", "supports-wgp",
+                 "supports-wave32", "xnack-support", "sramecc-support",
+                 "xnack-on-off-modes"}) {
     if (GPUKind != llvm::AMDGPU::GK_NONE)
       ReadOnlyFeatures.insert(F);
   }
   HalfArgsAndReturns = true;
 
   if (Opts.AMDGPUXnackState != TargetOptions::AMDGPUFeatureState::Any) {
-    XnackSetting =
-        Opts.AMDGPUXnackState == TargetOptions::AMDGPUFeatureState::Enabled
-            ? llvm::AMDGPU::TargetIDSetting::On
-            : llvm::AMDGPU::TargetIDSetting::Off;
+    OffloadArchFeatures["xnack"] =
+        Opts.AMDGPUXnackState == TargetOptions::AMDGPUFeatureState::Enabled;
   }
 
   if (Opts.AMDGPUSramEccState != TargetOptions::AMDGPUFeatureState::Any) {
-    SramEccSetting =
-        Opts.AMDGPUSramEccState == TargetOptions::AMDGPUFeatureState::Enabled
-            ? llvm::AMDGPU::TargetIDSetting::On
-            : llvm::AMDGPU::TargetIDSetting::Off;
+    OffloadArchFeatures["sramecc"] =
+        Opts.AMDGPUSramEccState == TargetOptions::AMDGPUFeatureState::Enabled;
   }
 }
 
@@ -311,25 +315,22 @@ void AMDGPUTargetInfo::getTargetDefines(const LangOptions &Opts,
                         Twine("__"));
     Builder.defineMacro("__amdgcn_processor__",
                         Twine("\"") + Twine(CanonName) + Twine("\""));
-    llvm::AMDGPU::TargetID TargetID(GPUKind, getTriple(), XnackSetting,
-                                    SramEccSetting);
-    Builder.defineMacro("__amdgcn_target_id__",
-                        Twine("\"") +
-                            Twine(TargetID.getCanonicalTargetIDString()) +
-                            Twine("\""));
-    auto DefineFeatureMacro = [&](StringRef Feature,
-                                  llvm::AMDGPU::TargetIDSetting Setting) {
-      if (Setting == llvm::AMDGPU::TargetIDSetting::On ||
-          Setting == llvm::AMDGPU::TargetIDSetting::Off) {
-        std::string NewF = Feature.str();
+    Builder.defineMacro(
+        "__amdgcn_target_id__",
+        Twine("\"") +
+            Twine(getCanonicalTargetID(getArchNameAMDGCN(GPUKind),
+                                       OffloadArchFeatures)) +
+            Twine("\""));
+    for (auto F : getAllPossibleTargetIDFeatures(getTriple(), CanonName)) {
+      auto Loc = OffloadArchFeatures.find(F);
+      if (Loc != OffloadArchFeatures.end()) {
+        std::string NewF = F.str();
         llvm::replace(NewF, '-', '_');
-        Builder.defineMacro(
-            Twine("__amdgcn_feature_") + Twine(NewF) + Twine("__"),
-            Setting == llvm::AMDGPU::TargetIDSetting::On ? "1" : "0");
+        Builder.defineMacro(Twine("__amdgcn_feature_") + Twine(NewF) +
+                                Twine("__"),
+                            Loc->second ? "1" : "0");
       }
-    };
-    DefineFeatureMacro("xnack", XnackSetting);
-    DefineFeatureMacro("sramecc", SramEccSetting);
+    }
   }
 
   if (Opts.AtomicIgnoreDenormalMode)

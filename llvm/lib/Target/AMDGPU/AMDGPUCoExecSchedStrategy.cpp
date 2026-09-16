@@ -1840,7 +1840,7 @@ unsigned CandidateHeuristics::getStructuralStallCycles(SchedBoundary &Zone,
   }
 
   if (Zone.HazardRec && Zone.HazardRec->isEnabled()) {
-    auto *HR = static_cast<GCNHazardRecognizer *>(Zone.HazardRec);
+    auto *HR = static_cast<GCNHazardRecognizer *>(Zone.HazardRec.get());
     Stall = std::max(Stall, HR->getHazardWaitStates(MI));
   }
 
@@ -2065,7 +2065,7 @@ unsigned CandidateHeuristics::getStallCosts(SUnit *SU, SchedBoundary &Zone,
 
 unsigned CandidateHeuristics::getMissedSlotCost(SUnit *SU,
                                                 SchedBoundary &Zone) {
-  auto *HazardRec = static_cast<GCNHazardRecognizer *>(Zone.HazardRec);
+  auto *HazardRec = static_cast<GCNHazardRecognizer *>(Zone.HazardRec.get());
 
   // Only applies inside active WMMA coexec window.
   if (!HazardRec->inCoExecWindow())
@@ -2225,7 +2225,7 @@ bool CandidateHeuristics::tryMemoryPipeline(
 bool CandidateHeuristics::tryCoexecSlot(
     GenericSchedulerBase::SchedCandidate &Cand,
     GenericSchedulerBase::SchedCandidate &TryCand, SchedBoundary *Zone) {
-  auto HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec);
+  auto *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec.get());
   std::optional<unsigned> Stage = HazardRec->getCurrentCoExecStage();
   if (!Stage.has_value())
     return false;
@@ -2761,8 +2761,7 @@ void AMDGPUCoExecSchedStrategy::initialize(ScheduleDAGMI *DAG) {
   // This must happen after GCNSchedStrategy::initialize() because
   // GenericScheduler::initialize() calls SchedBoundary::reset() which
   // deletes and recreates the hazard recognizer each region.
-  delete Top.HazardRec;
-  Top.HazardRec = new GCNHazardRecognizer(
+  Top.HazardRec = std::make_unique<GCNHazardRecognizer>(
       DAG->MF, GCNHazardRecognizer::OperatingMode::PreRA);
 }
 

@@ -12,7 +12,6 @@
 
 #include "llvm/TargetParser/AMDGPUTargetParser.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/Bitset.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringTable.h"
 #include "llvm/ADT/Twine.h"
@@ -28,15 +27,6 @@ namespace {
 constexpr unsigned NumAMDGPUSubArches =
     Triple::LastAMDGPUSubArch - Triple::FirstAMDGPUSubArch + 1;
 
-// The frontend-visible SubtargetFeatures, one enumerator per bit in a GPU's
-// feature bitset (NUM_FEATURES is the count).
-enum AMDGPUFeature : unsigned {
-#define GET_AMDGPU_FEATURE_ENUM
-#include "llvm/TargetParser/AMDGPUTargetParserDef.inc"
-};
-
-using AMDGPUFeatureBitset = Bitset<NUM_FEATURES>;
-
 // A legacy GPU name (e.g. "tahiti") mapped to the GPUKind it aliases.
 struct GPUNameAlias {
   StringTable::Offset AltName;
@@ -51,6 +41,7 @@ struct GPUInfo {
   AMDGPUFeatureBitset Features;
   IsaVersion Version;
   StringTable::Offset FamilyName;
+  StringTable::Offset BaseName; // The canonical device name for a variant.
 };
 
 // Per-GPU data for the R600 GPUKinds.
@@ -176,6 +167,11 @@ StringRef llvm::AMDGPU::getArchFamilyNameAMDGCN(GPUKind AK) {
 Triple::SubArchType llvm::AMDGPU::getSubArch(GPUKind AK) {
   const GPUInfo *Info = getAMDGPUInfo(AK);
   return Info ? Info->SubArch : Triple::SubArchType::NoSubArch;
+}
+
+StringRef llvm::AMDGPU::getBaseArchNameAMDGCN(GPUKind AK) {
+  const GPUInfo *Info = getAMDGPUInfo(AK);
+  return Info ? AMDGPUNameStrTab[Info->BaseName] : "";
 }
 
 AMDGPU::GPUKind
@@ -320,12 +316,27 @@ unsigned AMDGPU::getArchAttrAMDGCN(GPUKind AK) {
 }
 
 unsigned AMDGPU::getArchAttrAMDGCN(Triple::SubArchType SubArch) {
-  return getArchAttrAMDGCN(getGPUKindFromSubArch(SubArch));
+  const GPUInfo *Info = getAMDGPUInfo(getGPUKindFromSubArch(SubArch));
+  return Info ? Info->ArchFeatures : FEATURE_NONE;
 }
 
 R600FeatureKind AMDGPU::getArchAttrR600(GPUKind AK) {
   const R600Info *Info = getR600Info(AK);
   return Info ? Info->ArchFeatures : R600_FEATURE_NONE;
+}
+
+const AMDGPUFeatureBitset &AMDGPU::getFeatureBitset(GPUKind AK) {
+  static constexpr AMDGPUFeatureBitset Empty{};
+  const GPUInfo *Info = getAMDGPUInfo(AK);
+  return Info ? Info->Features : Empty;
+}
+
+void AMDGPU::getFeatureNames(const AMDGPUFeatureBitset &Features,
+                             SmallVectorImpl<StringRef> &Names) {
+  for (unsigned I = 0; I != NUM_FEATURES; ++I) {
+    if (Features.test(I))
+      Names.push_back(AMDGPUNameStrTab[AMDGPUFeatureNames[I]]);
+  }
 }
 
 void AMDGPU::fillValidArchListAMDGCN(SmallVectorImpl<StringRef> &Values,
@@ -377,7 +388,7 @@ unsigned AMDGPU::getTotalNumSGPRs(Triple::SubArchType SubArch) {
 }
 
 unsigned AMDGPU::getAddressableNumSGPRs(GPUKind AK) {
-  if (getArchAttrAMDGCN(AK) & FEATURE_SGPR_INIT_BUG)
+  if (getFeatureBitset(AK).test(FEAT_SGPR_INIT_BUG))
     return FIXED_NUM_SGPRS_FOR_INIT_BUG;
 
   IsaVersion Version = getIsaVersion(getSubArch(AK));
@@ -389,7 +400,7 @@ unsigned AMDGPU::getAddressableNumSGPRs(GPUKind AK) {
 }
 
 unsigned AMDGPU::getAddressableNumSGPRs(Triple::SubArchType SubArch) {
-  if (getArchAttrAMDGCN(SubArch) & FEATURE_SGPR_INIT_BUG)
+  if (getFeatureBitset(getGPUKindFromSubArch(SubArch)).test(FEAT_SGPR_INIT_BUG))
     return FIXED_NUM_SGPRS_FOR_INIT_BUG;
 
   IsaVersion Version = getIsaVersion(SubArch);
@@ -427,14 +438,23 @@ StringRef AMDGPU::getCanonicalArchName(const Triple &T, StringRef Arch) {
   return T.isAMDGCN() ? getArchNameAMDGCN(ProcKind) : getArchNameR600(ProcKind);
 }
 
-// Add each frontend feature in \p Info's bitset to \p Features. With \p
+// Capability features clang queries via the feature bitset but must not
+// serialize into the target-feature string.
+//
+// FIXME: This is hacky, we shouldn't have mismatches between the bitset and
+// feature string map.
+static const AMDGPUFeatureBitset FrontendOnlyFeatures = {
+    FEAT_FAST_FMAF,         FEAT_FAST_DENORMAL_F32, FEAT_SUPPORTS_WAVE32,
+    FEAT_SUPPORTS_WGP,      FEAT_XNACK_SUPPORT,     FEAT_SRAMECC_SUPPORT,
+    FEAT_XNACK_ON_OFF_MODES};
+
+// Add a GPU's features (minus the frontend-only ones) to \p Features. With \p
 // Overwrite false, existing entries are kept so user -mattr overrides win.
 static void addGPUFeatures(const GPUInfo &Info, bool Overwrite,
                            StringMap<bool> &Features) {
-  for (unsigned I = 0; I != NUM_FEATURES; ++I) {
-    if (!Info.Features.test(I))
-      continue;
-    StringRef Name = AMDGPUNameStrTab[AMDGPUFeatureNames[I]];
+  SmallVector<StringRef, NUM_FEATURES> Names;
+  getFeatureNames(Info.Features & ~FrontendOnlyFeatures, Names);
+  for (StringRef Name : Names) {
     if (Overwrite)
       Features[Name] = true;
     else
@@ -458,9 +478,9 @@ fillAMDGCNFeatureMap(StringRef GPU, const Triple &T,
   // feature bitset; a dual-mode GPU has neither wave bit set.
   const bool IsNullGPU = T.getSubArch() == Triple::NoSubArch && GPU.empty();
   const bool TargetHasWave32 =
-      Info && Info->Features.test(FEATURE_WAVEFRONTSIZE32);
+      Info && Info->Features.test(FEAT_WAVEFRONTSIZE32);
   const bool TargetHasWave64 =
-      Info && Info->Features.test(FEATURE_WAVEFRONTSIZE64);
+      Info && Info->Features.test(FEAT_WAVEFRONTSIZE64);
 
   auto Wave32Itr = Features.find("wavefrontsize32");
   auto Wave64Itr = Features.find("wavefrontsize64");
@@ -593,12 +613,13 @@ static GPUKind getGPUKindFromTargetID(const Triple &TT, StringRef TargetIDStr) {
 static bool computeTargetIDFeatures(GPUKind Arch, StringRef TargetIDStr,
                                     TargetIDSetting &XnackSetting,
                                     TargetIDSetting &SramEccSetting) {
-  unsigned ArchAttr = getArchAttrAMDGCN(Arch);
-  XnackSetting = (ArchAttr & FEATURE_XNACK_ON_OFF_MODES)
+  const AMDGPUFeatureBitset &Features = getFeatureBitset(Arch);
+  XnackSetting = Features.test(FEAT_XNACK_ON_OFF_MODES)
                      ? TargetIDSetting::Any
                      : TargetIDSetting::Unsupported;
-  SramEccSetting = (ArchAttr & FEATURE_SRAMECC) ? TargetIDSetting::Any
-                                                : TargetIDSetting::Unsupported;
+  SramEccSetting = Features.test(FEAT_SRAMECC_SUPPORT)
+                       ? TargetIDSetting::Any
+                       : TargetIDSetting::Unsupported;
 
   // The first component is the processor; the rest are feature modifiers of the
   // form "<feature><+|->".
@@ -716,7 +737,7 @@ void TargetID::printCanonicalTargetIDString(raw_ostream &OS) const {
   printFeatureModifiers(OS, getSramEccSetting(), getXnackSetting());
 }
 
-std::string TargetID::getCanonicalTargetIDString() const {
+std::string TargetID::getCanonicalFeatureString() const {
   std::string Str;
   raw_string_ostream OS(Str);
   printCanonicalTargetIDString(OS);

@@ -209,9 +209,7 @@ InstClass classifyInst(const MachineInstr &MI, const SIInstrInfo &TII) {
   if (Opc == AMDGPU::TENSOR_LOAD_TO_LDS_d2 || Opc == AMDGPU::TENSOR_LOAD_TO_LDS_d4)
     return InstClass::TDM;
 
-  uint64_t TSFlags = MI.getDesc().TSFlags;
-
-  if (TSFlags & SIInstrFlags::DS) {
+  if (TII.isDS(MI)) {
     if (MI.mayLoad())
       return InstClass::DS_READ;
     if (MI.mayStore())
@@ -789,10 +787,9 @@ InstTiming getInstTiming(const MachineInstr &MI, const SIInstrInfo &TII) {
 /// Check if instruction implicitly waits for all VALU to complete (VA_VDST==0)
 /// Same logic as AMDGPUInsertDelayAlu::instructionWaitsForVALU
 static bool instructionWaitsForVALU(const MachineInstr &MI) {
-  const uint64_t VA_VDST_0 = SIInstrFlags::DS | SIInstrFlags::EXP |
-                             SIInstrFlags::FLAT | SIInstrFlags::MIMG |
-                             SIInstrFlags::MTBUF | SIInstrFlags::MUBUF;
-  if (MI.getDesc().TSFlags & VA_VDST_0)
+  if (SIInstrInfo::isDS(MI) || SIInstrInfo::isEXP(MI) ||
+      SIInstrInfo::isFLAT(MI) || SIInstrInfo::isMIMG(MI) ||
+      SIInstrInfo::isMTBUF(MI) || SIInstrInfo::isMUBUF(MI))
     return true;
   if (MI.getOpcode() == AMDGPU::S_SENDMSG_RTN_B32 ||
       MI.getOpcode() == AMDGPU::S_SENDMSG_RTN_B64)

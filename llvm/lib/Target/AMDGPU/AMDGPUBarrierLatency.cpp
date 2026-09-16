@@ -26,6 +26,7 @@
 #include "SIInstrInfo.h"
 #include "llvm/CodeGen/ScheduleDAGInstrs.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/TargetParser/AtomicScope.h"
 
 using namespace llvm;
 
@@ -40,23 +41,26 @@ namespace {
 class BarrierLatency : public ScheduleDAGMutation {
 private:
   SmallSet<SyncScope::ID, 4> IgnoredScopes;
-  SmallVector<SUnit *, 8> OutstandingTDM;
-  SmallVector<SUnit *, 8> OutstandingAsync;
 
 public:
   BarrierLatency(MachineFunction *MF) {
     LLVMContext &Context = MF->getFunction().getContext();
+    const Triple &TT = MF->getSubtarget<GCNSubtarget>().getTargetTriple();
+    auto ScopeID = [&](AtomicScope Scope, bool OneAS) {
+      return Context.getOrInsertSyncScopeID(
+          *getAtomicScopeIRString(TT, Scope, OneAS));
+    };
     IgnoredScopes.insert(SyncScope::SingleThread);
-    IgnoredScopes.insert(Context.getOrInsertSyncScopeID("wavefront"));
-    IgnoredScopes.insert(Context.getOrInsertSyncScopeID("wavefront-one-as"));
-    IgnoredScopes.insert(Context.getOrInsertSyncScopeID("singlethread-one-as"));
+    IgnoredScopes.insert(ScopeID(AtomicScope::Wavefront, /*OneAS=*/false));
+    IgnoredScopes.insert(ScopeID(AtomicScope::Wavefront, /*OneAS=*/true));
+    IgnoredScopes.insert(ScopeID(AtomicScope::Single, /*OneAS=*/true));
 
     const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
     bool TgSplit =
         ST.hasTgSplitSupport() && AMDGPU::isTgSplitEnabled(MF->getFunction());
     if (!ST.requiresWaitOnWorkgroupReleaseFence(TgSplit)) {
       // Prior to GFX10 workgroup scope does not normally require waitcnts
-      IgnoredScopes.insert(Context.getOrInsertSyncScopeID("workgroup"));
+      IgnoredScopes.insert(ScopeID(AtomicScope::Workgroup, /*OneAS=*/false));
     }
   }
   void apply(ScheduleDAGInstrs *DAG) override;
@@ -96,8 +100,8 @@ void BarrierLatency::apply(ScheduleDAGInstrs *DAG) {
   const SIInstrInfo *TII = static_cast<const SIInstrInfo *>(DAG->TII);
   constexpr unsigned FenceLatency = 2000;
   const unsigned BarrierSignalWaitLatency = BarrierSignalWaitLatencyOpt;
-  OutstandingTDM.clear();
-  OutstandingAsync.clear();
+  SmallVector<SUnit *, 8> RegionTDM;
+  SmallVector<SUnit *, 8> RegionAsync;
 
   for (SUnit &SU : DAG->SUnits) {
     const MachineInstr *MI = SU.getInstr();
@@ -133,18 +137,20 @@ void BarrierLatency::apply(ScheduleDAGInstrs *DAG) {
         }
       }
     } else if (TII->isLDSDMA(*MI)) {
-      if (MI->getDesc().TSFlags & SIInstrFlags::TENSOR_CNT)
-        OutstandingTDM.push_back(&SU);
-      if (MI->getDesc().TSFlags & SIInstrFlags::ASYNC_CNT)
-        OutstandingAsync.clear();
-
-    } else if (Op == AMDGPU::S_WAIT_TENSORCNT) {
-      auto needWaitFor = [this](SUnit *SU, int64_t Count) {
-        if (OutstandingTDM.size() <= static_cast<uint64_t>(Count))
+      if (SIInstrFlags::usesTENSOR_CNT(*MI))
+        RegionTDM.push_back(&SU);
+      else if (SIInstrFlags::usesASYNC_CNT(*MI))
+        RegionAsync.push_back(&SU);
+    } else if (Op == AMDGPU::S_WAIT_TENSORCNT ||
+               Op == AMDGPU::S_WAIT_ASYNCCNT) {
+      auto needWaitFor = [&](SmallVectorImpl<SUnit *> &RegionLDSDMA, SUnit *SU,
+                             int64_t Count) {
+        if (RegionLDSDMA.size() <= static_cast<uint64_t>(Count)) {
           return false;
+        }
 
         int64_t Counter = 0;
-        auto I = OutstandingTDM.rbegin(), E = OutstandingTDM.rend();
+        auto I = RegionLDSDMA.rbegin(), E = RegionLDSDMA.rend();
         for (; I != E; I++) {
           if (Counter >= Count)
             return true;
@@ -154,7 +160,7 @@ void BarrierLatency::apply(ScheduleDAGInstrs *DAG) {
 
           ++Counter;
         }
-        llvm_unreachable("Malformed Outstanding TDM");
+        llvm_unreachable("Malformed RegionLDSDMA");
       };
 
       int64_t WaitVal = MI->getOperand(0).getImm();
@@ -163,62 +169,23 @@ void BarrierLatency::apply(ScheduleDAGInstrs *DAG) {
           continue;
 
         Register DepReg = PredDep.getReg();
-        if (DepReg != AMDGPU::TENSORcnt)
+        bool IsAsync = Op == AMDGPU::S_WAIT_ASYNCCNT;
+        Register LDSDMACnt = IsAsync ? AMDGPU::ASYNCcnt : AMDGPU::TENSORcnt;
+
+        if (DepReg != LDSDMACnt)
           continue;
 
         SUnit *PredSU = PredDep.getSUnit();
 
-        // The TENSORcnt data dep can be carried by a non-TENSOR_CNT SU
+        // The data dep can be carried by a non-LDSDMA SU
         // (e.g. an intervening COPY or pseudo). Such predecessors are not
-        // tracked in OutstandingTDM, so needWaitFor cannot reason about
-        // them; skip rather than asserting.
-        if (!(PredSU->getInstr()->getDesc().TSFlags &
-              SIInstrFlags::TENSOR_CNT))
+        // tracked, so needWaitFor cannot reason about them.
+        const MachineInstr &PredMI = *PredSU->getInstr();
+        if (IsAsync ? !SIInstrFlags::usesASYNC_CNT(PredMI)
+                    : !SIInstrFlags::usesTENSOR_CNT(PredMI))
           continue;
 
-        if (!needWaitFor(PredSU, WaitVal)) {
-          setLatencyForEdge(PredDep, SU, 1);
-        }
-      }
-    } else if (Op == AMDGPU::S_WAIT_ASYNCCNT) {
-      auto needWaitFor = [this](SUnit *SU, int64_t Count) {
-        if (OutstandingAsync.size() <= static_cast<uint64_t>(Count))
-          return false;
-
-        int64_t Counter = 0;
-        auto I = OutstandingAsync.rbegin(), E = OutstandingAsync.rend();
-        for (; I != E; I++) {
-          if (Counter >= Count)
-            return true;
-
-          if (SU->NodeNum == (*I)->NodeNum)
-            return false;
-
-          ++Counter;
-        }
-        llvm_unreachable("Malformed Outstanding TDM");
-      };
-
-      int64_t WaitVal = MI->getOperand(0).getImm();
-      for (SDep &PredDep : SU.Preds) {
-        if (PredDep.getKind() != SDep::Kind::Data)
-          continue;
-
-        Register DepReg = PredDep.getReg();
-        if (DepReg != AMDGPU::ASYNCcnt)
-          continue;
-
-        SUnit *PredSU = PredDep.getSUnit();
-
-        // The TENSORcnt data dep can be carried by a non-TENSOR_CNT SU
-        // (e.g. an intervening COPY or pseudo). Such predecessors are not
-        // tracked in OutstandingAsync, so needWaitFor cannot reason about
-        // them; skip rather than asserting.
-        if (!(PredSU->getInstr()->getDesc().TSFlags &
-              SIInstrFlags::ASYNC_CNT))
-          continue;
-
-        if (!needWaitFor(PredSU, WaitVal)) {
+        if (!needWaitFor(IsAsync ? RegionAsync : RegionTDM, PredSU, WaitVal)) {
           setLatencyForEdge(PredDep, SU, 1);
         }
       }
