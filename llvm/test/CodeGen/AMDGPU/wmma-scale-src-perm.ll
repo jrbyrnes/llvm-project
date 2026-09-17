@@ -4,9 +4,10 @@
 define amdgpu_ps <8 x float> @wmma_scale_src_uniform_pack(<16 x i32> %a, <16 x i32> %b, <8 x float> %c, i32 inreg %scale0, i32 inreg %scale1) {
 ; CHECK-LABEL: wmma_scale_src_uniform_pack:
 ; CHECK:       ; %bb.0:
-; CHECK-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
-; CHECK-NEXT:    v_nop
 ; CHECK-NEXT:    s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 25, 1), 1 ; msbs: dst=0 src0=0 src1=0 src2=0
+; CHECK-NEXT:    s_mov_b64 s[64:65], 0
+; CHECK-NEXT:    v_nop
+; CHECK-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; CHECK-NEXT:    v_perm_b32 v40, s0, s1, 4
 ; CHECK-NEXT:    s_delay_alu instid0(VALU_DEP_1) | instskip(SKIP_4) | instid1(TRANS32_DEP_1)
 ; CHECK-NEXT:    v_wmma_scale_f32_16x16x128_f8f6f4 v[32:39], v[0:15], v[16:31], v[32:39], v40, v40 matrix_a_fmt:MATRIX_FMT_BF8 matrix_b_fmt:MATRIX_FMT_BF8
@@ -35,9 +36,10 @@ define amdgpu_ps <8 x float> @wmma_scale_src_uniform_pack(<16 x i32> %a, <16 x i
 define amdgpu_ps void @uniform_pack_not_wmma_scale(i32 inreg %scale0, i32 inreg %scale1) {
 ; CHECK-LABEL: uniform_pack_not_wmma_scale:
 ; CHECK:       ; %bb.0:
-; CHECK-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
-; CHECK-NEXT:    v_nop
 ; CHECK-NEXT:    s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 25, 1), 1 ; msbs: dst=0 src0=0 src1=0 src2=0
+; CHECK-NEXT:    s_mov_b64 s[64:65], 0
+; CHECK-NEXT:    v_nop
+; CHECK-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; CHECK-NEXT:    v_perm_b32 v0, s0, s1, 4
 ; CHECK-NEXT:    ;;#ASMSTART
 ; CHECK-NEXT:    ; use v0
@@ -58,9 +60,10 @@ define amdgpu_ps void @uniform_pack_not_wmma_scale(i32 inreg %scale0, i32 inreg 
 define amdgpu_ps <8 x float> @wmma_scale_src_extra_use(<16 x i32> %a, <16 x i32> %b, <8 x float> %c, i32 inreg %scale0, i32 inreg %scale1) {
 ; CHECK-LABEL: wmma_scale_src_extra_use:
 ; CHECK:       ; %bb.0:
-; CHECK-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
-; CHECK-NEXT:    v_nop
 ; CHECK-NEXT:    s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 25, 1), 1 ; msbs: dst=0 src0=0 src1=0 src2=0
+; CHECK-NEXT:    s_mov_b64 s[64:65], 0
+; CHECK-NEXT:    v_nop
+; CHECK-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; CHECK-NEXT:    v_perm_b32 v40, s0, s1, 4
 ; CHECK-NEXT:    ;;#ASMSTART
 ; CHECK-NEXT:    ; use v40

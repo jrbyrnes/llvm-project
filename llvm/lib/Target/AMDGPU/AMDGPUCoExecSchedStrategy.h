@@ -15,7 +15,6 @@
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUCOEXECSCHEDSTRATEGY_H
 
 #include "AMDGPUCoExecInfo.h"
-#include "GCNHazardRecognizer.h"
 #include "GCNSchedStrategy.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -30,7 +29,6 @@ namespace AMDGPU {
 namespace DefaultBufferSizes {
 constexpr unsigned DS = 16;
 } // namespace DefaultBufferSizes
-
 
 enum class CarriedLatency : uint8_t { Off, Fence, All };
 

@@ -647,7 +647,7 @@ TargetRegisterInfo::lookThruCopyLike(Register SrcReg,
                                      const MachineRegisterInfo *MRI) const {
   while (true) {
     const MachineInstr *MI = MRI->getVRegDef(SrcReg);
-    if (!MI->isCopyLike())
+    if (!MI || !MI->isCopyLike())
       return SrcReg;
 
     Register CopySrcReg;
@@ -670,7 +670,7 @@ Register TargetRegisterInfo::lookThruSingleUseCopyChain(
   while (true) {
     const MachineInstr *MI = MRI->getVRegDef(SrcReg);
     // Found the real definition, return it if it has a single use.
-    if (!MI->isCopyLike())
+    if (!MI || !MI->isCopyLike())
       return MRI->hasOneNonDBGUse(SrcReg) ? SrcReg : Register();
 
     Register CopySrcReg;

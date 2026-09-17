@@ -26,18 +26,9 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "gcn-hazard-recognizer"
+// Opt-in debug type for the per-candidate co-execution slot traces, which are
+// far too noisy for the normal debug output. Pass both types to get everything.
 #define DEBUG_TYPE_VERBOSE "gcn-hazard-recognizer-verbose"
-
-// Verbose debug type implies normal debug output. LLVM_DEBUG only fires for
-// DEBUG_TYPE, so we replace it with this macro in preRA code. This fires when
-// either -debug-only=gcn-hazard-recognizer or
-// -debug-only=gcn-hazard-recognizer-verbose is passed.
-#define LLVM_DEBUG_HR(X)                                                       \
-  do {                                                                         \
-    LLVM_DEBUG(X);                                                             \
-    DEBUG_WITH_TYPE(DEBUG_TYPE_VERBOSE,                                        \
-                    if (!isCurrentDebugType(DEBUG_TYPE)) { X; });              \
-  } while (false)
 
 STATISTIC(NumWMMANopsHoisted,
           "Number of WMMA hazard V_NOPs hoisted from loops");
@@ -91,15 +82,15 @@ static bool shouldRunLdsBranchVmemWARHazardFixup(const MachineFunction &MF,
 GCNHazardRecognizer::GCNHazardRecognizer(
     const MachineFunction &MF, GCNHazardRecognizer::OperatingMode Mode,
     MachineLoopInfo *MLI)
-    : Mode(Mode), CurrCycleInstr(nullptr), MF(MF), ST(MF.getSubtarget<GCNSubtarget>()),
-      TII(*ST.getInstrInfo()), TRI(TII.getRegisterInfo()),
-      TSchedModel(TII.getSchedModel()), MLI(MLI),
+    : Mode(Mode), CurrCycleInstr(nullptr), MF(MF),
+      ST(MF.getSubtarget<GCNSubtarget>()), TII(*ST.getInstrInfo()),
+      TRI(TII.getRegisterInfo()), TSchedModel(TII.getSchedModel()), MLI(MLI),
       ClauseUses(TRI.getNumRegUnits()), ClauseDefs(TRI.getNumRegUnits()) {
   MaxLookAhead = MF.getRegInfo().isPhysRegUsed(AMDGPU::AGPR0) ? 19
                  : ST.hasGFX1250Insts()                       ? 16
                                                               : 5;
   RunLdsBranchVmemWARHazardFixup = shouldRunLdsBranchVmemWARHazardFixup(MF, ST);
-  LLVM_DEBUG_HR({
+  LLVM_DEBUG({
     if (isPreRA())
       dbgs() << "  PreRA hazard recognizer: " << MF.getName() << "\n";
   });
@@ -110,9 +101,9 @@ GCNHazardRecognizer::GCNHazardRecognizer(const MachineFunction &MF,
     : GCNHazardRecognizer(MF, OperatingMode::PostRA, MLI) {}
 
 GCNHazardRecognizer::~GCNHazardRecognizer() {
-  // Dump any active co-execution window that didn't complete naturally
+  // Dump any active co-execution window that did not complete naturally
   // (e.g. region ended before the window expired).
-  LLVM_DEBUG_HR({
+  LLVM_DEBUG({
     if (CurrentCoExecStage.has_value()) {
       unsigned Stage = *CurrentCoExecStage;
       if (Stage < AMDGPU::MaxCoExecStages)
@@ -128,14 +119,14 @@ void GCNHazardRecognizer::Reset() {
   EmittedVALUInstrs.clear();
   HasPendingWMMACoexecHazard = false;
   if (isSchedulerMode())
-    preRAReset();
+    schedulerReset();
 }
 
-void GCNHazardRecognizer::preRAReset() {
-  LLVM_DEBUG_HR({
+void GCNHazardRecognizer::schedulerReset() {
+  LLVM_DEBUG({
     if (CurrentCoExecStage.has_value() || CyclesUntilTRANS > 0 ||
         CyclesUntilVALU > 0)
-      dbgs() << "  PreRA Reset: clearing co-exec window, TRANS="
+      dbgs() << "  Scheduler Reset: clearing co-exec window, TRANS="
              << CyclesUntilTRANS << ", VALU=" << CyclesUntilVALU << "\n";
   });
   CurrentCoExecStage = std::nullopt;
@@ -143,7 +134,7 @@ void GCNHazardRecognizer::preRAReset() {
   CyclesUntilTRANS = 0;
   CyclesUntilVALU = 0;
   ActiveCoExecInfo = AMDGPU::CoExecInfo();
-  std::memset(CoExecWindowLog, '.', sizeof(CoExecWindowLog));
+  CoExecWindowLog.fill('.');
 }
 
 void GCNHazardRecognizer::dumpCoExecWindow() const {
@@ -170,7 +161,7 @@ void GCNHazardRecognizer::dumpCoExecWindow() const {
   dbgs() << '\n';
 }
 
-void GCNHazardRecognizer::preRAAdvanceCycle() {
+void GCNHazardRecognizer::schedulerAdvanceCycle() {
   // Record what happened at the current stage of the co-exec window.
   if (CurrentCoExecStage.has_value()) {
     unsigned Stage = *CurrentCoExecStage;
@@ -182,11 +173,11 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
     }
   }
 
-  LLVM_DEBUG_HR({
+  LLVM_DEBUG({
     bool HasState = CurrentCoExecStage.has_value() || CyclesUntilTRANS > 0 ||
                     CyclesUntilVALU > 0;
     if (HasState) {
-      dbgs() << "  PreRA AdvanceCycle:";
+      dbgs() << "  Scheduler AdvanceCycle:";
       if (CurrentCoExecStage.has_value()) {
         unsigned Stage = *CurrentCoExecStage;
         unsigned Next = Stage + 1;
@@ -199,8 +190,7 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
         dbgs() << " TRANS=" << CyclesUntilTRANS << "->"
                << (CyclesUntilTRANS - 1);
       if (CyclesUntilVALU > 0)
-        dbgs() << " VALU=" << CyclesUntilVALU << "->"
-               << (CyclesUntilVALU - 1);
+        dbgs() << " VALU=" << CyclesUntilVALU << "->" << (CyclesUntilVALU - 1);
       dbgs() << "\n";
     }
   });
@@ -216,7 +206,7 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
     unsigned Stage = *CurrentCoExecStage + 1;
     if (Stage >= ActiveCoExecInfo.TotalWindow) {
       // Window expired.
-      LLVM_DEBUG_HR({
+      LLVM_DEBUG({
         dbgs() << "  CoExec window complete:\n";
         dumpCoExecWindow();
       });
@@ -227,8 +217,18 @@ void GCNHazardRecognizer::preRAAdvanceCycle() {
   }
 }
 
+bool GCNHazardRecognizer::hasCoExecWindowModel() const {
+  // The co-execution slot patterns returned by getCoExecInfo() are derived from
+  // gfx1250 timings, so the window model is restricted to gfx1250 for now.
+  // gfx1251 and gfx12.5-generic report the same co-execution hazard features
+  // but have different WMMA latencies, so they need their own slot patterns
+  // before they can be modeled here.
+  return ST.hasWMMACoexecutionHazards() && ST.hasTransCoexecutionHazard() &&
+         AMDGPU::isGFX1250(ST);
+}
+
 void GCNHazardRecognizer::updateWMMAWindowState(const MachineInstr &MI) {
-  bool IsWMMAGfx1250 = AMDGPU::isGFX1250(ST) &&
+  bool IsWMMAGfx1250 = hasCoExecWindowModel() &&
                        (SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI));
   bool IsMFMAGfx950 = ST.hasGFX950Insts() && SIInstrInfo::isMFMA(MI);
   if (!IsWMMAGfx1250 && !IsMFMAGfx950)
@@ -236,7 +236,7 @@ void GCNHazardRecognizer::updateWMMAWindowState(const MachineInstr &MI) {
 
   // If a previous window was still active, dump it before starting a new one.
   // Record the current stage (filled by this new WMMA) before dumping.
-  LLVM_DEBUG_HR({
+  LLVM_DEBUG({
     if (CurrentCoExecStage.has_value()) {
       unsigned Stage = *CurrentCoExecStage;
       if (Stage < AMDGPU::MaxCoExecStages)
@@ -249,15 +249,15 @@ void GCNHazardRecognizer::updateWMMAWindowState(const MachineInstr &MI) {
   // Start a new co-execution window.
   ActiveCoExecInfo = AMDGPU::getCoExecInfo(MI, TII);
   CurrentCoExecStage = 0;
-  std::memset(CoExecWindowLog, '.', sizeof(CoExecWindowLog));
+  CoExecWindowLog.fill('.');
 
-  LLVM_DEBUG_HR(dbgs() << "  WMMA window started: " << ActiveCoExecInfo.Pattern
+  LLVM_DEBUG(dbgs() << "  WMMA window started: " << ActiveCoExecInfo.Pattern
                     << " (window=" << ActiveCoExecInfo.TotalWindow << ")\n"
                     << "    " << MI);
 }
 
 void GCNHazardRecognizer::updateTRANSState(const MachineInstr &MI) {
-  if (!AMDGPU::isGFX1250(ST))
+  if (!hasCoExecWindowModel())
     return;
   if (!SIInstrInfo::isTRANS(MI))
     return;
@@ -272,14 +272,14 @@ void GCNHazardRecognizer::updateTRANSState(const MachineInstr &MI) {
   // strategy pick a non-TRANS, non-multi-cycle-VALU candidate to fill the
   // shadow slot.
   CyclesUntilTRANS = 2;
-  LLVM_DEBUG_HR(dbgs() << "    TRANS hazard set: CyclesUntilTRANS=2\n");
+  LLVM_DEBUG(dbgs() << "    TRANS hazard set: CyclesUntilTRANS=2\n");
 }
 
 void GCNHazardRecognizer::updateMultiCycleVALUState(const MachineInstr &MI) {
-  if (!AMDGPU::isGFX1250(ST))
+  if (!hasCoExecWindowModel())
     return;
   // Multi-cycle VALU (CVT, etc.) blocks subsequent VALU for repeat rate cycles.
-  if (!SIInstrInfo::isVALU(MI))
+  if (!SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true))
     return;
 
   // Skip WMMA, MFMA, and TRANS - they have their own tracking.
@@ -293,7 +293,7 @@ void GCNHazardRecognizer::updateMultiCycleVALUState(const MachineInstr &MI) {
     // hazard check (same convention as CyclesUntilTRANS), so to expose
     // RepeatRate-1 cycles of shadow we must seed with RepeatRate.
     CyclesUntilVALU = RepeatRate;
-    LLVM_DEBUG_HR(dbgs() << "    Multi-cycle VALU: repeat=" << RepeatRate
+    LLVM_DEBUG(dbgs() << "    Multi-cycle VALU: repeat=" << RepeatRate
                       << ", CyclesUntilVALU=" << CyclesUntilVALU << "\n");
   }
 }
@@ -306,8 +306,9 @@ unsigned GCNHazardRecognizer::checkTRANSHazard(const MachineInstr &MI) const {
   if (SIInstrInfo::isTRANS(MI))
     return CyclesUntilTRANS;
 
-  if (SIInstrInfo::isVALU(MI) && !SIInstrInfo::isWMMA(MI) &&
-      !SIInstrInfo::isSWMMAC(MI) && TII.getRepeatRate(MI) > 1)
+  if (SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true) &&
+      !SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI) &&
+      TII.getRepeatRate(MI) > 1)
     return CyclesUntilTRANS;
 
   return 0;
@@ -318,11 +319,12 @@ GCNHazardRecognizer::checkMultiCycleVALUHazard(const MachineInstr &MI) const {
   if (!CyclesUntilVALU)
     return 0;
 
-  // Multi-cycle VALU blocks anything on the VALU pipe — VALU, WMMA, SWMMAC,
-  // and TRANS — for RepeatRate-1 cycles. Only off-pipe instructions (MEM,
+  // Multi-cycle VALU blocks anything on the VALU pipe - VALU, WMMA, SWMMAC,
+  // and TRANS - for RepeatRate-1 cycles. Only off-pipe instructions (MEM,
   // SALU, control) can fill the shadow.
-  if (!SIInstrInfo::isVALU(MI) && !SIInstrInfo::isWMMA(MI) &&
-      !SIInstrInfo::isSWMMAC(MI) && !SIInstrInfo::isTRANS(MI))
+  if (!SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true) &&
+      !SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI) &&
+      !SIInstrInfo::isTRANS(MI))
     return 0;
 
   return CyclesUntilVALU;
@@ -331,9 +333,8 @@ GCNHazardRecognizer::checkMultiCycleVALUHazard(const MachineInstr &MI) const {
 unsigned
 GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const {
   // No hazard if not in a WMMA window.
-  if (!CurrentCoExecStage.has_value()) {
+  if (!CurrentCoExecStage.has_value())
     return 0;
-  }
 
   unsigned Stage = *CurrentCoExecStage;
   AMDGPU::CoExecMaskT InstMask = AMDGPU::getCoExecMaskForMI(MI, TII);
@@ -345,33 +346,33 @@ GCNHazardRecognizer::checkWMMACoexecSlot(const MachineInstr &MI) const {
   auto NextStage = ActiveCoExecInfo.findNextAllowedStage(InstMask, Stage);
   if (NextStage.has_value()) {
     unsigned StallCycles = *NextStage - Stage;
-    DEBUG_WITH_TYPE(DEBUG_TYPE_VERBOSE,
-                    dbgs() << "    CoExec stall: stage=" << Stage << "("
-                           << AMDGPU::getStageTypeName(
-                                  ActiveCoExecInfo.getType(Stage))
-                           << ") mask="
-                           << AMDGPU::getCoExecMaskName(InstMask)
-                           << " -> stall " << StallCycles
-                           << " (next allowed=" << *NextStage << ")\n"
-                           << "      " << MI);
+    DEBUG_WITH_TYPE(
+        DEBUG_TYPE_VERBOSE,
+        dbgs() << "    CoExec stall: stage=" << Stage << "("
+               << AMDGPU::getStageTypeName(ActiveCoExecInfo.getType(Stage))
+               << ") mask=" << AMDGPU::getCoExecMaskName(InstMask)
+               << " -> stall " << StallCycles << " (next allowed=" << *NextStage
+               << ")\n"
+               << "      " << MI);
     return StallCycles;
   }
 
   // No compatible slot in window - stall until window ends.
   unsigned StallCycles = ActiveCoExecInfo.TotalWindow - Stage;
-  DEBUG_WITH_TYPE(DEBUG_TYPE_VERBOSE,
-                  dbgs() << "    CoExec stall: stage=" << Stage << "("
-                         << AMDGPU::getStageTypeName(
-                                ActiveCoExecInfo.getType(Stage))
-                         << ") mask=" << AMDGPU::getCoExecMaskName(InstMask)
-                         << " -> stall " << StallCycles << " (window ends)\n"
-                         << "      " << MI);
+  DEBUG_WITH_TYPE(
+      DEBUG_TYPE_VERBOSE,
+      dbgs() << "    CoExec stall: stage=" << Stage << "("
+             << AMDGPU::getStageTypeName(ActiveCoExecInfo.getType(Stage))
+             << ") mask=" << AMDGPU::getCoExecMaskName(InstMask) << " -> stall "
+             << StallCycles << " (window ends)\n"
+             << "      " << MI);
   return StallCycles;
 }
 
 unsigned
 GCNHazardRecognizer::checkMultiShadowHazard(const MachineInstr &MI) const {
-  if (!ST.hasGFX1250Insts())
+  // This models a VALU caught in both a WMMA and a TRANS shadow.
+  if (!hasCoExecWindowModel())
     return 0;
 
   // No hazard if not in a WMMA window.
@@ -381,7 +382,8 @@ GCNHazardRecognizer::checkMultiShadowHazard(const MachineInstr &MI) const {
   if (!CyclesUntilTRANS)
     return 0;
 
-  if (!SIInstrInfo::isVALU(MI) || SIInstrInfo::isLDSDMA(MI))
+  if (!SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true) ||
+      SIInstrInfo::isLDSDMA(MI))
     return 0;
 
   // We have a VALU instruction that is under both a TRANS and WMMA shadow.
@@ -447,18 +449,8 @@ GCNHazardRecognizer::checkWideCopyCoExecSlots(const MachineInstr &MI) const {
   return ActiveCoExecInfo.TotalWindow - Stage;
 }
 
-void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
-  EmitInstruction(SU->getInstr());
-}
-
-void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
-  CurrCycleInstr = MI;
-  if (isSchedulerMode())
-    preRAEmitInstruction(MI);
-}
-
-void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
-  LLVM_DEBUG_HR({
+void GCNHazardRecognizer::schedulerEmitInstruction(MachineInstr *MI) {
+  LLVM_DEBUG({
     bool InWindow = CurrentCoExecStage.has_value();
     bool HasActiveState =
         InWindow || CyclesUntilTRANS > 0 || CyclesUntilVALU > 0;
@@ -467,12 +459,12 @@ void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
         unsigned Stage = *CurrentCoExecStage;
         dbgs() << "  Stage " << Stage << "("
                << AMDGPU::getStageTypeName(ActiveCoExecInfo.getType(Stage))
-               << ") PreRA Emit ["
+               << ") Emit ["
                << AMDGPU::getCoExecMaskName(
                       AMDGPU::getCoExecMaskForMI(*MI, TII))
                << "]: " << *MI;
       } else {
-        dbgs() << "  PreRA Emit ["
+        dbgs() << "  Emit ["
                << AMDGPU::getCoExecMaskName(
                       AMDGPU::getCoExecMaskForMI(*MI, TII))
                << "]: " << *MI;
@@ -483,13 +475,23 @@ void GCNHazardRecognizer::preRAEmitInstruction(MachineInstr *MI) {
     bool HasActiveState = CurrentCoExecStage.has_value() ||
                           CyclesUntilTRANS > 0 || CyclesUntilVALU > 0;
     if (!HasActiveState)
-      dbgs() << "  PreRA Emit ["
+      dbgs() << "  Emit ["
              << AMDGPU::getCoExecMaskName(AMDGPU::getCoExecMaskForMI(*MI, TII))
              << "]: " << *MI;
   });
   updateWMMAWindowState(*MI);
   updateTRANSState(*MI);
   updateMultiCycleVALUState(*MI);
+}
+
+void GCNHazardRecognizer::EmitInstruction(SUnit *SU) {
+  EmitInstruction(SU->getInstr());
+}
+
+void GCNHazardRecognizer::EmitInstruction(MachineInstr *MI) {
+  CurrCycleInstr = MI;
+  if (isSchedulerMode())
+    schedulerEmitInstruction(MI);
 }
 
 static bool isDivFMas(unsigned Opcode) {
@@ -707,8 +709,8 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
       return Hazard;
     if (checkVALUSGPRHazard(*MI) > 0)
       return Hazard;
-    // Pre-RA has no physical registers, so skip the remaining checks.
-    if (isPreRA())
+    // The remaining checks are all defined by register dependences.
+    if (!hasPhysRegs())
       return NoHazard;
   }
 
@@ -865,7 +867,8 @@ unsigned GCNHazardRecognizer::getHazardWaitStates(MachineInstr *MI) const {
     W = std::max(W, checkMultiCycleVALUHazard(*MI));
     W = std::max(W, checkVALUSGPRHazard(*MI));
     W = std::max(W, checkMultiShadowHazard(*MI));
-    if (isPreRA())
+    // The remaining checks are all defined by register dependences.
+    if (!hasPhysRegs())
       return W;
   }
 
@@ -954,7 +957,7 @@ void GCNHazardRecognizer::EmitNoop() {
 void GCNHazardRecognizer::AdvanceCycle() {
   // Advance co-exec state (WMMA window, TRANS/CVT counters).
   if (isSchedulerMode())
-    preRAAdvanceCycle();
+    schedulerAdvanceCycle();
 
   // When the scheduler detects a stall, it will call AdvanceCycle() without
   // emitting any instructions.
@@ -1933,6 +1936,9 @@ void GCNHazardRecognizer::fixHazards(MachineInstr *MI) {
     fixScratchBaseForwardingHazard(MI);
   if (ST.setRegModeNeedsVNOPs())
     fixSetRegMode(MI);
+
+  if (ST.hasNeedsTDMDrain())
+    fixTDM(MI);
 
   // Insert forced v_nop instructions if requested (for debugging).
   if (VNopPadding > 0) {
@@ -4452,5 +4458,30 @@ bool GCNHazardRecognizer::fixSetRegMode(MachineInstr *MI) {
 
   BuildMI(*MI->getParent(), MI, MI->getDebugLoc(), TII.get(AMDGPU::V_NOP_e32));
   BuildMI(*MI->getParent(), MI, MI->getDebugLoc(), TII.get(AMDGPU::V_NOP_e32));
+  return true;
+}
+
+bool GCNHazardRecognizer::fixTDM(MachineInstr *MI) {
+  auto IsTDM = [&](const MachineInstr &MI) -> bool {
+    return SIInstrInfo::usesTENSOR_CNT(MI) &&
+           MI.getOpcode() != AMDGPU::S_WAIT_TENSORCNT;
+  };
+
+  if (!IsTDM(*MI))
+    return false;
+
+  auto IsExpiredFn = [](const MachineInstr &MI, int) {
+    if (MI.getOpcode() != AMDGPU::S_WAIT_TENSORCNT)
+      return false;
+    return MI.getOperand(0).getImm() <= 10;
+  };
+
+  if (::getWaitStatesSince(IsTDM, MI, IsExpiredFn) ==
+      std::numeric_limits<int>::max())
+    return false;
+
+  BuildMI(*MI->getParent(), MI, MI->getDebugLoc(),
+          TII.get(AMDGPU::S_WAIT_TENSORCNT))
+      .addImm(10);
   return true;
 }

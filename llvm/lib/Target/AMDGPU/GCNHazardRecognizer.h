@@ -19,6 +19,7 @@
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/ScheduleHazardRecognizer.h"
 #include "llvm/CodeGen/TargetSchedule.h"
+#include <array>
 #include <list>
 #include <optional>
 
@@ -38,13 +39,17 @@ public:
   typedef function_ref<bool(const MachineInstr &, int WaitStates)> IsExpiredFn;
   typedef function_ref<unsigned int(const MachineInstr &)> GetNumWaitStatesFn;
 
-  /// Operating mode for the hazard recognizer.
-  /// - PreRA: Used during pre-RA scheduling (virtual regs, co-exec slot
-  /// tracking)
-  /// - PostRA: Used during post-RA scheduling (physical regs, full hazard
-  /// checking)
-  /// - HazardRecognizerMode: Used by standalone hazard recognizer pass (inserts
-  /// NOPs)
+  /// Operating mode for the hazard recognizer. Two independent properties
+  /// follow from it.
+  ///
+  /// The scheduler modes (PreRA, PostRA) report a hazard so that the scheduler
+  /// can pick some other instruction, and to do that they track pipeline state
+  /// across the cycles they are told about. HazardRecognizerMode inserts s_nop
+  /// or v_nop to ensure correctness of the generated code.
+  ///
+  /// Operands are physical registers in every mode but PreRA, so hazards
+  /// defined by register dependences are checked only when hasPhysRegs()
+  /// holds.
   enum class OperatingMode { PreRA, PostRA, HazardRecognizerMode };
 
 private:
@@ -83,7 +88,7 @@ private:
   bool RunLdsBranchVmemWARHazardFixup;
 
   //===--------------------------------------------------------------------===//
-  // Pre-RA WMMA Co-execution Window State
+  // WMMA Co-execution Window State
   //===--------------------------------------------------------------------===//
 
   /// Active WMMA co-execution info (slot masks, preferences).
@@ -104,12 +109,15 @@ private:
 
   /// Debug: log of what was scheduled at each stage of the co-exec window.
   /// '.' = not yet reached, '-' = stall, else CoExecMask short char.
-  char CoExecWindowLog[AMDGPU::MaxCoExecStages];
+  std::array<char, AMDGPU::MaxCoExecStages> CoExecWindowLog;
 
   /// Debug: print the co-exec window visual summary.
   void dumpCoExecWindow() const;
 
-  /// Check WMMA co-execution slot hazard for pre-RA scheduling.
+  /// Returns true if the co-execution window model applies to this subtarget.
+  bool hasCoExecWindowModel() const;
+
+  /// Check WMMA co-execution slot hazard.
   /// Returns stall cycles needed before MI can be issued in the current slot.
   unsigned checkWMMACoexecSlot(const MachineInstr &MI) const;
 
@@ -122,7 +130,7 @@ private:
   unsigned checkMultiCycleVALUHazard(const MachineInstr &MI) const;
 
   /// Check if we have both a TRANS and WMMA window active. If so, for VALU
-  /// instructions, return the number of stall cycles until
+  /// instructions, return the number of stall cycles until one shadow clears.
   unsigned checkMultiShadowHazard(const MachineInstr &MI) const;
 
   /// Check if a wide COPY has enough consecutive co-exec slots.
@@ -138,14 +146,14 @@ private:
   /// Update multi-cycle VALU state when an instruction is emitted.
   void updateMultiCycleVALUState(const MachineInstr &MI);
 
-  /// Pre-RA wrapper for EmitInstruction - updates pre-RA specific state.
-  void preRAEmitInstruction(MachineInstr *MI);
+  /// Scheduler-mode part of EmitInstruction().
+  void schedulerEmitInstruction(MachineInstr *MI);
 
-  /// Pre-RA wrapper for AdvanceCycle - advances pipeline state.
-  void preRAAdvanceCycle();
+  /// Scheduler-mode part of AdvanceCycle().
+  void schedulerAdvanceCycle();
 
-  /// Pre-RA wrapper for Reset - clears pre-RA specific state.
-  void preRAReset();
+  /// Scheduler-mode part of Reset().
+  void schedulerReset();
 
   /// RegUnits of uses in the current soft memory clause.
   mutable BitVector ClauseUses;
@@ -233,6 +241,7 @@ private:
   bool fixDsAtomicAsyncBarrierArriveB64(MachineInstr *MI);
   bool fixScratchBaseForwardingHazard(MachineInstr *MI);
   bool fixSetRegMode(MachineInstr *MI);
+  bool fixTDM(MachineInstr *MI);
 
   int checkMAIHazards(MachineInstr *MI) const;
   int checkMAIHazards908(MachineInstr *MI) const;
@@ -285,13 +294,17 @@ public:
   /// Returns true if running as a scheduler (pre-RA or post-RA).
   bool isSchedulerMode() const { return isPreRA() || isPostRA(); }
 
+  /// Returns true if instruction operands are physical registers, so that
+  /// hazards defined by register dependences can be detected.
+  bool hasPhysRegs() const { return !isPreRA(); }
+
   /// Returns true if running as the standalone hazard recognizer pass.
   bool isHazardRecognizerMode() const {
     return Mode == OperatingMode::HazardRecognizerMode;
   }
 
   //===--------------------------------------------------------------------===//
-  // Pre-RA Co-execution Window Queries
+  // Co-execution Window Queries
   //===--------------------------------------------------------------------===//
 
   /// Returns true if currently inside a WMMA co-execution window.

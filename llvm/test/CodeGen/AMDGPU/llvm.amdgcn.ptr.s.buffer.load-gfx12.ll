@@ -35,8 +35,9 @@ define amdgpu_kernel void @ptr_s_buffer_load_i8(ptr addrspace(1) %out, ptr addrs
 ;
 ; GFX1250-SDAG-LABEL: ptr_s_buffer_load_i8:
 ; GFX1250-SDAG:       ; %bb.0:
-; GFX1250-SDAG-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
+; GFX1250-SDAG-NEXT:    s_mov_b64 s[64:65], 0
 ; GFX1250-SDAG-NEXT:    v_nop
+; GFX1250-SDAG-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; GFX1250-SDAG-NEXT:    s_clause 0x1
 ; GFX1250-SDAG-NEXT:    s_load_b128 s[0:3], s[4:5], 0x10 nv
 ; GFX1250-SDAG-NEXT:    s_load_b32 s8, s[4:5], 0x20 nv
@@ -50,8 +51,9 @@ define amdgpu_kernel void @ptr_s_buffer_load_i8(ptr addrspace(1) %out, ptr addrs
 ;
 ; GFX1250-GISEL-LABEL: ptr_s_buffer_load_i8:
 ; GFX1250-GISEL:       ; %bb.0:
-; GFX1250-GISEL-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
+; GFX1250-GISEL-NEXT:    s_mov_b64 s[64:65], 0
 ; GFX1250-GISEL-NEXT:    v_nop
+; GFX1250-GISEL-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; GFX1250-GISEL-NEXT:    s_clause 0x2
 ; GFX1250-GISEL-NEXT:    s_load_b32 s8, s[4:5], 0x20 nv
 ; GFX1250-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x10 nv
@@ -98,8 +100,9 @@ define amdgpu_kernel void @ptr_s_buffer_load_i16(ptr addrspace(1) %out, ptr addr
 ;
 ; GFX1250-SDAG-LABEL: ptr_s_buffer_load_i16:
 ; GFX1250-SDAG:       ; %bb.0:
-; GFX1250-SDAG-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
+; GFX1250-SDAG-NEXT:    s_mov_b64 s[64:65], 0
 ; GFX1250-SDAG-NEXT:    v_nop
+; GFX1250-SDAG-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; GFX1250-SDAG-NEXT:    s_clause 0x1
 ; GFX1250-SDAG-NEXT:    s_load_b128 s[0:3], s[4:5], 0x10 nv
 ; GFX1250-SDAG-NEXT:    s_load_b32 s8, s[4:5], 0x20 nv
@@ -113,8 +116,9 @@ define amdgpu_kernel void @ptr_s_buffer_load_i16(ptr addrspace(1) %out, ptr addr
 ;
 ; GFX1250-GISEL-LABEL: ptr_s_buffer_load_i16:
 ; GFX1250-GISEL:       ; %bb.0:
-; GFX1250-GISEL-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
+; GFX1250-GISEL-NEXT:    s_mov_b64 s[64:65], 0
 ; GFX1250-GISEL-NEXT:    v_nop
+; GFX1250-GISEL-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; GFX1250-GISEL-NEXT:    s_clause 0x2
 ; GFX1250-GISEL-NEXT:    s_load_b32 s8, s[4:5], 0x20 nv
 ; GFX1250-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x10 nv
@@ -158,8 +162,9 @@ define amdgpu_kernel void @ptr_s_buffer_load_i8_divergent_offset(ptr addrspace(1
 ;
 ; GFX1250-SDAG-LABEL: ptr_s_buffer_load_i8_divergent_offset:
 ; GFX1250-SDAG:       ; %bb.0:
-; GFX1250-SDAG-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
+; GFX1250-SDAG-NEXT:    s_mov_b64 s[64:65], 0
 ; GFX1250-SDAG-NEXT:    v_nop
+; GFX1250-SDAG-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; GFX1250-SDAG-NEXT:    s_load_b128 s[0:3], s[4:5], 0x10 nv
 ; GFX1250-SDAG-NEXT:    v_and_b32_e32 v0, 0x3ff, v0
 ; GFX1250-SDAG-NEXT:    v_mov_b32_e32 v1, 0
@@ -173,8 +178,9 @@ define amdgpu_kernel void @ptr_s_buffer_load_i8_divergent_offset(ptr addrspace(1
 ;
 ; GFX1250-GISEL-LABEL: ptr_s_buffer_load_i8_divergent_offset:
 ; GFX1250-GISEL:       ; %bb.0:
-; GFX1250-GISEL-NEXT:    global_prefetch_b8 v0, s[0:1] scope:SCOPE_SE
+; GFX1250-GISEL-NEXT:    s_mov_b64 s[64:65], 0
 ; GFX1250-GISEL-NEXT:    v_nop
+; GFX1250-GISEL-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
 ; GFX1250-GISEL-NEXT:    s_load_b128 s[0:3], s[4:5], 0x10 nv
 ; GFX1250-GISEL-NEXT:    v_and_b32_e32 v0, 0x3ff, v0
 ; GFX1250-GISEL-NEXT:    s_load_b64 s[4:5], s[4:5], 0x0 nv

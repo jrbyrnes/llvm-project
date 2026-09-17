@@ -26,9 +26,9 @@
 
 #include "SIDefines.h"
 #include "SIInstrInfo.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include <cassert>
 #include <cstdint>
 #include <optional>
 
@@ -163,7 +163,7 @@ getCoExecMaskForMI(const MachineInstr &MI, const SIInstrInfo &TII) {
   return flavorToCoExecMask(Flavor);
 }
 
-inline StringRef getFlavorName(InstructionFlavor F) {
+constexpr StringRef getFlavorName(InstructionFlavor F) {
   switch (F) {
   case InstructionFlavor::WMMA:
     return "WMMA";
@@ -189,36 +189,6 @@ inline StringRef getFlavorName(InstructionFlavor F) {
     return "Other";
   case InstructionFlavor::NUM_FLAVORS:
     return "???";
-  }
-  llvm_unreachable("Unknown InstructionFlavor");
-}
-
-inline StringRef getFlavorShortName(InstructionFlavor F) {
-  switch (F) {
-  case InstructionFlavor::WMMA:
-    return "W";
-  case InstructionFlavor::SingleCycleVALU:
-    return "V";
-  case InstructionFlavor::TRANS:
-    return "T";
-  case InstructionFlavor::MultiCycleVALU:
-    return "C";
-  case InstructionFlavor::VMEM:
-    return "M";
-  case InstructionFlavor::SMEM:
-    return "M";
-  case InstructionFlavor::DS:
-    return "D";
-  case InstructionFlavor::SALU:
-    return "S";
-  case InstructionFlavor::DMA:
-    return "X";
-  case InstructionFlavor::Fence:
-    return "F";
-  case InstructionFlavor::Other:
-    return "O";
-  case InstructionFlavor::NUM_FLAVORS:
-    return "?";
   }
   llvm_unreachable("Unknown InstructionFlavor");
 }
@@ -258,28 +228,6 @@ constexpr FlavorMask AllMem = flavorBit(InstructionFlavor::VMEM) |
                               flavorBit(InstructionFlavor::DS) |
                               flavorBit(InstructionFlavor::DMA);
 } // namespace FlavorMasks
-
-/// Vector-based flavor grouping for dynamic iteration.
-using FlavorGroup = SmallVector<InstructionFlavor, 4>;
-
-namespace FlavorGroups {
-inline FlavorGroup allVALU() {
-  return {InstructionFlavor::SingleCycleVALU, InstructionFlavor::TRANS,
-          InstructionFlavor::MultiCycleVALU};
-}
-inline FlavorGroup allMem() {
-  return {InstructionFlavor::VMEM, InstructionFlavor::DS,
-          InstructionFlavor::DMA};
-}
-inline FlavorGroup individual(InstructionFlavor F) { return {F}; }
-inline FlavorGroup all() {
-  FlavorGroup G;
-  for (unsigned I = 0;
-       I < static_cast<unsigned>(InstructionFlavor::NUM_FLAVORS); ++I)
-    G.push_back(static_cast<InstructionFlavor>(I));
-  return G;
-}
-} // namespace FlavorGroups
 
 //===----------------------------------------------------------------------===//
 // Co-execution Stage Type
@@ -414,19 +362,19 @@ struct CoExecInfo {
 
   /// Get preferred flavors for a stage.
   FlavorMask getPreferredFlavors(unsigned Stage) const {
-    return Stage < MaxCoExecStages ? Slots[Stage].PreferredFlavors
-                                   : FlavorMasks::None;
+    return Stage < TotalWindow ? Slots[Stage].PreferredFlavors
+                               : FlavorMasks::None;
   }
 
   /// Get avoided flavors for a stage.
   FlavorMask getAvoidedFlavors(unsigned Stage) const {
-    return Stage < MaxCoExecStages ? Slots[Stage].AvoidedFlavors
-                                   : FlavorMasks::None;
+    return Stage < TotalWindow ? Slots[Stage].AvoidedFlavors
+                               : FlavorMasks::None;
   }
 
   /// Get type index for a stage (e.g., 0 = first E, 1 = second E).
   uint8_t getTypeIndex(unsigned Stage) const {
-    return Stage < MaxCoExecStages ? Slots[Stage].TypeIndex : 0;
+    return Stage < TotalWindow ? Slots[Stage].TypeIndex : 0;
   }
 
   /// Check if this is the first slot of its type.
@@ -508,15 +456,15 @@ struct CoExecInfo {
 
   /// Set preferred flavors for a stage. Returns *this for chaining.
   CoExecInfo &preferring(unsigned Stage, FlavorMask Flavors) {
-    if (Stage < MaxCoExecStages)
-      Slots[Stage].PreferredFlavors = Flavors;
+    assert(Stage < TotalWindow);
+    Slots[Stage].PreferredFlavors = Flavors;
     return *this;
   }
 
   /// Set avoided flavors for a stage. Returns *this for chaining.
   CoExecInfo &avoiding(unsigned Stage, FlavorMask Flavors) {
-    if (Stage < MaxCoExecStages)
-      Slots[Stage].AvoidedFlavors = Flavors;
+    assert(Stage < TotalWindow);
+    Slots[Stage].AvoidedFlavors = Flavors;
     return *this;
   }
 
@@ -573,7 +521,9 @@ inline CoExecInfo CoExecInfo::build(unsigned Occupancy, unsigned TotalWindow,
                                     const char *Pattern, unsigned LastIStage,
                                     bool HasScaling) {
   CoExecInfo Info;
-  // Cap values at MaxCoExecStages to avoid buffer overflow.
+  assert(TotalWindow <= MaxCoExecStages && "Co-execution window is too long");
+  assert(StringRef(Pattern).size() == TotalWindow &&
+         "Pattern must describe every cycle of the co-execution window");
   Info.Occupancy = Occupancy;
   Info.TotalWindow = TotalWindow;
   Info.LastIStage = LastIStage;
@@ -583,7 +533,7 @@ inline CoExecInfo CoExecInfo::build(unsigned Occupancy, unsigned TotalWindow,
   // Track count of each type for TypeIndex computation
   unsigned ECount = 0, ICount = 0, VCount = 0;
 
-  for (unsigned I = 0; I < Info.TotalWindow && Pattern[I]; ++I) {
+  for (unsigned I = 0; I < Info.TotalWindow; ++I) {
     switch (Pattern[I]) {
     case '0':
       Info.Slots[I].Mask = CoExecMask::StageE0;
@@ -629,7 +579,7 @@ inline CoExecInfo CoExecInfo::buildUniform(unsigned Occupancy,
                                            FlavorMask Prefer,
                                            FlavorMask Avoids) {
   CoExecInfo Info;
-  // Cap values at MaxCoExecStages to avoid buffer overflow.
+  assert(TotalWindow <= MaxCoExecStages && "Co-execution window is too long");
   Info.Occupancy = Occupancy;
   Info.TotalWindow = TotalWindow;
   Info.LastIStage = LastIStage;

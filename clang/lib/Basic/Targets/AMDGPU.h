@@ -42,20 +42,21 @@ class LLVM_LIBRARY_VISIBILITY AMDGPUTargetInfo final : public TargetInfo {
   /// Whether having image instructions.
   bool HasImage = false;
 
-  /// Explicit xnack/sramecc target-id feature settings from the command line,
-  /// e.g. gfx908:xnack+:sramecc-. "Unsupported" means the feature was not
-  /// specified (or is not a valid target-id modifier for the processor).
-  llvm::AMDGPU::TargetIDSetting XnackSetting =
-      llvm::AMDGPU::TargetIDSetting::Unsupported;
-  llvm::AMDGPU::TargetIDSetting SramEccSetting =
-      llvm::AMDGPU::TargetIDSetting::Unsupported;
+  /// Target ID is device name followed by optional feature name postfixed
+  /// by plus or minus sign delimitted by colon, e.g. gfx908:xnack+:sramecc-.
+  /// If the target ID contains feature+, map it to true.
+  /// If the target ID contains feature-, map it to false.
+  /// If the target ID does not contain a feature (default), do not map it.
+  llvm::StringMap<bool> OffloadArchFeatures;
+  std::string TargetID;
 
   bool hasFP64() const { return getTriple().isAMDGCN(); }
 
   /// Has fast fma f32
   bool hasFastFMAF() const {
     return getTriple().isAMDGCN() &&
-           !!(GPUFeatures & llvm::AMDGPU::FEATURE_FAST_FMA_F32);
+           llvm::AMDGPU::getFeatureBitset(GPUKind).test(
+               llvm::AMDGPU::FEAT_FAST_FMAF);
   }
 
   /// Has fast fma f64
@@ -68,7 +69,8 @@ class LLVM_LIBRARY_VISIBILITY AMDGPUTargetInfo final : public TargetInfo {
 
   bool hasFullRateDenormalsF32() const {
     return getTriple().isAMDGCN() &&
-           !!(GPUFeatures & llvm::AMDGPU::FEATURE_FAST_DENORMAL_F32);
+           llvm::AMDGPU::getFeatureBitset(GPUKind).test(
+               llvm::AMDGPU::FEAT_FAST_DENORMAL_F32);
   }
 
   bool hasLDEXPF() const { return getTriple().isAMDGCN(); }
@@ -280,7 +282,7 @@ public:
   bool setCPU(StringRef Name) override {
     if (getTriple().isAMDGCN()) {
       GPUKind = llvm::AMDGPU::parseArchAMDGCN(Name);
-      GPUFeatures = llvm::AMDGPU::getArchAttrAMDGCN(GPUKind);
+      GPUFeatures = llvm::AMDGPU::FEATURE_NONE;
       return llvm::AMDGPU::isCPUValidForSubArch(getTriple().getSubArch(),
                                                 GPUKind) &&
              !llvm::AMDGPU::isPseudoTarget(GPUKind);
@@ -461,7 +463,8 @@ public:
   bool handleTargetFeatures(std::vector<std::string> &Features,
                             DiagnosticsEngine &Diags) override {
     HasFullBFloat16 = true;
-    unsigned ArchAttr = llvm::AMDGPU::getArchAttrAMDGCN(GPUKind);
+    auto TargetIDFeatures =
+        getAllPossibleTargetIDFeatures(getTriple(), getArchNameAMDGCN(GPUKind));
     for (const auto &F : Features) {
       assert(F.front() == '+' || F.front() == '-');
       if (F == "+wavefrontsize64")
@@ -472,17 +475,12 @@ public:
         CUMode = false;
       else if (F == "+image-insts")
         HasImage = true;
-      llvm::AMDGPU::TargetIDSetting Setting =
-          F.front() == '+' ? llvm::AMDGPU::TargetIDSetting::On
-                           : llvm::AMDGPU::TargetIDSetting::Off;
+      bool IsOn = F.front() == '+';
       StringRef Name = StringRef(F).drop_front();
-      // xnack is a valid target-id modifier only when the processor supports
-      // on/off modes; sramecc when the processor supports sramecc.
-      if (Name == "xnack" &&
-          (ArchAttr & llvm::AMDGPU::FEATURE_XNACK_ON_OFF_MODES))
-        XnackSetting = Setting;
-      else if (Name == "sramecc" && (ArchAttr & llvm::AMDGPU::FEATURE_SRAMECC))
-        SramEccSetting = Setting;
+      if (!llvm::is_contained(TargetIDFeatures, Name))
+        continue;
+      assert(!OffloadArchFeatures.contains(Name));
+      OffloadArchFeatures[Name] = IsOn;
     }
     return true;
   }
