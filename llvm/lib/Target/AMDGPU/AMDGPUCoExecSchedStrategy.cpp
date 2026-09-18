@@ -35,6 +35,338 @@ using namespace llvm::AMDGPU;
 
 #define DEBUG_TYPE "machine-scheduler"
 
+/// Apply \p ExtraBits to every slot in \p Info starting with \p StartIndex.
+static void allowCoExec(CoExecInfo &Info, CoExecMaskT ExtraBits,
+                        unsigned StartIndex) {
+  for (unsigned Index = StartIndex; Index < Info.TotalWindow; ++Index)
+    Info.Slots[Index].Mask |= ExtraBits;
+}
+
+/// Get co-execution info for a gfx950 MFMA instruction.
+/// The occupancy (cycles until the next MFMA may issue) is expressed as the
+/// first stage carrying the WMMA bit.
+llvm::AMDGPU::CoExecInfo llvm::AMDGPU::getMFMACoExecInfo(unsigned Opcode) {
+  using namespace llvm;
+  using namespace llvm::AMDGPU;
+  CoExecInfo Res;
+  Res.HasScaling = AMDGPU::getHasMatrixScale(Opcode);
+  for (unsigned I = 0; I < MaxCoExecStages; ++I)
+    Res.Slots[I].Mask = CoExecMask::None;
+
+  // TODO: Implement proper patterns support (for debugging purposes).
+  // Existing pattern letters are WMMA-specific and will probably be confusing
+  // if used as-is for MFMA. Inventing new MFMA-specific letters is an option,
+  // but perhaps the pattern should be instead dynamically reconstructed when
+  // needed by printing specific slots in full instead of a key for them.
+  Res.Pattern = "undefinedundefinedundefinedundefined";
+
+  switch (Opcode) {
+  // 4-cycle occupancy, 8-cycle window.
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f4_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f4_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f4_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f4_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f6_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f6_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f6_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f6_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f4_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f4_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f4_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f4_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f6_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f6_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f6_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f6_gfx940_vcd:
+  case V_MFMA_F32_16X16X32_BF16_e64:
+  case V_MFMA_F32_16X16X32_BF16_vgprcd_e64:
+  case V_MFMA_F32_16X16X32_BF16_gfx940_acd:
+  case V_MFMA_F32_16X16X32_BF16_gfx940_vcd:
+  case V_MFMA_I32_16X16X64_I8_e64:
+  case V_MFMA_I32_16X16X64_I8_vgprcd_e64:
+  case V_MFMA_I32_16X16X64_I8_gfx940_acd:
+  case V_MFMA_I32_16X16X64_I8_gfx940_vcd:
+  case V_MFMA_F32_16X16X32_F16_e64:
+  case V_MFMA_F32_16X16X32_F16_vgprcd_e64:
+  case V_MFMA_F32_16X16X32_F16_gfx940_acd:
+  case V_MFMA_F32_16X16X32_F16_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f4_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f6_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f4_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f6_gfx940_vcd:
+    // GFX9 Shader Programming Guide lists those SMFMAC separately, but for
+    // intended purposes here all those instructions are the same. This comment
+    // is to simplify reverse mapping to the SPG.
+  case V_SMFMAC_F32_16X16X64_BF16_e64:
+  case V_SMFMAC_F32_16X16X64_BF16_gfx940:
+  case V_SMFMAC_I32_16X16X128_I8_e64:
+  case V_SMFMAC_I32_16X16X128_I8_gfx940:
+  case V_SMFMAC_F32_16X16X128_BF8_BF8_e64:
+  case V_SMFMAC_F32_16X16X128_BF8_BF8_gfx940:
+  case V_SMFMAC_F32_16X16X128_BF8_FP8_e64:
+  case V_SMFMAC_F32_16X16X128_BF8_FP8_gfx940:
+  case V_SMFMAC_F32_16X16X128_FP8_BF8_e64:
+  case V_SMFMAC_F32_16X16X128_FP8_BF8_gfx940:
+  case V_SMFMAC_F32_16X16X128_FP8_FP8_e64:
+  case V_SMFMAC_F32_16X16X128_FP8_FP8_gfx940:
+  case V_SMFMAC_F32_16X16X64_F16_e64:
+  case V_SMFMAC_F32_16X16X64_F16_gfx940:
+    Res.TotalWindow = 8;
+    Res.Occupancy = 4;
+    Res.LastIStage = 3;
+    allowCoExec(Res, CoExecMask::SALU, 1);
+    allowCoExec(Res, CoExecMask::DS | CoExecMask::VALU | CoExecMask::VMEM, 2);
+    allowCoExec(Res, CoExecMask::WMMA, 4);
+    return Res;
+
+  // 8-cycle occupancy, 12-cycle window.
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f8_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f8_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f8_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f4_f8_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f8_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f8_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f8_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f6_f8_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f4_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f4_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f4_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f4_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f6_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f6_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f6_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f6_gfx940_vcd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f8_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f8_vgprcd_e64:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f8_gfx940_acd:
+  case V_MFMA_F32_16X16X128_F8F6F4_f8_f8_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f4_f8_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f6_f8_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f4_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f6_gfx940_vcd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_vgprcd_e64:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_gfx940_acd:
+  case V_MFMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_gfx940_vcd:
+    Res.TotalWindow = 12;
+    Res.Occupancy = 8;
+    Res.LastIStage = 7;
+    allowCoExec(Res, CoExecMask::SALU, 1);
+    allowCoExec(Res, CoExecMask::DS | CoExecMask::VMEM, 2);
+    allowCoExec(Res, CoExecMask::VALU, 3);
+    allowCoExec(Res, CoExecMask::WMMA, 8);
+    return Res;
+
+  // 4-cycle occupancy, 8-cycle window.
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f4_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f4_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f4_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f4_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f4_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f4_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f6_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f6_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f6_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f6_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f6_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f6_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f4_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f4_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f4_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f4_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f4_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f4_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f6_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f6_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f6_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f6_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f6_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f6_gfx940_vcd:
+  case V_MFMA_F32_32X32X16_BF16_e64:
+  case V_MFMA_F32_32X32X16_BF16_mac_e64:
+  case V_MFMA_F32_32X32X16_BF16_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X16_BF16_vgprcd_e64:
+  case V_MFMA_F32_32X32X16_BF16_gfx940_acd:
+  case V_MFMA_F32_32X32X16_BF16_gfx940_vcd:
+  case V_MFMA_I32_32X32X32_I8_e64:
+  case V_MFMA_I32_32X32X32_I8_mac_e64:
+  case V_MFMA_I32_32X32X32_I8_mac_vgprcd_e64:
+  case V_MFMA_I32_32X32X32_I8_vgprcd_e64:
+  case V_MFMA_I32_32X32X32_I8_gfx940_acd:
+  case V_MFMA_I32_32X32X32_I8_gfx940_vcd:
+  case V_MFMA_F32_32X32X16_F16_e64:
+  case V_MFMA_F32_32X32X16_F16_mac_e64:
+  case V_MFMA_F32_32X32X16_F16_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X16_F16_vgprcd_e64:
+  case V_MFMA_F32_32X32X16_F16_gfx940_acd:
+  case V_MFMA_F32_32X32X16_F16_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f4_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f6_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f4_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f6_mac_vgprcd_e64:
+    Res.TotalWindow = 8;
+    Res.Occupancy = 4;
+    Res.LastIStage = 3;
+    allowCoExec(Res, CoExecMask::SALU, 1);
+    allowCoExec(Res, CoExecMask::DS | CoExecMask::VALU | CoExecMask::VMEM, 2);
+    allowCoExec(Res, CoExecMask::WMMA, 4);
+    return Res;
+
+  // 16-cycle occupancy, 20-cycle window.
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f8_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f8_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f8_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f8_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f8_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f4_f8_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f8_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f8_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f8_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f8_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f8_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f6_f8_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f4_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f4_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f4_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f4_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f4_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f4_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f6_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f6_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f6_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f6_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f6_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f6_gfx940_vcd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f8_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f8_mac_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f8_mac_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f8_vgprcd_e64:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f8_gfx940_acd:
+  case V_MFMA_F32_32X32X64_F8F6F4_f8_f8_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_mac_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_mac_vgprcd_e64:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f4_f8_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f6_f8_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f4_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f6_gfx940_vcd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_gfx940_acd:
+  case V_MFMA_SCALE_F32_32X32X64_F8F6F4_f8_f8_gfx940_vcd:
+    Res.TotalWindow = 20;
+    Res.Occupancy = 16;
+    Res.LastIStage = 15;
+    allowCoExec(Res, CoExecMask::SALU, 1);
+    allowCoExec(Res, CoExecMask::DS | CoExecMask::VMEM, 2);
+    allowCoExec(Res, CoExecMask::VALU, 3);
+    allowCoExec(Res, CoExecMask::WMMA, 16);
+    return Res;
+
+  // 9-cycle occupancy, 12-cycle window.
+  case V_SMFMAC_F32_32X32X32_BF16_e64:
+  case V_SMFMAC_F32_32X32X32_BF16_gfx940:
+  case V_SMFMAC_I32_32X32X64_I8_e64:
+  case V_SMFMAC_I32_32X32X64_I8_gfx940:
+  case V_SMFMAC_F32_32X32X64_BF8_BF8_e64:
+  case V_SMFMAC_F32_32X32X64_BF8_BF8_gfx940:
+  case V_SMFMAC_F32_32X32X64_BF8_FP8_e64:
+  case V_SMFMAC_F32_32X32X64_BF8_FP8_gfx940:
+  case V_SMFMAC_F32_32X32X64_FP8_BF8_e64:
+  case V_SMFMAC_F32_32X32X64_FP8_BF8_gfx940:
+  case V_SMFMAC_F32_32X32X64_FP8_FP8_e64:
+  case V_SMFMAC_F32_32X32X64_FP8_FP8_gfx940:
+  case V_SMFMAC_F32_32X32X32_F16_e64:
+  case V_SMFMAC_F32_32X32X32_F16_gfx940:
+    Res.TotalWindow = 12;
+    Res.Occupancy = 9;
+    Res.LastIStage = 8;
+    allowCoExec(Res, CoExecMask::SALU, 1);
+    allowCoExec(Res, CoExecMask::DS | CoExecMask::VALU | CoExecMask::VMEM, 4);
+    allowCoExec(Res, CoExecMask::WMMA, 9);
+    return Res;
+
+  // 18-cycle occupancy, 19-cycle window.
+  case V_MFMA_F64_16X16X4F64_e64:
+  case V_MFMA_F64_16X16X4F64_mac_e64:
+  case V_MFMA_F64_16X16X4F64_mac_vgprcd_e64:
+  case V_MFMA_F64_16X16X4F64_vgprcd_e64:
+    Res.TotalWindow = 19;
+    Res.Occupancy = 18;
+    Res.LastIStage = 18;
+    allowCoExec(Res, CoExecMask::DS | CoExecMask::SALU | CoExecMask::VMEM, 0);
+    allowCoExec(Res, CoExecMask::WMMA | CoExecMask::VALU, 18);
+    return Res;
+
+  default:
+    // Default fallback: permissive 8-cycle pattern
+    return CoExecInfo::build(8, 9, "AAAAAAAAA", 7, false);
+  }
+}
+
 // Default VGPR excess threshold percent for coexec scheduler.
 static constexpr unsigned DefaultVGPRExcessThresholdPercent = 100;
 
@@ -273,7 +605,7 @@ InstructionFlavor llvm::AMDGPU::classifyFlavor(const MachineInstr &MI,
   if (SII.isTRANS(MI))
     return InstructionFlavor::TRANS;
 
-  if (SII.isVALU(MI)) {
+  if (SII.isVALU(MI, /*AllowLDSDMA=*/false)) {
     if (SII.getRepeatRate(MI) > 1)
       return InstructionFlavor::MultiCycleVALU;
 
@@ -752,7 +1084,7 @@ void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
   PrioritySUs.remove(SU);
 
   if (BufferSize <= 1 || (ScheduledSUs.size() % BufferSize == 0))
-    TotalCycles -= BlockingCycles;
+    TotalCycles -= std::min(TotalCycles, BlockingCycles);
 
   if (AllSUs.empty())
     return;
@@ -782,12 +1114,16 @@ void HardwareUnitInfo::markScheduled(SUnit *SU, unsigned BlockingCycles) {
 void HardwareUnitInfo::finalizeCycles() {
   RemainingCycles = TotalCycles;
 
-  if (BufferSize <= 1 || AllSUs.empty())
+  if (BufferSize == 0 || AllSUs.empty())
     return;
 
   // We estimate the amount of cycles it takes to free up a slot in the buffer
   // as the average cycles per SU.
   BufferCycles = TotalCycles / AllSUs.size();
+  // A single-entry buffer does not reduce TotalCycles.
+  if (BufferSize == 1)
+    return;
+
   // The TotalCycles is normalized against the BufferSize.
   // This provides an estimate of the TotalCycles which is not always accurate
   // -- particularly in cases where we have fewer instructions than the
@@ -1555,8 +1891,9 @@ void CandidateHeuristics::computeRooflineCoExec() {
   }
 
   // Collect slot types into a vector for indexing.
-  SmallVector<std::pair<uint16_t, unsigned>, 8> SlotTypeVec(SlotTypes.begin(),
-                                                            SlotTypes.end());
+  SmallVector<std::pair<uint16_t, unsigned>, 8> SlotTypeVec;
+  for (auto &[Mask, Count] : SlotTypes)
+    SlotTypeVec.emplace_back(static_cast<uint16_t>(Mask), Count);
 
   // Build flow network.
   // Nodes: 0=source, 1..C=consumer classes, C+1..C+T=slot types, C+T+1=sink.
@@ -1856,7 +2193,7 @@ unsigned CandidateHeuristics::getStallCosts(SUnit *SU, SchedBoundary &Zone,
   auto getBufferFullStalls = [this, &Zone](SUnit *SU) -> unsigned {
     InstructionFlavor Flavor = classifyFlavor(*SU->getInstr(), *SII);
     HardwareUnitInfo *HWUI = getHWUIFromFlavor(Flavor);
-    if (!HWUI || HWUI->getBufferSize() <= 1)
+    if (!HWUI || HWUI->getBufferSize() == 0)
       return 0;
 
     unsigned CurrCycle = Zone.getCurrCycle();
@@ -2840,14 +3177,17 @@ void AMDGPUCoExecSchedStrategy::pickNodeFromQueue(
   ArrayRef<unsigned> Pressure = RPTracker.getRegSetPressureAtPos();
   unsigned SGPRPressure = 0;
   unsigned VGPRPressure = 0;
+  unsigned AGPRPressure = 0;
   PickedPending = false;
   if (DAG->isTrackingPressure()) {
     if (!useGCNTrackers()) {
       SGPRPressure = Pressure[AMDGPU::RegisterPressureSets::SReg_32];
       VGPRPressure = Pressure[AMDGPU::RegisterPressureSets::VGPR_32];
+      AGPRPressure = Pressure[AMDGPU::RegisterPressureSets::AGPR_32];
     } else {
       SGPRPressure = DownwardTracker.getPressure().getSGPRNum();
       VGPRPressure = DownwardTracker.getPressure().getArchVGPRNum();
+      AGPRPressure = DownwardTracker.getPressure().getAGPRNum();
     }
   }
 
@@ -2855,7 +3195,7 @@ void AMDGPUCoExecSchedStrategy::pickNodeFromQueue(
     for (SUnit *SU : Q) {
       SchedCandidate TryCand(ZonePolicy);
       initCandidate(TryCand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
-                    VGPRPressure, IsBottomUp);
+                    VGPRPressure, AGPRPressure, IsBottomUp);
       SchedBoundary *ZoneArg = Cand.AtTop == TryCand.AtTop ? &Zone : nullptr;
       tryCandidateCoexec(Cand, TryCand, ZoneArg);
       if (TryCand.Reason != NoCand) {
