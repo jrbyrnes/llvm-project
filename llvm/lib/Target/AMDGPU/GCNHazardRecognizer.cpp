@@ -11,9 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "GCNHazardRecognizer.h"
+#include "AMDGPUTargetMachine.h"
 #include "AMDGPUWaitcntUtils.h"
 #include "GCNSubtarget.h"
-#include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -223,15 +223,23 @@ bool GCNHazardRecognizer::hasCoExecWindowModel() const {
   // gfx1251 and gfx12.5-generic report the same co-execution hazard features
   // but have different WMMA latencies, so they need their own slot patterns
   // before they can be modeled here.
-  return ST.hasWMMACoexecutionHazards() && ST.hasTransCoexecutionHazard() &&
-         AMDGPU::isGFX1250(ST);
+  if (ST.hasWMMACoexecutionHazards() && ST.hasTransCoexecutionHazard() &&
+      AMDGPU::isGFX1250(ST))
+    return true;
+
+  if (ST.hasGFX950Insts() &&
+      AMDGPU::getSchedStrategy(MF.getFunction()) == "coexec")
+    return true;
+
+  return false;
 }
 
 void GCNHazardRecognizer::updateWMMAWindowState(const MachineInstr &MI) {
-  bool IsWMMAGfx1250 = hasCoExecWindowModel() &&
-                       (SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI));
-  bool IsMFMAGfx950 = ST.hasGFX950Insts() && SIInstrInfo::isMFMA(MI);
-  if (!IsWMMAGfx1250 && !IsMFMAGfx950)
+  if (!hasCoExecWindowModel())
+    return;
+
+  if (!SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI) &&
+      !SIInstrInfo::isMFMA(MI))
     return;
 
   // If a previous window was still active, dump it before starting a new one.
@@ -284,7 +292,7 @@ void GCNHazardRecognizer::updateMultiCycleVALUState(const MachineInstr &MI) {
 
   // Skip WMMA, MFMA, and TRANS - they have their own tracking.
   if (SIInstrInfo::isWMMA(MI) || SIInstrInfo::isSWMMAC(MI) ||
-      SIInstrInfo::isMAI(MI) || SIInstrInfo::isTRANS(MI))
+      SIInstrInfo::isMFMA(MI) || SIInstrInfo::isTRANS(MI))
     return;
 
   unsigned RepeatRate = TII.getRepeatRate(MI);
@@ -578,8 +586,7 @@ static bool isPermlane(const MachineInstr &MI) {
 }
 
 static bool isLdsDma(const MachineInstr &MI) {
-  return SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true) &&
-         (SIInstrInfo::isMUBUF(MI) || SIInstrInfo::isFLAT(MI));
+  return SIInstrInfo::isLDSDMA(MI);
 }
 
 static unsigned getHWReg(const SIInstrInfo *TII, const MachineInstr &RegInstr) {
@@ -1601,7 +1608,7 @@ int GCNHazardRecognizer::checkVALUHazardsHelper(
 /// none exists.
 static const MachineOperand *
 getDstSelForwardingOperand(const MachineInstr &MI, const GCNSubtarget &ST) {
-  if (!SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true))
+  if (!SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/false))
     return nullptr;
 
   const SIInstrInfo *TII = ST.getInstrInfo();
@@ -2381,8 +2388,10 @@ bool GCNHazardRecognizer::fixVALUPartialForwardingHazard(MachineInstr *MI) {
     int VALUs = 0;
 
     static unsigned getHashValue(const StateType &State) {
-      return hash_combine(State.ExecPos, State.VALUs,
-                          hash_combine_range(State.DefPos));
+      hash_code H = hash_combine(State.ExecPos, State.VALUs);
+      for (const auto &[Reg, Pos] : State.DefPos)
+        H = hash_combine(H, Reg, Pos);
+      return H;
     }
     static bool isEqual(const StateType &LHS, const StateType &RHS) {
       return LHS.DefPos == RHS.DefPos && LHS.ExecPos == RHS.ExecPos &&
@@ -2680,9 +2689,8 @@ bool GCNHazardRecognizer::fixWMMAHazards(MachineInstr *MI) {
 }
 
 static bool isCoexecutableVALUInst(const MachineInstr &MI) {
-  return SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/true) &&
-         !SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI) &&
-         !SIInstrInfo::isLDSDMA(MI);
+  return SIInstrInfo::isVALU(MI, /*AllowLDSDMA=*/false) &&
+         !SIInstrInfo::isWMMA(MI) && !SIInstrInfo::isSWMMAC(MI);
 }
 
 // Classify XDL WMMA instructions into co-execution hazard categories

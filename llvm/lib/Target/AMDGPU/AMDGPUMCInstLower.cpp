@@ -38,7 +38,6 @@
 //
 
 #include "AMDGPUMCInstLower.h"
-#include "AMDGPU.h"
 #include "AMDGPUAsmPrinter.h"
 #include "AMDGPUMachineFunctionInfo.h"
 #include "AMDGPUStaticSimulator.h"
@@ -57,6 +56,7 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/Support/AMDGPUAddrSpace.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -326,7 +326,8 @@ const MCExpr *AMDGPUAsmPrinter::lowerConstant(const Constant *CV,
   // Intercept LDS variables with known addresses
   if (const GlobalVariable *GV = dyn_cast<const GlobalVariable>(CV)) {
     if (std::optional<uint32_t> Address =
-            AMDGPUMachineFunctionInfo::getLDSAbsoluteAddress(*GV)) {
+            AMDGPUMachineFunctionInfo::get32BitAbsoluteAddress(
+                *GV, AMDGPUAS::LOCAL_ADDRESS)) {
       auto *IntTy = Type::getInt32Ty(CV->getContext());
       return AsmPrinter::lowerConstant(ConstantInt::get(IntTy, *Address),
                                        BaseCV, Offset);

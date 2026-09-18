@@ -23,6 +23,7 @@
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/CodeGen/GlobalISel/InlineAsmLowering.h"
+#include "llvm/CodeGen/MachinePipeliner.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -91,6 +92,7 @@ static AMDGPUSubtarget::Generation computeDefaultGeneration(const Triple &TT) {
     return AMDGPUSubtarget::GFX11;
   case Triple::AMDGPUSubArch12:
   case Triple::AMDGPUSubArch12_5:
+  case Triple::AMDGPUSubArch1250S:
     return AMDGPUSubtarget::GFX12;
   case Triple::AMDGPUSubArch13:
     return AMDGPUSubtarget::GFX13;
@@ -186,6 +188,9 @@ GCNSubtarget &GCNSubtarget::initializeSubtargetDependencies(const Triple &TT,
   if (LDSBankCount == 0)
     LDSBankCount = 32;
 
+  if (MaxWavesPerEU == 0)
+    MaxWavesPerEU = 10;
+
   if (FlatOffsetBitWidth == 0)
     FlatOffsetBitWidth = 13;
 
@@ -257,8 +262,8 @@ GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
   LLVM_DEBUG(dbgs() << "sramecc setting for subtarget: "
                     << TargetID.getSramEccSetting() << '\n');
 
-  MaxWavesPerEU = AMDGPU::IsaInfo::getMaxWavesPerEU(*this);
-  EUsPerCU = AMDGPU::IsaInfo::getEUsPerCU(*this);
+  NumWorkGroupSIMDs =
+      AMDGPU::getNumWorkGroupSIMDs(AMDGPU::isFullSIMDMode(*this));
 
   TSInfo = std::make_unique<AMDGPUSelectionDAGInfo>();
 
@@ -461,6 +466,11 @@ void GCNSubtarget::overridePostRASchedPolicy(MachineSchedPolicy &Policy,
     dbgs() << "Post-MI-sched direction (" << F.getName() << "): " << DirStr
            << '\n';
   });
+}
+
+void GCNSubtarget::overridePipelinerPolicy(
+    MachinePipelinerPolicy &Policy) const {
+  Policy.ShouldLimitRegPressure = true;
 }
 
 void GCNSubtarget::mirFileLoaded(MachineFunction &MF) const {

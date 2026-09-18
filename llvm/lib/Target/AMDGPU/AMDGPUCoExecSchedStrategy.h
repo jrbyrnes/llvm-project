@@ -165,7 +165,8 @@ private:
   /// instructions on other HardwareUnits.
   bool ProducesCoexecWindow = false;
   /// How many instructions can be held simultaneously for this HardwareUnit.
-  /// A value of 0 or 1 means that there is no buffer.
+  /// A value of 0 means there is no limit. A value of 1 models an unbuffered
+  /// resource with a single in-flight instruction.
   unsigned BufferSize = 0;
   /// How many cycles it takes for an instruction to clear the buffer.
   unsigned BufferCycles = 0;
@@ -220,8 +221,8 @@ public:
 
   /// \returns the next cycle where there is space in the buffer.
   unsigned getBufferAvailableCycle(unsigned CurrCycle) {
-    // There is no buffer.
-    if (BufferSize <= 1)
+    // An unlimited buffer is always available.
+    if (BufferSize == 0)
       return CurrCycle;
 
     // Buffer is available now.
