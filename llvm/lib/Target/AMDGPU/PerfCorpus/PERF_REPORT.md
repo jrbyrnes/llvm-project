@@ -17,27 +17,27 @@ Lower is better. The `Δ` column is relative to **Off** (negative = faster).
 
 | Kernel | Off | On+tuned | Δ |
 |---|---:|---:|---:|
-| bf16FA/bf16_fa | 1837 | 1369 | -25.5% |
-| bf16_GEMM/bf16_GEMM | 1239 | 1066 | -14.0% |
+| bf16FA/bf16_fa | 1967 | 1404 | -28.6% |
+| bf16_GEMM/bf16_GEMM | 1239 | 1067 | -13.9% |
 | fp4_GEMM/fp4_GEMM | 617 | 617 | +0.0% |
-| fp8fp4MOE/fp8fp4_MOE | 618 | 618 | +0.0% |
+| fp8fp4MOE/fp8fp4_MOE | 630 | 630 | +0.0% |
 
 ## Gluon
 
 | Kernel | Off | On+tuned | Δ |
 |---|---:|---:|---:|
-| bf16FA/bf16_fa | 8565 | 1637 | -80.9% |
-| bf16_GEMM/bf16_GEMM | 2647 | 2109 | -20.3% |
-| fo4_GEMM/fp4_GEMM | 833 | 716 | -14.0% |
-| fp8_FA/fp8_fa | 2615 | 1930 | -26.2% |
-| fp8_GEMM/fo8_GEMM | 1213 | 1205 | -0.7% |
+| bf16FA/bf16_fa | 8565 | 1627 | -81.0% |
+| bf16_GEMM/bf16_GEMM | 2647 | 2111 | -20.2% |
+| fo4_GEMM/fp4_GEMM | 833 | 714 | -14.3% |
+| fp8_FA/fp8_fa | 2615 | 1935 | -26.0% |
+| fp8_GEMM/fo8_GEMM | 1194 | 1238 | +3.7% |
 
 ## Summary
 
 - Kernels measured: 9
-- On+tuned vs Off: 7 faster, 0 slower, 2 unchanged
-- Geomean Δ On+tuned vs Off: -26.6%
-- Median Δ On+tuned vs Off: -14.0%
+- On+tuned vs Off: 6 faster, 1 slower, 2 unchanged
+- Geomean Δ On+tuned vs Off: -26.7%
+- Median Δ On+tuned vs Off: -14.3%
 
 Geometric mean is used to average per-kernel ratios; it is not skewed by a single large outlier the way an arithmetic mean of percentages is.
 
