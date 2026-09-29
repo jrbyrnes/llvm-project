@@ -88,15 +88,15 @@ struct RooflineResult {
   unsigned LowerBoundStalls = 0; // TotalSlots - MaxFilledSlots
   unsigned TotalConsumers = 0;   // Total consumer instructions in region
 
-  // Per-consumer-class counts indexed by CoExecMask bit position (0-7):
-  // 0=CTRL, 1=VALU, 2=TRANS, 3=SALU, 4=DS, 5=VMEM, 6=SMEM, 7=WMMA
-  unsigned ConsumerCount[8] = {};
+  // Per-consumer-class counts indexed by CoExecMask bit position (0-8):
+  // 0=CTRL, 1=VALU, 2=TRANS, 3=SALU, 4=DS, 5=VMEM, 6=SMEM, 7=WMMA, 8=VALUB
+  unsigned ConsumerCount[AMDGPU::CoExecMaskFlavors] = {};
 
   // Per-class consumers that the max-flow could not place into a slot.
   // ExposedByClass[k] = max(0, ConsumerCount[k] - flow assigned to k).
   // Same indexing as ConsumerCount.
-  unsigned ExposedByClass[8] = {};
-  unsigned WMMACoexecByClass[8] = {};
+  unsigned ExposedByClass[AMDGPU::CoExecMaskFlavors] = {};
+  unsigned WMMACoexecByClass[AMDGPU::CoExecMaskFlavors] = {};
   unsigned WMMACount = 0;
 
   unsigned WMMACorrectionPercent = 75;

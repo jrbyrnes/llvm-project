@@ -42,20 +42,23 @@ namespace AMDGPU {
 
 using CoExecMaskT = uint16_t;
 
+constexpr unsigned CoExecMaskFlavors = 9;
+
 /// Bitmask for instruction types allowed to co-execute at a stage.
 namespace CoExecMask {
 constexpr CoExecMaskT None = 0;
 /// RooflineResult relies on the first 8 masks having only one of the rightmost
 /// 8 bits being set: as such do not change values of existing masks without
 /// adjusting RooflineResult accordingly.
-constexpr CoExecMaskT CTRL = 1 << 0;  // Control: s_delay_alu, s_set_vgpr_msb
-constexpr CoExecMaskT VALU = 1 << 1;  // Vector ALU
-constexpr CoExecMaskT TRANS = 1 << 2; // Transcendentals (V_EXP etc)
-constexpr CoExecMaskT SALU = 1 << 3;  // Scalar ALU
-constexpr CoExecMaskT DS = 1 << 4;    // LDS read/write
-constexpr CoExecMaskT VMEM = 1 << 5;  // Global memory
-constexpr CoExecMaskT SMEM = 1 << 6;  // Scalar memory
-constexpr CoExecMaskT WMMA = 1 << 7;  // Next WMMA (V stages only), or MFMA
+constexpr CoExecMaskT CTRL = 1 << (CoExecMaskFlavors - 9);  // Control: s_delay_alu, s_set_vgpr_msb
+constexpr CoExecMaskT VALU = 1 << (CoExecMaskFlavors - 8);  // Vector ALU
+constexpr CoExecMaskT TRANS = 1 << (CoExecMaskFlavors - 7); // Transcendentals (V_EXP etc)
+constexpr CoExecMaskT SALU = 1 << (CoExecMaskFlavors - 6);  // Scalar ALU
+constexpr CoExecMaskT DS = 1 << (CoExecMaskFlavors - 5);    // LDS read/write
+constexpr CoExecMaskT VMEM = 1 << (CoExecMaskFlavors - 4);  // Global memory
+constexpr CoExecMaskT SMEM = 1 << (CoExecMaskFlavors - 3);  // Scalar memory
+constexpr CoExecMaskT WMMA = 1 << (CoExecMaskFlavors - 2);  // Next WMMA (V stages only), or MFMA
+constexpr CoExecMaskT VALUB = 1 << (CoExecMaskFlavors - 1); // VALU Blocking instructions (e.g. MultiCycleVALU)
 constexpr CoExecMaskT All = 0xFFFF;
 
 constexpr CoExecMaskT MEM = DS | VMEM | SMEM;
@@ -121,8 +124,9 @@ InstructionFlavor classifyFlavor(const MachineInstr &MI,
 inline CoExecMaskT flavorToCoExecMask(InstructionFlavor F) {
   switch (F) {
   case InstructionFlavor::SingleCycleVALU:
-  case InstructionFlavor::MultiCycleVALU:
     return CoExecMask::VALU;
+  case InstructionFlavor::MultiCycleVALU:
+    return CoExecMask::VALUB;
   case InstructionFlavor::TRANS:
     return CoExecMask::TRANS;
   case InstructionFlavor::SALU:
