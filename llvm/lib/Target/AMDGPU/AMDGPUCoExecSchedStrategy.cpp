@@ -390,7 +390,7 @@ static cl::opt<CoexecExposedMode> CoexecExposedSort(
 
 static cl::opt<AMDGPU::CarriedLatency> BlockCarriedLatency(
     "amdgpu-block-carried-latency", cl::Hidden,
-    cl::init(AMDGPU::CarriedLatency::Off),
+    cl::init(AMDGPU::CarriedLatency::Fence),
     cl::desc("Prioritize HardwareUnits with non-zero exposed cycles in the "
              "coexec scheduler's critical-resource sort."),
     cl::values(
@@ -405,7 +405,7 @@ enum class RegFreeProximityMode { Off, Auto, Always };
 
 static cl::opt<RegFreeProximityMode> CoexecRegFreeProximity(
     "amdgpu-coexec-reg-free-proximity", cl::Hidden,
-    cl::init(RegFreeProximityMode::Auto),
+    cl::init(RegFreeProximityMode::Always),
     cl::desc("Prioritize instructions which are expected to free a register "
              "sooner (lower min NumSuccsLeft)."),
     cl::values(clEnumValN(RegFreeProximityMode::Off, "off", "Disabled."),
@@ -1160,6 +1160,8 @@ void HardwareUnitInfo::updatePrioritySUsWith(SUnit *Cand,
 
   int Decision = 0;
 
+  //IsCloseToRegPressureLimit &= getType() == InstructionFlavor::SingleCycleVALU || getType() == InstructionFlavor::SALU;
+
   SUnit *Existing = *PrioritySUs.begin();
   if (CoexecRegFreeProximity == RegFreeProximityMode::Off ||
       (CoexecRegFreeProximity == RegFreeProximityMode::Auto &&
@@ -1820,10 +1822,11 @@ void CandidateHeuristics::collectRegionSummary() {
   if (!SchedModel || !SchedModel->hasInstrSchedModel())
     return;
 
-  if (BlockCarriedLatency.getNumOccurrences())
+
+  if (false && BlockCarriedLatency.getNumOccurrences())
     RegionCarriedLatency = BlockCarriedLatency;
 
-  if (!BlockCarriedLatency.getNumOccurrences()) {
+  if (false && !BlockCarriedLatency.getNumOccurrences()) {
     SmallVector<SUnit *, 16> RegionWMMAs;
 
     for (auto &SU : DAG->SUnits) {
@@ -1858,6 +1861,8 @@ void CandidateHeuristics::collectRegionSummary() {
       RegionCarriedLatency = CarriedLatency::Fence;
     }
   }
+
+  RegionCarriedLatency = CarriedLatency::Fence;
 
   for (auto &SU : DAG->SUnits) {
     MachineInstr *MI = SU.getInstr();
@@ -3307,10 +3312,7 @@ void AMDGPUCoExecSchedStrategy::pickNodeFromQueue(
   }
 
   constexpr unsigned MaxVGPRPressureIncFactor = 2; // Empirically chosen
-  const bool IsCloseToRegPressureLimit =
-      DAG->isTrackingPressure() &&
-      VGPRPressure + MaxVGPRPressureIncFactor * MaxVGPRPressureInc >=
-          VGPRExcessLimit;
+  const bool IsCloseToRegPressureLimit = true;
   LLVM_DEBUG(dbgs() << "IsCloseToRegPressureLimit=" << IsCloseToRegPressureLimit
                     << " (VGPR=" << VGPRPressure
                     << " limit=" << VGPRExcessLimit << ")\n");
