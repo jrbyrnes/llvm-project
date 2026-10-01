@@ -1261,7 +1261,7 @@ void CandidateHeuristics::initialize(ScheduleDAGMI *SchedDAG,
     CriticalResourceDepEnabled = false;
     break;
   case CoexecLookaheadEffort::Fast:
-    ShadowMixNodeBudget = 32;
+    ShadowMixNodeBudget = 1024;
     CriticalResourceDepEnabled = true;
     break;
   case CoexecLookaheadEffort::Balanced:
@@ -2601,6 +2601,9 @@ bool CandidateHeuristics::tryCriticalResourcePrio(
     bool CandUsesCrit = HWUI.contains(Cand.SU);
     bool TryCandUsesCrit = HWUI.contains(TryCand.SU);
 
+    //if (HWUI.getType() == InstructionFlavor::SingleCycleVALU || HWUI.getType() == InstructionFlavor::SALU)
+    //  continue;
+
     if (CandUsesCrit != TryCandUsesCrit)
       return false;
 
@@ -2863,7 +2866,7 @@ static constexpr unsigned ShadowMixLookaheadDepth = 8;
 // pickNode comparison and dominates compile time on large DAGs. After the
 // budget is exhausted we bail out of the lookahead (the greedy fallback
 // below still runs). Set to 0 to disable the scan entirely.
-static constexpr unsigned ShadowMixIsReachableBudget = 16;
+static constexpr unsigned ShadowMixIsReachableBudget = 64;
 
 bool CandidateHeuristics::tryShadowMix(
     GenericSchedulerBase::SchedCandidate &TryCand,
@@ -2927,12 +2930,14 @@ bool CandidateHeuristics::tryShadowMix(
   bool CandMatchesProducer = (CandFlavor == ProducerFlavor);
   bool TryCandMatchesProducer = (TryCandFlavor == ProducerFlavor);
 
+  unsigned ProducerCount = MixInfo.getReadyCount(ProducerFlavor);
+
   // ---- Producer vs non-producer ----
   // One candidate matches the target producer, the other doesn't.
   // Prefer producer when demand is satisfied — fillers are ready.
   // If neither are Producer and the Demand is satified, then tryShadowMix has
   // no opinion.
-  if (Demand.isSatisfied(MixInfo)) {
+  if (Demand.isSatisfied(MixInfo) && ProducerCount) {
     if (CandMatchesProducer) {
       LLVM_DEBUG(dbgs() << "ShadowMix: promote producer SU("
                         << Cand.SU->NodeNum << ") — fillers ready\n");
@@ -2954,7 +2959,6 @@ bool CandidateHeuristics::tryShadowMix(
   // enable the most deficient filler flavor.
   InstructionFlavor NeededFlavor = Demand.getMostDeficientFlavor(MixInfo);
 
-  unsigned ProducerCount = MixInfo.getReadyCount(ProducerFlavor);
   if (!ProducerCount)
     NeededFlavor = ProducerFlavor;
 
