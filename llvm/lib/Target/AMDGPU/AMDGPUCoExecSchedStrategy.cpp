@@ -481,7 +481,7 @@ public:
 unsigned coexecBitIndex(CoExecMaskT Bit) {
   assert(Bit && (Bit & (Bit - 1)) == 0 && "Must be a single bit");
   auto Ret = llvm::countr_zero(Bit);
-  assert(Ret < AMDGPU::CoExecMaskFlavors && "Encountered an unsupported CoExecMask");
+  assert(Ret < 8 && "Encountered an unsupported CoExecMask");
   return Ret;
 }
 
