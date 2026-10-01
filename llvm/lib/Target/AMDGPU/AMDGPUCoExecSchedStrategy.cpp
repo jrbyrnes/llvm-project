@@ -2954,6 +2954,10 @@ bool CandidateHeuristics::tryShadowMix(
   // enable the most deficient filler flavor.
   InstructionFlavor NeededFlavor = Demand.getMostDeficientFlavor(MixInfo);
 
+  unsigned ProducerCount = MixInfo.getReadyCount(ProducerFlavor);
+  if (!ProducerCount)
+    NeededFlavor = ProducerFlavor;
+
   // Direct enablement — exclude producers from scoring (scheduling a
   // producer doesn't help make fillers ready).
   unsigned CandEnables =
