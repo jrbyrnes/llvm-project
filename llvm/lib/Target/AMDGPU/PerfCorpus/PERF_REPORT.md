@@ -29,15 +29,15 @@ Lower is better. The `Δ` column is relative to **Off** (negative = faster).
 | bf16FA/bf16_fa | 8565 | 1627 | -81.0% |
 | bf16_GEMM/bf16_GEMM | 2647 | 2111 | -20.2% |
 | fo4_GEMM/fp4_GEMM | 833 | 714 | -14.3% |
-| fp8_FA/fp8_fa | 2615 | 1935 | -26.0% |
+| fp8_FA/fp8_fa | 1956 | 1775 | -9.3% |
 | fp8_GEMM/fo8_GEMM | 1194 | 1238 | +3.7% |
 
 ## Summary
 
 - Kernels measured: 9
 - On+tuned vs Off: 6 faster, 1 slower, 2 unchanged
-- Geomean Δ On+tuned vs Off: -26.7%
-- Median Δ On+tuned vs Off: -14.3%
+- Geomean Δ On+tuned vs Off: -25.0%
+- Median Δ On+tuned vs Off: -13.9%
 
 Geometric mean is used to average per-kernel ratios; it is not skewed by a single large outlier the way an arithmetic mean of percentages is.
 
