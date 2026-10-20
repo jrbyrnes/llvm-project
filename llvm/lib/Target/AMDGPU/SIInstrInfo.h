@@ -98,6 +98,12 @@ private:
   SetVector<MachineInstr *> DeferredList;
 };
 
+// In namespace llvm so ADL finds it when SIInstrFlags predicates are
+// instantiated with MachineInstr (MachineInstr is in namespace llvm).
+inline uint64_t getTSFlags(const MachineInstr &MI) {
+  return MI.getDesc().TSFlags;
+}
+
 class SIInstrInfo final : public AMDGPUGenInstrInfo {
   struct ThreeAddressUpdates;
 
