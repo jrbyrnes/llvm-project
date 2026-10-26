@@ -57,13 +57,12 @@ REPORT_FILE = SCRIPT_DIR / "PERF_REPORT.md"
 
 # Flags shared by every configuration. These are the environment the corpus is
 # measured in, not scheduler tuning: the static simulator that produces the warm
-# cycle counts, expert scheduling mode, disabled post-RA scheduling, and fast FP
-# contraction (which changes the IR lowering all configs share).
+# cycle counts, expert scheduling mode, and disabled post-RA scheduling. FP
+# contraction follows the IR's contract flags; llc no longer has --fp-contract.
 BASE_FLAGS = [
     "-mtriple=amdgcn-amd-amdhsa",
     "-mcpu=gfx1250",
     "--amdgpu-enable-static-simulator=1",
-    "--fp-contract=fast",
     "--amdgpu-expert-scheduling-mode",
     "--enable-post-misched=0",
 ]

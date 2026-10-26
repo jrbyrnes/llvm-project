@@ -104,7 +104,6 @@ rather than scheduler tuning:
 ```
 -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 \
     --amdgpu-enable-static-simulator=1 \   # emits the Warm= cycle annotations
-    --fp-contract=fast \                   # affects the IR lowering all configs share
     --amdgpu-expert-scheduling-mode \
     --enable-post-misched=0                # disable post-RA scheduling
 ```

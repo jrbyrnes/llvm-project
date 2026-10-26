@@ -9,7 +9,7 @@ Lower is better. The `Δ` column is relative to **Off** (negative = faster).
 
 ## Configurations
 
-- **Base** (shared by all): `-mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 --amdgpu-enable-static-simulator=1 --fp-contract=fast --amdgpu-expert-scheduling-mode --enable-post-misched=0`
+- **Base** (shared by all): `-mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 --amdgpu-enable-static-simulator=1 --amdgpu-expert-scheduling-mode --enable-post-misched=0`
 - **Off**: base only, default scheduler.
 - **On+tuned**: base + `--amdgpu-sched-strategy=coexec --amdgpu-anti-hints-for-va-vdst` + the per-test flags from each kernel's `note.txt` Flags section.
 
@@ -17,27 +17,27 @@ Lower is better. The `Δ` column is relative to **Off** (negative = faster).
 
 | Kernel | Off | On+tuned | Δ |
 |---|---:|---:|---:|
-| bf16FA/bf16_fa | 1967 | 1404 | -28.6% |
-| bf16_GEMM/bf16_GEMM | 1239 | 1067 | -13.9% |
-| fp4_GEMM/fp4_GEMM | 617 | 617 | +0.0% |
-| fp8fp4MOE/fp8fp4_MOE | 630 | 630 | +0.0% |
+| bf16FA/bf16_fa | 1766 | 1407 | -20.3% |
+| bf16_GEMM/bf16_GEMM | 1238 | 1067 | -13.8% |
+| fp4_GEMM/fp4_GEMM | 619 | 619 | +0.0% |
+| fp8fp4MOE/fp8fp4_MOE | 643 | 640 | -0.5% |
 
 ## Gluon
 
 | Kernel | Off | On+tuned | Δ |
 |---|---:|---:|---:|
-| bf16FA/bf16_fa | 8565 | 1627 | -81.0% |
-| bf16_GEMM/bf16_GEMM | 2647 | 2111 | -20.2% |
-| fo4_GEMM/fp4_GEMM | 833 | 714 | -14.3% |
-| fp8_FA/fp8_fa | 1956 | 1775 | -9.3% |
-| fp8_GEMM/fo8_GEMM | 1194 | 1238 | +3.7% |
+| bf16FA/bf16_fa | 2583 | 1395 | -46.0% |
+| bf16_GEMM/bf16_GEMM | 3626 | 2109 | -41.8% |
+| fo4_GEMM/fp4_GEMM | 834 | 715 | -14.3% |
+| fp8_FA/fp8_fa | 1971 | 1783 | -9.5% |
+| fp8_GEMM/fo8_GEMM | 1207 | 1346 | +11.5% |
 
 ## Summary
 
 - Kernels measured: 9
-- On+tuned vs Off: 6 faster, 1 slower, 2 unchanged
-- Geomean Δ On+tuned vs Off: -25.0%
-- Median Δ On+tuned vs Off: -13.9%
+- On+tuned vs Off: 7 faster, 1 slower, 1 unchanged
+- Geomean Δ On+tuned vs Off: -17.1%
+- Median Δ On+tuned vs Off: -13.8%
 
 Geometric mean is used to average per-kernel ratios; it is not skewed by a single large outlier the way an arithmetic mean of percentages is.
 
