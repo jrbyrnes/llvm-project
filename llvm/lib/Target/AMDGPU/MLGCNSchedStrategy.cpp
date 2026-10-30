@@ -1,0 +1,437 @@
+//===-- MLGCNSchedStrategy.cpp - GCN ML Scheduler Strategy ----------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+/// \file
+///
+//===----------------------------------------------------------------------===//
+
+#include "MLGCNSchedStrategy.h"
+#include "SIMachineFunctionInfo.h"
+#include "SIRegisterInfo.h"
+#include "llvm/Analysis/NoInferenceModelRunner.h"
+#include "llvm/Analysis/Utils/TrainingLogger.h"
+#include "llvm/CodeGen/MachineScheduler.h"
+#include "llvm/Config/llvm-config.h"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+
+#ifdef LLVM_HAVE_TFLITE
+#include "llvm/Analysis/ModelUnderTrainingRunner.h"
+#endif
+
+#define DEBUG_TYPE "machine-scheduler"
+
+using namespace llvm;
+
+static cl::opt<std::string> MLSchedTrainingLog(
+    "mlsched-training-log", cl::Hidden,
+    cl::desc("Training log for the instruction scheduling model"));
+
+static cl::opt<std::string> MLModelUnderTraining(
+    "mlsched-model", cl::Hidden,
+    cl::desc("The model being trained for instruction scheduling"));
+
+#define SchedDecisionName "index_to_sched"
+static const TensorSpec DecisionSpec =
+    TensorSpec::createSpec<int64_t>(SchedDecisionName, {1});
+static const TensorSpec Reward = TensorSpec::createSpec<float>("reward", {1});
+
+#define _DECL_FEATURES(type, name, shape, _)                                   \
+  TensorSpec::createSpec<type>(#name, shape),
+#define _DECL_TRAIN_FEATURES(type, name, shape, _)                             \
+  TensorSpec::createSpec<type>(std::string("action_") + #name, shape),
+
+// --------------
+// Features table
+// --------------
+static const int MaxNumInstCandidates = 128 * 2;
+static const std::vector<int64_t> PerInstrFeatureShape{1, MaxNumInstCandidates};
+#define SCHED_FEATURES_LIST(M)					\
+  M(int64_t, mask, PerInstrFeatureShape,			\
+    "boolean values, 1 if the position is valid")		\
+  M(int64_t, is_top, PerInstrFeatureShape,			\
+    "boolean values, 1 if the instruction is from Top Queue")	\
+  M(int64_t, is_bot, PerInstrFeatureShape,			\
+    "boolean values, 1 if the instruction is from Bot Queue")	\
+  M(int64_t, pos, PerInstrFeatureShape,				\
+    "position in the scheduling region (SU->NodeNum).")		\
+  M(int64_t, excess, PerInstrFeatureShape, "")			\
+  M(int64_t, current_max, PerInstrFeatureShape, "")		\
+  M(int64_t, critical_max, PerInstrFeatureShape, "")		\
+  M(int64_t, su_latency, PerInstrFeatureShape, "")		\
+  M(int64_t, su_height, PerInstrFeatureShape, "")		\
+  M(int64_t, su_depth, PerInstrFeatureShape, "")		\
+  M(int64_t, su_succs_left, PerInstrFeatureShape, "")		\
+  M(int64_t, su_preds_left, PerInstrFeatureShape, "")		\
+  M(int64_t, su_succs, PerInstrFeatureShape, "")		\
+  M(int64_t, su_preds, PerInstrFeatureShape, "")		\
+  M(int64_t, sgpr_critical_limit, {1}, "")			\
+  M(int64_t, vgpr_critical_limit, {1}, "")			\
+  M(int64_t, sgpr_excess_limit, {1}, "")			\
+  M(int64_t, vgpr_excess_limit, {1}, "")
+
+// Named features index.
+enum SchedFeatureIDs {
+#define _FEATURE_IDX_SIMPLE(_, name, __, ___) name
+#define _FEATURE_IDX(A, B, C, D) _FEATURE_IDX_SIMPLE(A, B, C, D),
+  SCHED_FEATURES_LIST(_FEATURE_IDX) FeatureCount,
+#undef _FEATURE_IDX
+#undef _FEATURE_IDX_SIMPLE
+};
+
+
+template <typename T> static size_t getTotalSize(const std::vector<int64_t> &Shape) {
+  size_t Ret = sizeof(T);
+  for (const auto V : Shape)
+    Ret *= V;
+  return Ret;
+}
+
+static void resetRunnerInput(MLModelRunner &Runner) {
+  LLVM_DEBUG(dbgs() << "=== resetRunnerInput\n");
+#define _RESET(TYPE, NAME, SHAPE, __)                            \
+  std::memset(Runner.getTensorUntyped(SchedFeatureIDs::NAME), 0, \
+              getTotalSize<TYPE>(SHAPE));
+  SCHED_FEATURES_LIST(_RESET)
+#undef _RESET
+}
+
+void MLGCNSchedStrategy::initializeMLGO(const MachineSchedContext *C) {
+  if (MLModelUnderTraining.empty() && MLSchedTrainingLog.empty()) {
+    Log = nullptr;
+    Runner = nullptr;
+    LLVM_DEBUG(dbgs() << "=== MLGCNSchedStrategy: In development mode, logging or "
+	       << "a training model shuold be provided.");
+    return;
+  }
+
+  std::vector<TensorSpec> InputFeatures = {SCHED_FEATURES_LIST(_DECL_FEATURES)};
+  std::vector<TensorSpec> TrainingInputFeatures = {
+    SCHED_FEATURES_LIST(_DECL_TRAIN_FEATURES)
+    TensorSpec::createSpec<float>("action_discount", {1}),
+    TensorSpec::createSpec<int32_t>("action_step_type", {1}),
+    TensorSpec::createSpec<float>("action_reward", {1})};
+
+  // Mode == SchedMode::Development
+  LLVMContext &Ctx = C->MF->getFunction().getContext();
+  if (MLModelUnderTraining.empty())
+    Runner = std::make_unique<NoInferenceModelRunner>(Ctx, InputFeatures);
+  else {
+#ifdef LLVM_HAVE_TFLITE
+    Runner = ModelUnderTrainingRunner::createAndEnsureValid(
+        Ctx, MLModelUnderTraining, SchedDecisionName, TrainingInputFeatures);
+#else
+    Ctx.emitError("MLGCNSchedStrategy: TFLite not available, cannot load model");
+    return;
+#endif
+  }
+  if (!Runner) {
+    Ctx.emitError("MLGCNSchedStrategy: could not set up the model runner");
+    return;
+  }
+  if (MLSchedTrainingLog.empty())
+    return;
+
+  std::error_code EC;
+  auto OS = std::make_unique<raw_fd_ostream>(MLSchedTrainingLog, EC);
+  if (EC) {
+    Ctx.emitError("MLGCNSchedStrategy: " + EC.message() + ":" + MLSchedTrainingLog);
+    return;
+  }
+
+  std::vector<TensorSpec> LFS = InputFeatures;
+#ifdef LLVM_HAVE_TFLITE
+  if (auto *MUTR = dyn_cast<ModelUnderTrainingRunner>(Runner.get()))
+    append_range(LFS, MUTR->extraOutputsForLoggingSpecs());
+#endif
+  LFS.push_back(DecisionSpec);
+
+  Log = std::make_unique<Logger>(std::move(OS), LFS, Reward,
+				 /*IncludeReward*/ true);
+}
+
+void MLGCNSchedStrategy::switchContextForLog(StringRef Context) {
+  if (Log == nullptr) return;
+
+  LLVM_DEBUG(dbgs() << "Switch context for ML data logging: " << Context << "\n");
+  Log->switchContext(Context);
+  Runner->switchContext(Context);
+}
+
+SUnit *MLGCNSchedStrategy::pickNode(bool &IsTopNode) {
+  LLVM_DEBUG(dbgs() << "MLGCNSchedStrategy::pickNode\n");
+  if (DAG->top() == DAG->bottom()) {
+      LLVM_DEBUG(dbgs() << "DAG: top == bottom\n");
+    assert(Top.Available.empty() && Top.Pending.empty() &&
+           Bot.Available.empty() && Bot.Pending.empty() && "ReadyQ garbage");
+    return nullptr;
+  }
+
+  if (Log != nullptr)
+    resetRunnerInput(*Runner);
+
+  SUnit *SU;
+  bool IsOnlyChoice = false;
+
+  CandPolicy BotPolicy;
+  setPolicy(BotPolicy, false, Bot, &Top);
+  CandPolicy TopPolicy;
+  setPolicy(TopPolicy, false, Top, &Bot);
+  extractFeatures(Top, TopPolicy, DAG->getTopRPTracker(), /*IsBottomUp=*/false);
+  extractFeatures(Bot, BotPolicy, DAG->getBotRPTracker(), /*IsBottomUp=*/true);
+  extractGlobalFeatures();
+
+  // pickNode by ML model
+#ifdef LLVM_HAVE_TFLITE
+  if (isa<ModelUnderTrainingRunner>(getRunner()))
+    SU = pickNodeByModel(IsTopNode);
+  else
+#endif
+  {
+    LLVM_DEBUG(dbgs() << "Picking Node by Heuristics\n");
+    SU = nullptr;
+  }
+
+  LLVM_DEBUG(Top.Pending.dump());
+  LLVM_DEBUG(Top.Available.dump());
+  LLVM_DEBUG(Bot.Pending.dump());
+  LLVM_DEBUG(Bot.Available.dump());
+
+  // pickNode by heuristics if model didn't pick a node
+  if (!SU) {
+    do {
+      if (RegionPolicy.OnlyTopDown) {
+	SU = Top.pickOnlyChoice();
+	if (!SU) {
+	  CandPolicy NoPolicy;
+	  TopCand.reset(NoPolicy);
+	  bool IsPending = false;
+	  pickNodeFromQueue(Top, NoPolicy, DAG->getTopRPTracker(), TopCand,
+			    IsPending, /*IsBottomUp=*/false);
+	  assert(TopCand.Reason != NoCand && "failed to find a candidate");
+	  SU = TopCand.SU;
+	}
+	IsTopNode = true;
+      } else if (RegionPolicy.OnlyBottomUp) {
+	SU = Bot.pickOnlyChoice();
+	if (!SU) {
+	  CandPolicy NoPolicy;
+	  BotCand.reset(NoPolicy);
+	  bool IsPending = false;
+	  pickNodeFromQueue(Bot, NoPolicy, DAG->getBotRPTracker(), BotCand,
+			    IsPending, /*IsBottomUp=*/true);
+	  assert(BotCand.Reason != NoCand && "failed to find a candidate");
+	  SU = BotCand.SU;
+	}
+	IsTopNode = false;
+      } else {
+	bool PickedPending = false;
+	SU = pickNodeBidirectional(IsTopNode, PickedPending);
+      }
+    } while (SU->isScheduled);
+  }
+
+  // Find position of SU in the appropriate queue
+  ReadyQueue &Q = IsTopNode ? Top.Available : Bot.Available;
+  auto It = std::find(Q.begin(), Q.end(), SU);
+  int64_t SchedIndex = (It != Q.end()) ? (It - Q.begin()) : -1;
+  LLVM_DEBUG(dbgs() << "=*= MLGCNSchedStrategy::pickNode: Idx = " << SchedIndex << "\n");
+  LLVM_DEBUG(dbgs() << "=*=                     SU(" << SU->NodeNum << ")\n");
+
+  if (Log != nullptr && !IsOnlyChoice) {
+    SchedIndex = SchedIndex * 2 + IsTopNode;
+    logMLFeatures(SchedIndex);
+  }
+
+  if (SU->isTopReady())
+    Top.removeReady(SU);
+  if (SU->isBottomReady())
+    Bot.removeReady(SU);
+
+  LLVM_DEBUG(Top.Pending.dump());
+  LLVM_DEBUG(Top.Available.dump());
+  LLVM_DEBUG(Bot.Pending.dump());
+  LLVM_DEBUG(Bot.Available.dump());
+
+  LLVM_DEBUG(dbgs() << "Scheduling SU(" << SU->NodeNum << ") "
+                    << *SU->getInstr());
+  return SU;
+}
+
+SUnit *MLGCNSchedStrategy::pickNodeBidirectional(bool &IsTopNode, bool &IsOnlyChoice) {
+  if (SUnit *SU = Bot.pickOnlyChoice()) {
+    IsTopNode = false;
+    IsOnlyChoice = true;
+    return SU;
+  }
+  if (SUnit *SU = Top.pickOnlyChoice()) {
+    IsTopNode = true;
+    IsOnlyChoice = true;
+    return SU;
+  }
+  bool PickedPending = false;
+  return GCNSchedStrategy::pickNodeBidirectional(IsTopNode, PickedPending);
+}
+
+SUnit *MLGCNSchedStrategy::pickNodeByModel(bool &IsTopNode) {
+  int64_t Ret = Runner->evaluate<int64_t>();
+  LLVM_DEBUG(dbgs() << "=*= MLGCNSchedStrategy::pickNodeByModel: Ret = " << Ret << "\n");
+
+  if (Ret < 0) {
+    LLVM_DEBUG(dbgs() << "Ret is negative, using heuristics instead\n");
+    return nullptr;
+  }
+
+  // Determine queue based on Ret parity
+  bool pickFromTop = (Ret % 2) != 0;
+  IsTopNode = pickFromTop;
+  if (pickFromTop) {
+    LLVM_DEBUG(dbgs() << "    Picking from TopQ by model: ");
+    --Ret;
+  } else {
+    LLVM_DEBUG(dbgs() << "    Picking from BotQ by model: ");
+  }
+
+  ReadyQueue &Q = pickFromTop ? Top.Available : Bot.Available;
+  size_t index = static_cast<size_t>(Ret / 2);
+
+  if (index >= Q.size()) {
+    LLVM_DEBUG(dbgs() << "Index is out of bound\n");
+    return nullptr;
+  }
+
+  LLVM_DEBUG(dbgs() << "SU(" << Q.elements()[index]->NodeNum << ")\n");
+  return Q.elements()[index];
+}
+
+void MLGCNSchedStrategy::logMLFeatures(int64_t SchedIndex) {
+  //  if (Log->hasObservationInProgress())
+  //    Log->logReward<float>(0.0);
+  LLVM_DEBUG(dbgs() << "=== MLGCNSchedStrategy::logMLFeatures: schedule index: "
+	     << SchedIndex << "\n");
+
+  if (SchedIndex >= MaxNumInstCandidates) {
+    resetRunnerInput(*Runner);
+    return;
+  }
+
+  if (Log->hasObservationInProgress())
+    Log->logReward<float>(0.0);
+
+  Log->startObservation();
+  size_t CurrentFeature = 0;
+  for (; CurrentFeature < SchedFeatureIDs::FeatureCount; ++CurrentFeature) {
+    Log->logTensorValue(CurrentFeature,
+                        reinterpret_cast<const char *>(getRunner().getTensorUntyped(CurrentFeature)));
+  }
+#ifdef LLVM_HAVE_TFLITE
+  if (auto *MUTR = dyn_cast<ModelUnderTrainingRunner>(&getRunner()))
+    for (size_t I = 0; I < MUTR->extraOutputsForLoggingSpecs().size();
+         ++I, ++CurrentFeature)
+      Log->logTensorValue(
+          CurrentFeature,
+          reinterpret_cast<const char *>(MUTR->getUntypedExtraOutputValue(I)));
+#endif
+  Log->logTensorValue(CurrentFeature, reinterpret_cast<const char *>(&SchedIndex));
+  Log->endObservation();
+}
+
+void MLGCNSchedStrategy::extractFeatures(SchedBoundary &Zone,
+                                         const CandPolicy &ZonePolicy,
+					 const RegPressureTracker &RPTracker,
+                                         bool IsBottomUp) {
+  const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo *>(TRI);
+  ArrayRef<unsigned> Pressure = RPTracker.getRegSetPressureAtPos();
+  unsigned SGPRPressure = 0;
+  unsigned VGPRPressure = 0;
+  unsigned AGPRPressure = 0;
+  if (DAG->isTrackingPressure()) {
+    SGPRPressure = Pressure[AMDGPU::RegisterPressureSets::SReg_32];
+    VGPRPressure = Pressure[AMDGPU::RegisterPressureSets::VGPR_32];
+    AGPRPressure = Pressure[AMDGPU::RegisterPressureSets::AGPR_32];
+  }
+
+  ReadyQueue &Q = Zone.Available;
+  int64_t Pos = 0;
+  LLVM_DEBUG(dbgs() << "=== MLGCNSchedStrategy::extractFeatures\n");
+  for (SUnit *SU : Q) {
+    SchedCandidate Cand(ZonePolicy);
+    initCandidate(Cand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
+                  VGPRPressure, AGPRPressure, IsBottomUp);
+    extractCandidateFeatures(Cand, Pos++);
+  }
+}
+
+void MLGCNSchedStrategy::extractCandidateFeatures(SchedCandidate &TryCand,
+						  int64_t Pos) const {
+  // Set the features at the column 'Idx'.
+  // if Candidate is from Bot, Idx = 2 * Pos
+  // if Candidate is from Top, Idx = 2 * Pos + 1
+  int64_t Idx = 2 * Pos + TryCand.AtTop;
+  if (Idx >= MaxNumInstCandidates)
+    return;
+
+  LLVM_DEBUG(dbgs() << "[Position in Q: " << Pos << ", SU(" << TryCand.SU->NodeNum << ")]\n");
+  LLVM_DEBUG(dbgs() << "    TryCand.AtTop: " << TryCand.AtTop << ", ");
+  LLVM_DEBUG(dbgs() << "RPDelta.Excess: " << TryCand.RPDelta.Excess.getUnitInc() << ", ");
+  LLVM_DEBUG(dbgs() << "RPDelta.CurrentMax: " << TryCand.RPDelta.CurrentMax.getUnitInc() << ", ");
+  LLVM_DEBUG(dbgs() << "RPDelta.CriticalMax: " << TryCand.RPDelta.CriticalMax.getUnitInc() << "\n");
+  LLVM_DEBUG(dbgs() << "    SU->Latency: " << TryCand.SU->Latency << ", ");
+  LLVM_DEBUG(dbgs() << "SU->getHeight: " << TryCand.SU->getHeight() << ", ");
+  LLVM_DEBUG(dbgs() << "SU->getDepth: " << TryCand.SU->getDepth() << "\n");
+  LLVM_DEBUG(dbgs() << "    SU->NumSuccsLeft: " << TryCand.SU->NumSuccsLeft << ", ");
+  LLVM_DEBUG(dbgs() << "SU->NumPredsLeft: " << TryCand.SU->NumPredsLeft << ", ");
+  LLVM_DEBUG(dbgs() << "SU->NumSuccs: " << TryCand.SU->NumSuccs << ", ");
+  LLVM_DEBUG(dbgs() << "SU->NumPreds: " << TryCand.SU->NumPreds << "\n");
+
+#define SET(ID, TYPE, VAL)						\
+  do {                                                                  \
+    Runner->getTensor<TYPE>(SchedFeatureIDs::ID)[Idx] = static_cast<TYPE>(VAL); \
+  } while (false)
+  SET(mask, int64_t, 1);
+  SET(is_top, int64_t, TryCand.AtTop);
+  SET(is_bot, int64_t, !TryCand.AtTop);
+  SET(pos, int64_t, TryCand.SU->NodeNum);
+  SET(excess, int64_t, TryCand.RPDelta.Excess.getUnitInc());
+  SET(current_max, int64_t, TryCand.RPDelta.CurrentMax.getUnitInc());
+  SET(critical_max, int64_t, TryCand.RPDelta.CriticalMax.getUnitInc());
+  SET(su_latency, int64_t, TryCand.SU->Latency);
+  SET(su_height, int64_t, TryCand.SU->getHeight());
+  SET(su_depth, int64_t, TryCand.SU->getDepth());
+  SET(su_succs_left, int64_t, TryCand.SU->NumSuccsLeft);
+  SET(su_preds_left, int64_t, TryCand.SU->NumPredsLeft);
+  SET(su_succs, int64_t, TryCand.SU->NumSuccs);
+  SET(su_preds, int64_t, TryCand.SU->NumPreds);
+#undef SET
+}
+
+
+void MLGCNSchedStrategy::extractGlobalFeatures() {
+  LLVM_DEBUG(dbgs() << "=== MLGCNSchedStrategy::extractGlobalFeatures\n");
+#define SET(ID, TYPE, VAL)						\
+  do {									\
+    *Runner->getTensor<TYPE>(SchedFeatureIDs::ID) = static_cast<TYPE>(VAL); \
+  } while (false)
+  SET(sgpr_critical_limit, int64_t, SGPRCriticalLimit);
+  SET(vgpr_critical_limit, int64_t, VGPRCriticalLimit);
+  SET(sgpr_excess_limit, int64_t, SGPRExcessLimit);
+  SET(vgpr_excess_limit, int64_t, VGPRExcessLimit);
+#undef SET
+}
+
+void MLGCNSchedStrategy::logRewardIfNeeded() {
+  // MF would be nullptr, if `initialize` isn't called.
+  // `initialize` is called from `schedule` when the number of instructions is more than one
+  if (Log == nullptr || MF == nullptr) return;
+
+  // TODO: Release mode doesn't require reward
+  SIMachineFunctionInfo &MFI = *MF->getInfo<SIMachineFunctionInfo>();
+  if (Log->hasObservationInProgress())
+    Log->logReward<float>(MFI.getOccupancy());
+}

@@ -1260,6 +1260,17 @@ if (LLVM_HAVE_TFLITE)
   find_package(tensorflow-lite REQUIRED)
 endif()
 
+set(LLVM_HAVE_ONNXRUNTIME "" CACHE BOOL "Use ONNX Runtime for ML model inference")
+if (LLVM_HAVE_ONNXRUNTIME)
+  find_library(ONNXRUNTIME_LIB onnxruntime PATHS ${ONNXRUNTIME_PATH}/lib)
+  find_path(ONNXRUNTIME_INCLUDE onnxruntime_c_api.h PATHS ${ONNXRUNTIME_PATH}/include)
+  if (NOT ONNXRUNTIME_LIB OR NOT ONNXRUNTIME_INCLUDE)
+    message(FATAL_ERROR "ONNX Runtime not found. Set ONNXRUNTIME_PATH or install it system-wide.")
+  endif()
+  message(STATUS "ONNX Runtime library: ${ONNXRUNTIME_LIB}")
+  message(STATUS "ONNX Runtime include: ${ONNXRUNTIME_INCLUDE}")
+endif()
+
 set(LLVM_ENABLE_PROFCHECK OFF CACHE BOOL "Enable profile checking in test tools")
 
 # For up-to-date instructions for installing the Tensorflow dependency, refer to

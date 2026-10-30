@@ -104,6 +104,9 @@
 /* Define if LLVM is using tflite */
 #cmakedefine LLVM_HAVE_TFLITE
 
+/* Define if LLVM is using ONNX Runtime */
+#cmakedefine LLVM_HAVE_ONNXRUNTIME
+
 /* Define if we want to check profile consistency in lit tests */
 #cmakedefine LLVM_ENABLE_PROFCHECK
 

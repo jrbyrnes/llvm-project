@@ -688,7 +688,7 @@ public:
   void dumpRegionSummary();
 };
 
-class AMDGPUCoExecSchedStrategy final : public GCNSchedStrategy {
+class AMDGPUCoExecSchedStrategy : public GCNSchedStrategy {
 protected:
   AMDGPU::AMDGPUSchedReason LastAMDGPUReason = AMDGPU::AMDGPUSchedReason::None;
   CandidateHeuristics Heurs;

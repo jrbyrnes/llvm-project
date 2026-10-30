@@ -35,6 +35,11 @@ if (DEFINED LLVM_HAVE_TF_AOT OR LLVM_HAVE_TFLITE)
   endif()
 endif()
 
+if (LLVM_HAVE_ONNXRUNTIME)
+  list(APPEND MLLinkDeps ${ONNXRUNTIME_LIB})
+  include_directories(${ONNXRUNTIME_INCLUDE})
+endif()
+
 # The implementation of ConstantFolding.cpp relies on the use of math functions
 # from the host. In particular, it relies on the detection of floating point
 # exceptions originating from such math functions to prevent invalid cases
@@ -138,6 +143,7 @@ add_llvm_component_library(LLVMAnalysis
   ModuleSummaryAnalysis.cpp
   MustExecute.cpp
   NoInferenceModelRunner.cpp
+  ONNXModelRunner.cpp
   ObjCARCAliasAnalysis.cpp
   ObjCARCAnalysisUtils.cpp
   ObjCARCInstKind.cpp

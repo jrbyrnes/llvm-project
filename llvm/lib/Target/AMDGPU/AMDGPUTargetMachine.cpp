@@ -48,6 +48,7 @@
 #include "GCNRewritePartialRegUses.h"
 #include "GCNSchedStrategy.h"
 #include "GCNVOPDUtils.h"
+#include "MLCoExecSchedStrategy.h"
 #include "R600.h"
 #include "R600TargetMachine.h"
 #include "SIFixSGPRCopies.h"
@@ -1454,6 +1455,11 @@ GCNTargetMachine::createMachineScheduler(MachineSchedContext *C) const {
   if (SchedStrategy == "coexec") {
     diagnoseUnsupportedCoExecSchedulerSelection(C->MF->getFunction(), ST);
     return createGCNCoExecMachineScheduler(C);
+  }
+
+  if (SchedStrategy == "mlcoexec") {
+    diagnoseUnsupportedCoExecSchedulerSelection(C->MF->getFunction(), ST);
+    return createGCNMLCoExecMachineScheduler(C);
   }
 
   return createGCNMaxOccupancyMachineScheduler(C);
