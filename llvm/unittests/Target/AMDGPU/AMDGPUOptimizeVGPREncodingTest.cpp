@@ -744,32 +744,6 @@ TEST_F(AMDGPUOptimizeVGPREncodingTest, Lo256RegsArePinned) {
   expectAssignmentChanges({{"%moveTo1", 1}}, /*Exhaustive=*/true);
 }
 
-/// Registers must not be re-assigned to the physical register of a virtual
-/// register they have an anti-hint for, even if their live ranges don't
-/// interfere. %doNotMove is in group 0 but its neighbors are all in group 1. It
-/// would be re-assigned to %anti's physical register which is in group 1 and
-/// available after the use of %anti but the anti-hint prevents this, yielding
-/// no assignment changes.
-TEST_F(AMDGPUOptimizeVGPREncodingTest, AntiHintPreventsReassign) {
-  SmallVector<VirtVGPRDef> VirtDefs{
-      {"%doNotMove:vgpr_32", 0, 0, /*MaximizeLiveRange=*/false},
-      {"%anti:vgpr_32", 1, 0, /*MaximizeLiveRange=*/false},
-  };
-  SmallVector<ModeUsingInstr> Instructions{
-      ModeUsingInstr::createVOP1("$vgpr0", "$vgpr510"),
-      ModeUsingInstr::createVOP1("$vgpr0", "%anti"),
-      ModeUsingInstr::createVOP1("$vgpr0", "%doNotMove"),
-      ModeUsingInstr::createVOP1("$vgpr0", "$vgpr510"),
-  };
-  ASSERT_TRUE(
-      createMIRAndAssign(VirtDefs, {"$vgpr0", "$vgpr510"}, {&Instructions}, 1));
-  Register DoNotMove = Register::index2VirtReg(0),
-           Anti = Register::index2VirtReg(1);
-  MRI->addRegAllocationAntiHint(DoNotMove, Anti);
-  runPass();
-  expectAssignmentChanges({}, /*Exhaustive=*/true);
-}
-
 /// Registers must not be re-assigned to a physical register outside the VGPR
 /// budget of the function's current occupancy. The function uses VGPRs up to
 /// $vgpr335, the maximum for an occupancy of 3. %doNotMove is in group 0 and

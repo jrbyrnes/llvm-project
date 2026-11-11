@@ -1481,7 +1481,7 @@ bool MaxHeap::siftDown(unsigned HeapIdx) {
 
 /// Returns the number of 32-bit lanes of registers in \p RC.
 static unsigned getNumLanes(const TargetRegisterClass &RC) {
-  return divideCeil(RC.getSizeInBits(), 32);
+  return divideCeil(RC.MC->getSizeInBits(), 32);
 }
 
 VirtRegReMap::VirtRegReMap(LiveRegMatrix &LRM, LiveIntervals &LIS,
@@ -1510,17 +1510,6 @@ void VirtRegReMap::getAntiHintRegUnits(Register VirtReg,
                                        BitVector &AntiHintUnits) const {
   assert(VirtReg.isVirtual() && "expected virtreg");
   AntiHintUnits.resize(TRI.getNumRegUnits());
-  const MachineRegisterInfo &MRI = VRM.getRegInfo();
-  SmallVector<MCPhysReg> AntiHints;
-  for (Register VirtReg : MRI.getRegAllocationAntiHints(VirtReg)) {
-    assert(VirtReg.isVirtual() && "expected virtreg");
-    MCRegister PhysReg = VRM.getPhys(VirtReg);
-    // It is possible the virtual register is no longer part of the MIR.
-    if (!PhysReg.isValid())
-      continue;
-    for (MCRegUnit Unit : TRI.regunits(PhysReg))
-      AntiHintUnits.set(static_cast<unsigned>(Unit));
-  }
 }
 
 bool VirtRegReMap::tryReAssign(OptReg &Reg,

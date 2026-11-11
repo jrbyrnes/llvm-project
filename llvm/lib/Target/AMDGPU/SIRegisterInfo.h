@@ -28,6 +28,7 @@ class LiveIntervals;
 class LiveRegUnits;
 class MachineInstrBuilder;
 class RegisterBank;
+class RegisterClassInfo;
 struct SGPRSpillBuilder;
 
 /// Register allocation hint types. Helps eliminate unneeded COPY with True16
@@ -364,10 +365,6 @@ public:
                              const MachineFunction &MF, const VirtRegMap *VRM,
                              const LiveRegMatrix *Matrix) const override;
 
-  bool shouldApplyAntiHints(const MachineFunction &MF,
-                            unsigned NumAllocatedVGPRs,
-                            unsigned &MaxVGPRsForCurrentOccupancy) const;
-
   /// Returns the number of registers in class \p RC the function currently
   /// needs i.e., one past the highest hardware index of a used non-reserved
   /// register, or 0 if none are used.
@@ -375,12 +372,6 @@ public:
                             const RegisterClassInfo &RCI,
                             const LiveRegMatrix &LRM,
                             const MachineRegisterInfo &MRI) const;
-
-  void filterAndSortForAntiHintedRegs(
-      Register VirtReg, MutableArrayRef<MCPhysReg> CustomOrder,
-      const BitVector &AntiHintedRegUnits, const MachineFunction &MF,
-      const LiveRegMatrix *Matrix = nullptr,
-      const RegisterClassInfo *RegClassInfo = nullptr) const override;
 
   const int *getRegUnitPressureSets(MCRegUnit RegUnit) const override;
 

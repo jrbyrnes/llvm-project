@@ -3703,7 +3703,8 @@ getVGPRLoweringOperandTables(const MCInstrDesc &Desc) {
             (OpY == AMDGPU::V_FMAMK_F32) ? VOPDFMAMKOpsY : VOPDOpsY};
   }
 
-  assert(!(TSFlags & SIInstrFlags::MIMG));
+  if (TSFlags & SIInstrFlags::MIMG)
+    return {};
 
   if (TSFlags & (SIInstrFlags::VSAMPLE | SIInstrFlags::EXP))
     llvm_unreachable("Sample and export VGPR lowering is not implemented and"
