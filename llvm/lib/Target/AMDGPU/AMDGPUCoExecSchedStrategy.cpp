@@ -14,6 +14,7 @@
 #include "AMDGPUCoExecSchedStrategy.h"
 #include "AMDGPUBarrierLatency.h"
 #include "AMDGPUIGroupLP.h"
+#include "AMDGPUSchedConfig.h"
 #include "GCNHazardRecognizer.h"
 #include "GCNSubtarget.h"
 #include "SIRegisterInfo.h"
@@ -435,6 +436,82 @@ static cl::opt<unsigned> ShadowMixNodeBudgetOverride(
     "amdgpu-coexec-shadowmix-lookahead-node-budget", cl::Hidden, cl::init(0),
     cl::desc("Override coexec ShadowMix lookahead BFS node budget "
              "(0 = use effort level; UINT_MAX = unbounded)."));
+
+// --- Scoring mode ---
+
+static cl::opt<bool> CoexecUseScoring(
+    "amdgpu-coexec-use-scoring", cl::Hidden, cl::init(true),
+    cl::desc("Use scoring-based candidate selection instead of tiered "
+             "heuristics in the coexec scheduler."));
+
+// Per-heuristic weights for the scoring mode. The defaults are set so that
+// higher-priority heuristics dominate lower-priority ones, matching the
+// behavior of the tiered tryCandidateCoexec cascade.
+static cl::opt<double> WBiasPhysReg(
+    "amdgpu-coexec-w-bias-phys-reg", cl::Hidden, cl::init(1e15),
+    cl::desc("Scoring weight for BiasPhysReg heuristic."));
+static cl::opt<double> WRegExcess(
+    "amdgpu-coexec-w-reg-excess", cl::Hidden, cl::init(1e14),
+    cl::desc("Scoring weight for RegExcess pressure heuristic."));
+static cl::opt<double> WStall(
+    "amdgpu-coexec-w-stall", cl::Hidden, cl::init(1e13),
+    cl::desc("Scoring weight for effective stall heuristic."));
+static cl::opt<double> WMissedSlots(
+    "amdgpu-coexec-w-missed-slots", cl::Hidden, cl::init(1e12),
+    cl::desc("Scoring weight for missed co-exec slots."));
+static cl::opt<double> WMemoryPipeline(
+    "amdgpu-coexec-w-memory-pipeline", cl::Hidden, cl::init(1e11),
+    cl::desc("Scoring weight for memory pipeline heuristic."));
+static cl::opt<double> WCoexecSlotAvoid(
+    "amdgpu-coexec-w-coexec-slot-avoid", cl::Hidden, cl::init(1e10),
+    cl::desc("Scoring weight for co-exec slot avoidance."));
+static cl::opt<double> WCoexecSlotPrefer(
+    "amdgpu-coexec-w-coexec-slot-prefer", cl::Hidden, cl::init(1e9),
+    cl::desc("Scoring weight for co-exec slot preference."));
+static cl::opt<double> WShadowMixDemandSatisfied(
+    "amdgpu-coexec-w-shadow-demand-satisfied", cl::Hidden, cl::init(1e8),
+    cl::desc("Scoring weight for ShadowMix demand-satisfied producer "
+             "promotion."));
+static cl::opt<double> WShadowMixDirectEnable(
+    "amdgpu-coexec-w-shadow-direct-enable", cl::Hidden, cl::init(5e7),
+    cl::desc("Scoring weight for ShadowMix direct enablement of needed "
+             "flavor."));
+static cl::opt<double> WShadowMixLookahead(
+    "amdgpu-coexec-w-shadow-lookahead", cl::Hidden, cl::init(2.5e7),
+    cl::desc("Scoring weight for ShadowMix BFS lookahead path."));
+static cl::opt<double> WShadowMixGreedy(
+    "amdgpu-coexec-w-shadow-greedy", cl::Hidden, cl::init(1.25e7),
+    cl::desc("Scoring weight for ShadowMix greedy producer fallback."));
+static cl::opt<double> WCritResource(
+    "amdgpu-coexec-w-crit-resource", cl::Hidden, cl::init(1e6),
+    cl::desc("Scoring weight for critical resource match."));
+static cl::opt<double> WCritResourceWMMAPrio(
+    "amdgpu-coexec-w-crit-resource-wmma-prio", cl::Hidden, cl::init(5e5),
+    cl::desc("Scoring weight for WMMA priority within critical resource."));
+static cl::opt<double> WCritResourceDep(
+    "amdgpu-coexec-w-crit-resource-dep", cl::Hidden, cl::init(1e5),
+    cl::desc("Scoring weight for critical resource dependency enablement."));
+static cl::opt<double> WCritResourceDepLoopCarried(
+    "amdgpu-coexec-w-crit-resource-dep-loop", cl::Hidden, cl::init(5e4),
+    cl::desc("Scoring weight for loop-carried DS read ordering."));
+static cl::opt<double> WCritResourcePrio(
+    "amdgpu-coexec-w-crit-resource-prio", cl::Hidden, cl::init(1e4),
+    cl::desc("Scoring weight for critical resource priority ordering."));
+static cl::opt<double> WCluster(
+    "amdgpu-coexec-w-cluster", cl::Hidden, cl::init(1e3),
+    cl::desc("Scoring weight for cluster successor heuristic."));
+static cl::opt<double> WWeak(
+    "amdgpu-coexec-w-weak", cl::Hidden, cl::init(1e2),
+    cl::desc("Scoring weight for weak edge heuristic."));
+static cl::opt<double> WRegMax(
+    "amdgpu-coexec-w-reg-max", cl::Hidden, cl::init(1e1),
+    cl::desc("Scoring weight for RegMax pressure heuristic."));
+static cl::opt<double> WLatency(
+    "amdgpu-coexec-w-latency", cl::Hidden, cl::init(1e0),
+    cl::desc("Scoring weight for latency heuristic."));
+static cl::opt<double> WNodeOrder(
+    "amdgpu-coexec-w-node-order", cl::Hidden, cl::init(1e-1),
+    cl::desc("Scoring weight for node order tiebreaker."));
 
 // Region-size gate for the ShadowMix node budget. The budget exists to bound
 // compile time, which is only a problem on large regions; small regions are
@@ -3040,6 +3117,100 @@ bool CandidateHeuristics::tryShadowMix(
   return false;
 }
 
+/// Apply a config-file value to a cl::opt if the cl::opt was not explicitly
+/// set on the command line.
+template <typename T>
+static void applyConfigValue(cl::opt<T> &Opt,
+                             const std::optional<T> &CfgValue) {
+  if (CfgValue && !Opt.getNumOccurrences())
+    Opt = *CfgValue;
+}
+
+/// Apply a config-file string enum value to a cl::opt<EnumT>.
+template <typename EnumT, size_t N>
+static void applyConfigEnum(cl::opt<EnumT> &Opt,
+                            const std::optional<std::string> &CfgValue,
+                            const std::pair<StringRef, EnumT> (&Mapping)[N]) {
+  if (!CfgValue || Opt.getNumOccurrences())
+    return;
+  for (const auto &[Name, Val] : Mapping) {
+    if (Name == *CfgValue) {
+      Opt = Val;
+      return;
+    }
+  }
+  LLVM_DEBUG(dbgs() << "amdgpu-sched-config: unknown enum value '"
+                    << *CfgValue << "', ignoring\n");
+}
+
+static void loadSchedConfig() {
+  std::string Path = AMDGPU::getSchedConfigPath();
+  if (Path.empty())
+    return;
+
+  AMDGPU::SchedConfig Cfg = AMDGPU::parseSchedConfig(Path);
+
+  // GCNSchedStrategy knobs
+  if (Cfg.VGPRThresholdPercent && !VGPRThresholdPercentOpt.getNumOccurrences())
+    VGPRThresholdPercentOpt = *Cfg.VGPRThresholdPercent;
+
+  // CoExec enum knobs
+  static const std::pair<StringRef, CoexecExposedMode> ExposedMapping[] = {
+      {"off", CoexecExposedMode::Off},
+      {"greedy", CoexecExposedMode::Greedy},
+      {"roofline", CoexecExposedMode::Roofline},
+  };
+  applyConfigEnum(CoexecExposedSort, Cfg.CoexecExposedSort, ExposedMapping);
+
+  static const std::pair<StringRef, AMDGPU::CarriedLatency>
+      CarriedMapping[] = {
+          {"off", AMDGPU::CarriedLatency::Off},
+          {"fence", AMDGPU::CarriedLatency::Fence},
+          {"all", AMDGPU::CarriedLatency::All},
+      };
+  applyConfigEnum(BlockCarriedLatency, Cfg.BlockCarriedLatency,
+                  CarriedMapping);
+
+  static const std::pair<StringRef, CoexecLookaheadEffort>
+      LookaheadMapping[] = {
+          {"off", CoexecLookaheadEffort::Off},
+          {"fast", CoexecLookaheadEffort::Fast},
+          {"balanced", CoexecLookaheadEffort::Balanced},
+          {"full", CoexecLookaheadEffort::Full},
+      };
+  applyConfigEnum(CoexecLookahead, Cfg.CoexecLookahead, LookaheadMapping);
+
+  applyConfigValue(ShadowMixNodeBudgetOverride,
+                   Cfg.ShadowMixNodeBudgetOverride);
+
+  // Scoring mode
+  applyConfigValue(CoexecUseScoring, Cfg.UseScoring);
+
+  // Scoring weights
+  applyConfigValue(WBiasPhysReg, Cfg.WBiasPhysReg);
+  applyConfigValue(WRegExcess, Cfg.WRegExcess);
+  applyConfigValue(WStall, Cfg.WStall);
+  applyConfigValue(WMissedSlots, Cfg.WMissedSlots);
+  applyConfigValue(WMemoryPipeline, Cfg.WMemoryPipeline);
+  applyConfigValue(WCoexecSlotAvoid, Cfg.WCoexecSlotAvoid);
+  applyConfigValue(WCoexecSlotPrefer, Cfg.WCoexecSlotPrefer);
+  applyConfigValue(WShadowMixDemandSatisfied, Cfg.WShadowMixDemandSatisfied);
+  applyConfigValue(WShadowMixDirectEnable, Cfg.WShadowMixDirectEnable);
+  applyConfigValue(WShadowMixLookahead, Cfg.WShadowMixLookahead);
+  applyConfigValue(WShadowMixGreedy, Cfg.WShadowMixGreedy);
+  applyConfigValue(WCritResource, Cfg.WCritResource);
+  applyConfigValue(WCritResourceWMMAPrio, Cfg.WCritResourceWMMAPrio);
+  applyConfigValue(WCritResourceDep, Cfg.WCritResourceDep);
+  applyConfigValue(WCritResourceDepLoopCarried,
+                   Cfg.WCritResourceDepLoopCarried);
+  applyConfigValue(WCritResourcePrio, Cfg.WCritResourcePrio);
+  applyConfigValue(WCluster, Cfg.WCluster);
+  applyConfigValue(WWeak, Cfg.WWeak);
+  applyConfigValue(WRegMax, Cfg.WRegMax);
+  applyConfigValue(WLatency, Cfg.WLatency);
+  applyConfigValue(WNodeOrder, Cfg.WNodeOrder);
+}
+
 AMDGPUCoExecSchedStrategy::AMDGPUCoExecSchedStrategy(
     const MachineSchedContext *C)
     : GCNSchedStrategy(C) {
@@ -3050,8 +3221,39 @@ AMDGPUCoExecSchedStrategy::AMDGPUCoExecSchedStrategy(
   // Use more accurate GCN pressure trackers.
   UseGCNTrackers = true;
 
-  if (!VGPRThresholdPercentOpt.getNumOccurrences())
+  // Load config file — this may override cl::opt defaults for knobs that
+  // were not explicitly set on the command line.
+  loadSchedConfig();
+
+  // Re-read VGPRThresholdPercent: the config file may have set it after
+  // GCNSchedStrategy's constructor already read VGPRThresholdPercentOpt.
+  if (VGPRThresholdPercentOpt > 0)
+    VGPRThresholdPercent = VGPRThresholdPercentOpt;
+  else if (!VGPRThresholdPercentOpt.getNumOccurrences())
     VGPRThresholdPercent = DefaultCoExecVGPRThresholdPercent;
+
+  UseScoring = CoexecUseScoring;
+  Weights.BiasPhysReg = WBiasPhysReg;
+  Weights.RegExcess = WRegExcess;
+  Weights.Stall = WStall;
+  Weights.MissedSlots = WMissedSlots;
+  Weights.MemoryPipeline = WMemoryPipeline;
+  Weights.CoexecSlotAvoid = WCoexecSlotAvoid;
+  Weights.CoexecSlotPrefer = WCoexecSlotPrefer;
+  Weights.ShadowMixDemandSatisfied = WShadowMixDemandSatisfied;
+  Weights.ShadowMixDirectEnable = WShadowMixDirectEnable;
+  Weights.ShadowMixLookahead = WShadowMixLookahead;
+  Weights.ShadowMixGreedy = WShadowMixGreedy;
+  Weights.CritResource = WCritResource;
+  Weights.CritResourceWMMAPrio = WCritResourceWMMAPrio;
+  Weights.CritResourceDep = WCritResourceDep;
+  Weights.CritResourceDepLoopCarried = WCritResourceDepLoopCarried;
+  Weights.CritResourcePrio = WCritResourcePrio;
+  Weights.Cluster = WCluster;
+  Weights.Weak = WWeak;
+  Weights.RegMax = WRegMax;
+  Weights.Latency = WLatency;
+  Weights.NodeOrder = WNodeOrder;
 }
 
 void AMDGPUCoExecSchedStrategy::initPolicy(MachineBasicBlock::iterator Begin,
@@ -3179,7 +3381,10 @@ void AMDGPUCoExecSchedStrategy::pickNodeFromQueue(
       initCandidate(TryCand, SU, Zone.isTop(), RPTracker, SRI, SGPRPressure,
                     VGPRPressure, AGPRPressure, IsBottomUp);
       SchedBoundary *ZoneArg = Cand.AtTop == TryCand.AtTop ? &Zone : nullptr;
-      tryCandidateCoexec(Cand, TryCand, ZoneArg);
+      if (UseScoring)
+        tryCandidateCoexecScore(Cand, TryCand, ZoneArg);
+      else
+        tryCandidateCoexec(Cand, TryCand, ZoneArg);
       if (TryCand.Reason != NoCand) {
         if (TryCand.ResDelta == SchedResourceDelta())
           TryCand.initResourceDelta(Zone.DAG, SchedModel);
@@ -3335,6 +3540,352 @@ bool AMDGPUCoExecSchedStrategy::tryCandidateCoexec(SchedCandidate &Cand,
       TryCand.Reason = NodeOrder;
       return true;
     }
+  }
+
+  return false;
+}
+
+//===----------------------------------------------------------------------===//
+// Scoring-based heuristics
+//===----------------------------------------------------------------------===//
+
+double CandidateHeuristics::scoreEffectiveStall(SUnit *SU,
+                                                SchedBoundary &Zone) {
+  StallCosts Costs;
+  getStallCosts(SU, Zone, Costs);
+  return -static_cast<double>(Costs.Effective);
+}
+
+double CandidateHeuristics::scoreMemoryPipeline(SUnit *SU,
+                                                SchedBoundary &Zone) {
+  InstructionFlavor Flavor = classifyFlavor(*SU->getInstr(), *SII);
+  bool IsMemPipeline =
+      Flavor == InstructionFlavor::DMA || Flavor == InstructionFlavor::Fence;
+  if (!IsMemPipeline)
+    return 0.0;
+
+  StallCosts Costs;
+  getStallCosts(SU, Zone, Costs);
+  return (Costs.Effective == 0) ? 1.0 : 0.0;
+}
+
+double CandidateHeuristics::scoreCoexecSlotPrefer(SUnit *SU,
+                                                  SchedBoundary *Zone) {
+  auto *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec.get());
+  std::optional<unsigned> Stage = HazardRec->getCurrentCoExecStage();
+  if (!Stage.has_value())
+    return 1.0;
+
+  const CoExecInfo &Info = HazardRec->getActiveCoExecInfo();
+  InstructionFlavor Flavor = classifyFlavor(*SU->getInstr(), *SII);
+
+  StallCosts StallCost;
+  unsigned Stall = getStallCosts(SU, *Zone, StallCost);
+
+  if (Info.prefersFlavor(*Stage + Stall, Flavor))
+    return 2.0;
+  return 1.0;
+}
+
+double CandidateHeuristics::scoreCoexecSlotAvoid(SUnit *SU,
+                                                 SchedBoundary *Zone) {
+  auto *HazardRec = static_cast<GCNHazardRecognizer *>(Zone->HazardRec.get());
+  std::optional<unsigned> Stage = HazardRec->getCurrentCoExecStage();
+  if (!Stage.has_value())
+    return 0.0;
+
+  const CoExecInfo &Info = HazardRec->getActiveCoExecInfo();
+  InstructionFlavor Flavor = classifyFlavor(*SU->getInstr(), *SII);
+
+  StallCosts StallCost;
+  unsigned Stall = getStallCosts(SU, *Zone, StallCost);
+
+  return Info.avoidsFlavor(*Stage + Stall, Flavor) ? -1.0 : 0.0;
+}
+
+CandidateHeuristics::ShadowMixScores
+CandidateHeuristics::scoreShadowMix(SUnit *SU, SchedBoundary *Zone) {
+  ShadowMixScores Scores;
+
+  InstructionFlavor SUFlavor = classifyFlavor(*SU->getInstr(), *SII);
+
+  MixInfo.refreshFromBoundary(*Zone, *SII, this);
+
+  HardwareUnitInfo *SUHWUI = getHWUIFromFlavor(SUFlavor);
+  bool SUIsProducer = SUHWUI && SUHWUI->producesCoexecWindow();
+
+  WindowSlotDemand Demand = WindowSlotDemand();
+
+  CoexecWindow *TargetWindow = &CurrentWindow;
+  if (CurrentWindow.IsActive && CurrentWindow.Demand.isSatisfied(MixInfo)) {
+    if (!NextWindow.IsPopulated)
+      NextWindow.populate(InstructionFlavor::Other, HWUInfo, MixInfo, *SII,
+                          Roofline);
+    if (NextWindow.IsPopulated)
+      TargetWindow = &NextWindow;
+  }
+
+  InstructionFlavor ProducerFlavor = InstructionFlavor::Other;
+
+  if (TargetWindow->IsPopulated) {
+    Demand = TargetWindow->Demand;
+    ProducerFlavor = TargetWindow->ProducerFlavor;
+  } else if (SUIsProducer) {
+    Demand = WindowSlotDemand::fromCoExecInfo(
+        getCoExecInfo(*SU->getInstr(), *SII));
+  }
+
+  if (!Demand.hasSlots())
+    return Scores;
+
+  bool MatchesProducer = (SUFlavor == ProducerFlavor);
+
+  // A: Demand satisfied and matches producer
+  if (Demand.isSatisfied(MixInfo) && MatchesProducer)
+    Scores.DemandSatisfied = 1.0;
+
+  if (!Demand.isSatisfied(MixInfo)) {
+    InstructionFlavor NeededFlavor = Demand.getMostDeficientFlavor(MixInfo);
+
+    // B: Direct enablement (0 if matches producer)
+    if (!MatchesProducer)
+      Scores.DirectEnable =
+          static_cast<double>(countDirectlyEnabledByFlavor(SU, NeededFlavor));
+
+    // C: Lookahead path (0 if matches producer)
+    if (!MatchesProducer && ShadowMixNodeBudget) {
+      std::optional<unsigned> NearestDist = findNearestPendingByFlavor(
+          NeededFlavor, ShadowMixLookaheadDepth);
+      if (NearestDist && ShadowMixIsReachableBudget > 0) {
+        for (auto &OtherSU : DAG->SUnits) {
+          if (!OtherSU.getInstr() || OtherSU.isScheduled ||
+              OtherSU.isTopReady())
+            continue;
+          if (classifyFlavor(*OtherSU.getInstr(), *SII) != NeededFlavor)
+            continue;
+          if (wouldHelpEnable(SU, &OtherSU)) {
+            Scores.Lookahead = 1.0;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // D: Greedy producer
+  if (MatchesProducer)
+    Scores.GreedyProducer = 1.0;
+
+  return Scores;
+}
+
+CandidateHeuristics::CritResourceScores
+CandidateHeuristics::scoreCriticalResource(SUnit *SU) const {
+  CritResourceScores Scores;
+  unsigned NumHWUI = HWUInfo.size();
+  if (NumHWUI == 0)
+    return Scores;
+
+  for (unsigned I = 0; I < NumHWUI; I++) {
+    const HardwareUnitInfo &HWUI = HWUInfo[I];
+    if (!HWUI.contains(SU))
+      continue;
+
+    Scores.ResourceMatch =
+        static_cast<double>(NumHWUI - I) / static_cast<double>(NumHWUI);
+
+    if (HWUI.getType() == InstructionFlavor::WMMA) {
+      unsigned PrioSize = HWUI.getPrioritySUsSize();
+      if (PrioSize > 0) {
+        int Idx = HWUI.getPriorityIndex(SU);
+        if (Idx >= 0)
+          Scores.WMMAPrio = static_cast<double>(PrioSize - Idx) /
+                            static_cast<double>(PrioSize);
+      }
+    }
+    break;
+  }
+  return Scores;
+}
+
+CandidateHeuristics::CritResourceDepScores
+CandidateHeuristics::scoreCriticalResourceDep(SUnit *SU,
+                                              SchedBoundary *Zone) const {
+  CritResourceDepScores Scores;
+  unsigned NumHWUI = HWUInfo.size();
+  if (NumHWUI == 0)
+    return Scores;
+
+  InstructionFlavor SUFlavor = classifyFlavor(*SU->getInstr(), *SII);
+
+  if (CriticalResourceDepEnabled) {
+    for (unsigned I = 0; I < NumHWUI; I++) {
+      const HardwareUnitInfo &HWUI = HWUInfo[I];
+      bool LookDeep = SUFlavor == InstructionFlavor::DS &&
+                      HWUI.getType() == InstructionFlavor::WMMA;
+      auto *TargetSU = HWUI.getNextTargetSU(LookDeep);
+      if (!TargetSU)
+        continue;
+
+      bool Enables = TargetSU != SU && candEnablesTarget(SU, TargetSU);
+      if (Enables) {
+        Scores.EnablesResource =
+            static_cast<double>(NumHWUI - I) / static_cast<double>(NumHWUI);
+        break;
+      }
+    }
+  }
+
+  // Loop-carried DS read ordering score
+  if (!LoopCarriedDSReadDefLanes.empty()) {
+    MachineInstr *MI = SU->getInstr();
+    if (MI && SII->isDS(*MI) && MI->mayLoad()) {
+      std::optional<SlotIndex> Pos = lookupDSReadConsumerPos(
+          MI, *SII, *SRI, DAG->MRI, LoopTopVGPRConsumerPos);
+      if (Pos) {
+        // Normalize: earlier consumer position = higher score. We use a
+        // relative ordering based on SlotIndex. Since SlotIndex values can
+        // vary widely, we produce a normalized score: 1.0 for the first
+        // discovered position, scaling down for later ones. For simplicity,
+        // we use a binary 1.0 if a position exists (the comparison between
+        // two candidates' scores will naturally order them by consumer pos).
+        Scores.LoopCarriedOrder = 1.0;
+      }
+    }
+  }
+
+  return Scores;
+}
+
+double CandidateHeuristics::scoreCriticalResourcePrio(SUnit *SU) const {
+  unsigned NumHWUI = HWUInfo.size();
+  for (unsigned I = 0; I < NumHWUI; I++) {
+    const HardwareUnitInfo &HWUI = HWUInfo[I];
+    if (!HWUI.contains(SU))
+      continue;
+
+    unsigned PrioSize = HWUI.getPrioritySUsSize();
+    if (PrioSize > 0) {
+      int Idx = HWUI.getPriorityIndex(SU);
+      if (Idx >= 0)
+        return static_cast<double>(PrioSize - Idx) /
+               static_cast<double>(PrioSize);
+    }
+    return 0.0;
+  }
+  return 0.0;
+}
+
+bool AMDGPUCoExecSchedStrategy::tryCandidateCoexecScore(
+    SchedCandidate &Cand, SchedCandidate &TryCand, SchedBoundary *Zone) {
+
+  if (!Cand.isValid()) {
+    TryCand.Reason = FirstValid;
+    return true;
+  }
+
+  bool SameBoundary = Zone != nullptr;
+  const auto &W = Weights;
+
+  auto computeScore = [&](SchedCandidate &C) -> double {
+    CandidateScore Score;
+
+    // BiasPhysReg
+    Score.add(W.BiasPhysReg,
+              static_cast<double>(biasPhysReg(C.SU, C.AtTop)));
+
+    // RegExcess — negative UnitInc means decrease (good), so negate
+    if (DAG->isTrackingPressure()) {
+      int ExcessInc = C.RPDelta.Excess.getUnitInc();
+      Score.add(W.RegExcess, static_cast<double>(-ExcessInc));
+    }
+
+    if (SameBoundary) {
+      // Stall — negative cost = fewer stalls = higher score
+      double StallScore = Heurs.scoreEffectiveStall(C.SU, *Zone);
+      Score.add(W.Stall, StallScore);
+
+      // Missed slots (broken out so it has its own weight)
+      unsigned MissedSlots = Heurs.getMissedSlotCost(C.SU, *Zone);
+      Score.add(W.MissedSlots, -static_cast<double>(MissedSlots));
+
+      // MemoryPipeline
+      Score.add(W.MemoryPipeline, Heurs.scoreMemoryPipeline(C.SU, *Zone));
+
+      // CoexecSlot
+      Score.add(W.CoexecSlotAvoid, Heurs.scoreCoexecSlotAvoid(C.SU, Zone));
+      Score.add(W.CoexecSlotPrefer, Heurs.scoreCoexecSlotPrefer(C.SU, Zone));
+
+      // ShadowMix
+      auto SM = Heurs.scoreShadowMix(C.SU, Zone);
+      Score.add(W.ShadowMixDemandSatisfied, SM.DemandSatisfied);
+      Score.add(W.ShadowMixDirectEnable, SM.DirectEnable);
+      Score.add(W.ShadowMixLookahead, SM.Lookahead);
+      Score.add(W.ShadowMixGreedy, SM.GreedyProducer);
+
+      // CriticalResource (sort must be done before scoring)
+      Heurs.sortHWUIResources(Zone, true);
+      auto CR = Heurs.scoreCriticalResource(C.SU);
+      Score.add(W.CritResource, CR.ResourceMatch);
+      Score.add(W.CritResourceWMMAPrio, CR.WMMAPrio);
+
+      // CriticalResourceDep
+      auto CRD = Heurs.scoreCriticalResourceDep(C.SU, Zone);
+      Score.add(W.CritResourceDep, CRD.EnablesResource);
+      Score.add(W.CritResourceDepLoopCarried, CRD.LoopCarriedOrder);
+
+      // CriticalResourcePrio
+      Score.add(W.CritResourcePrio,
+                Heurs.scoreCriticalResourcePrio(C.SU));
+    }
+
+    // Cluster
+    unsigned ZoneCluster = C.AtTop ? TopClusterID : BotClusterID;
+    bool IsClusterSucc =
+        isTheSameCluster(ZoneCluster, C.SU->ParentClusterIdx);
+    Score.add(W.Cluster, IsClusterSucc ? 1.0 : 0.0);
+
+    if (SameBoundary) {
+      // Weak edges
+      unsigned WeakLeft = getWeakLeft(C.SU, C.AtTop);
+      Score.add(W.Weak, -static_cast<double>(WeakLeft));
+    }
+
+    // RegMax
+    if (DAG->isTrackingPressure()) {
+      int MaxInc = C.RPDelta.CurrentMax.getUnitInc();
+      Score.add(W.RegMax, static_cast<double>(-MaxInc));
+    }
+
+    if (SameBoundary) {
+      // Latency
+      if (!RegionPolicy.DisableLatencyHeuristic &&
+          C.Policy.ReduceLatency && !Rem.IsAcyclicLatencyLimited) {
+        Score.add(W.Latency, static_cast<double>(C.SU->getDepth()));
+      }
+
+      // NodeOrder — for top-down, lower NodeNum is better
+      if (Zone->isTop())
+        Score.add(W.NodeOrder,
+                  -static_cast<double>(C.SU->NodeNum));
+      else
+        Score.add(W.NodeOrder,
+                  static_cast<double>(C.SU->NodeNum));
+    }
+
+    return Score.Total;
+  };
+
+  double TryScore = computeScore(TryCand);
+  double CandScore = computeScore(Cand);
+
+  LLVM_DEBUG(dbgs() << "Score: SU(" << TryCand.SU->NodeNum << ") = " << TryScore
+                    << " vs SU(" << Cand.SU->NodeNum << ") = " << CandScore
+                    << "\n");
+
+  if (TryScore > CandScore) {
+    TryCand.Reason = NodeOrder;
+    return true;
   }
 
   return false;

@@ -1,0 +1,32 @@
+{
+  "VGPRThresholdPercent": 100,
+
+  "CoexecExposedSort": "roofline",
+  "BlockCarriedLatency": "off",
+  "CoexecLookahead": "fast",
+  "ShadowMixNodeBudgetOverride": 0,
+
+  "UseScoring": false,
+
+  "WBiasPhysReg": 1e15,
+  "WRegExcess": 1e14,
+  "WStall": 1e13,
+  "WMissedSlots": 1e12,
+  "WMemoryPipeline": 1e11,
+  "WCoexecSlotAvoid": 1e10,
+  "WCoexecSlotPrefer": 1e9,
+  "WShadowMixDemandSatisfied": 1e8,
+  "WShadowMixDirectEnable": 5e7,
+  "WShadowMixLookahead": 2.5e7,
+  "WShadowMixGreedy": 1.25e7,
+  "WCritResource": 1e6,
+  "WCritResourceWMMAPrio": 5e5,
+  "WCritResourceDep": 1e5,
+  "WCritResourceDepLoopCarried": 5e4,
+  "WCritResourcePrio": 1e4,
+  "WCluster": 1e3,
+  "WWeak": 1e2,
+  "WRegMax": 1e1,
+  "WLatency": 1e0,
+  "WNodeOrder": 1e-1
+}

@@ -260,6 +260,17 @@ public:
     return nullptr;
   }
 
+  /// \returns the index of \p SU in PrioritySUs, or -1 if not found.
+  int getPriorityIndex(SUnit *SU) const {
+    for (unsigned I = 0; I < PrioritySUs.size(); ++I) {
+      if (PrioritySUs[I] == SU)
+        return static_cast<int>(I);
+    }
+    return -1;
+  }
+
+  unsigned getPrioritySUsSize() const { return PrioritySUs.size(); }
+
   void reset() {
     AllSUs.clear();
     PrioritySUs.clear();
@@ -428,6 +439,53 @@ struct RegionMixInfo {
 
 private:
   bool SnapshotDirty = true;
+};
+
+//===----------------------------------------------------------------------===//
+// Scoring Infrastructure
+//===----------------------------------------------------------------------===//
+
+/// Weights for the scoring-based candidate selection. Each heuristic has an
+/// associated weight; the total score is the sum of weight * score across all
+/// heuristics. Weights are exposed as cl::opt options for AI-driven tuning.
+///
+/// The default weights are set to mimic the priority order of the tiered
+/// tryCandidateCoexec: higher-priority heuristics get exponentially larger
+/// weights so that a single decision at a high tier dominates all lower tiers.
+struct CoExecScoreWeights {
+  double BiasPhysReg = 1e15;
+  double RegExcess = 1e14;
+  double Stall = 1e13;
+  double MissedSlots = 1e12;
+  double MemoryPipeline = 1e11;
+  double CoexecSlotAvoid = 1e10;
+  double CoexecSlotPrefer = 1e9;
+  // ShadowMix sub-scores
+  double ShadowMixDemandSatisfied = 1e8;
+  double ShadowMixDirectEnable = 5e7;
+  double ShadowMixLookahead = 2.5e7;
+  double ShadowMixGreedy = 1.25e7;
+  // CriticalResource sub-scores
+  double CritResource = 1e6;
+  double CritResourceWMMAPrio = 5e5;
+  // CriticalResourceDep sub-scores
+  double CritResourceDep = 1e5;
+  double CritResourceDepLoopCarried = 5e4;
+  // CriticalResourcePrio
+  double CritResourcePrio = 1e4;
+  // Lower-priority heuristics
+  double Cluster = 1e3;
+  double Weak = 1e2;
+  double RegMax = 1e1;
+  double Latency = 1e0;
+  double NodeOrder = 1e-1;
+};
+
+/// Per-candidate score accumulator used by the scoring path.
+struct CandidateScore {
+  double Total = 0.0;
+
+  void add(double Weight, double Score) { Total += Weight * Score; }
 };
 
 //===----------------------------------------------------------------------===//
@@ -686,12 +744,79 @@ public:
                             GenericSchedulerBase::SchedCandidate &Cand) const;
 
   void dumpRegionSummary();
+
+  //===--------------------------------------------------------------------===//
+  // Scoring-based heuristics
+  //===--------------------------------------------------------------------===//
+
+  /// Compute the stall score for a single candidate. Returns the negative
+  /// of the effective stall cost (lower stalls = higher score).
+  double scoreEffectiveStall(SUnit *SU, SchedBoundary &Zone);
+
+  /// Returns 1.0 if the instruction is a memory pipeline instruction (DMA or
+  /// Fence) and has no stalls, 0.0 otherwise.
+  double scoreMemoryPipeline(SUnit *SU, SchedBoundary &Zone);
+
+  /// Returns 2.0 if the instruction's flavor is preferred at the current
+  /// co-exec slot, 1.0 if allowed (not avoided), 0.0 if avoided or not in a
+  /// co-exec slot.
+  double scoreCoexecSlotPrefer(SUnit *SU, SchedBoundary *Zone);
+
+  /// Returns the avoidance penalty: 0.0 if not avoided, -1.0 if avoided.
+  double scoreCoexecSlotAvoid(SUnit *SU, SchedBoundary *Zone);
+
+  /// Returns four sub-scores for the ShadowMix heuristic:
+  /// [0] DemandSatisfied: 1.0 if demand is satisfied and SU matches producer
+  /// flavor, 0.0 otherwise.
+  /// [1] DirectEnable: number of NeededFlavor instructions directly enabled
+  /// by SU (0 if SU matches producer flavor).
+  /// [2] Lookahead: 1.0 if SU is on the path to enabling a NeededFlavor
+  /// instruction within the budget, 0.0 otherwise (0 if producer flavor).
+  /// [3] GreedyProducer: 1.0 if SU matches the producer flavor, 0.0
+  /// otherwise.
+  struct ShadowMixScores {
+    double DemandSatisfied = 0.0;
+    double DirectEnable = 0.0;
+    double Lookahead = 0.0;
+    double GreedyProducer = 0.0;
+  };
+  ShadowMixScores scoreShadowMix(SUnit *SU, SchedBoundary *Zone);
+
+  /// Returns two sub-scores for tryCriticalResource:
+  /// [0] ResourceMatch: (HWUInfo.size - I) / HWUInfo.size where I is the
+  /// index of the first HWUI the SU belongs to, 0.0 if none.
+  /// [1] WMMAPrio: if the matched resource is WMMA, returns
+  /// (PrioritySUs.size - J) / PrioritySUs.size where J is the SU's
+  /// priority index, 0.0 otherwise.
+  struct CritResourceScores {
+    double ResourceMatch = 0.0;
+    double WMMAPrio = 0.0;
+  };
+  CritResourceScores scoreCriticalResource(SUnit *SU) const;
+
+  /// Returns two sub-scores for tryCriticalResourceDependency:
+  /// [0] EnablesResource: (HWUInfo.size - I) / HWUInfo.size where I is the
+  /// index of the first HWUI whose target SU this candidate enables.
+  /// [1] LoopCarriedOrder: a scoring mechanism for loop-carried DS read
+  /// ordering.
+  struct CritResourceDepScores {
+    double EnablesResource = 0.0;
+    double LoopCarriedOrder = 0.0;
+  };
+  CritResourceDepScores scoreCriticalResourceDep(SUnit *SU,
+                                                 SchedBoundary *Zone) const;
+
+  /// Returns (PrioritySUs.size - I) / PrioritySUs.size where I is the
+  /// priority index of SU across all HWUIs, 0.0 if not found.
+  double scoreCriticalResourcePrio(SUnit *SU) const;
 };
 
 class AMDGPUCoExecSchedStrategy final : public GCNSchedStrategy {
 protected:
   AMDGPU::AMDGPUSchedReason LastAMDGPUReason = AMDGPU::AMDGPUSchedReason::None;
   CandidateHeuristics Heurs;
+  CoExecScoreWeights Weights;
+  bool UseScoring = false;
 
 #ifndef NDEBUG
   void dumpPickSummary(SUnit *SU, bool IsTopNode, SchedCandidate &Cand);
@@ -699,6 +824,8 @@ protected:
 
   bool tryCandidateCoexec(SchedCandidate &Cand, SchedCandidate &TryCand,
                           SchedBoundary *Zone);
+  bool tryCandidateCoexecScore(SchedCandidate &Cand, SchedCandidate &TryCand,
+                               SchedBoundary *Zone);
   void pickNodeFromQueue(SchedBoundary &Zone, const CandPolicy &ZonePolicy,
                          const RegPressureTracker &RPTracker,
                          SchedCandidate &Cand, bool &PickedPending,
