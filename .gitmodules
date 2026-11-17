@@ -1,0 +1,3 @@
+[submodule "llvm/lib/Target/AMDGPU/PerfCorpus/MLKernelCorpus"]
+	path = llvm/lib/Target/AMDGPU/PerfCorpus/MLKernelCorpus
+	url = https://github.com/jrbyrnes/MLKernelCorpus.git

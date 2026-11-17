@@ -12,6 +12,9 @@ Usage:
     ./perf_test.py --update-on-pass             # Update both baselines only if all tests pass
     ./perf_test.py --verbose                    # Show detailed output
     ./perf_test.py --llc-flag=--foo=1 --llc-flag=--bar  # Pass extra llc flags to every kernel run
+    ./perf_test.py --full                       # Run tests against baseline_full.json (full MLKernelCorpus)
+    ./perf_test.py --update --full              # Update baseline_full.json and sched_baseline_full.json
+    ./perf_test.py --full --verbose             # Full corpus with detailed output
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ class TestResult:
     baseline_cycles: Optional[int]
     passed: bool
     error: Optional[str] = None
+    vgpr_spill_count: int = 0
 
     @property
     def delta(self) -> Optional[int]:
@@ -54,6 +58,13 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 BASELINE_FILE = SCRIPT_DIR / "baseline.json"
 SCHED_BASELINE_FILE = SCRIPT_DIR / "sched_baseline.json"
 REPORT_FILE = SCRIPT_DIR / "PERF_REPORT.md"
+
+FULL_CORPUS_DIR = SCRIPT_DIR / "MLKernelCorpus" / "MI450" / "kernels"
+BASELINE_FULL_FILE = SCRIPT_DIR / "baseline_full.json"
+SCHED_BASELINE_FULL_FILE = SCRIPT_DIR / "sched_baseline_full.json"
+REPORT_FULL_FILE = SCRIPT_DIR / "PERF_REPORT_FULL.md"
+SPILLS_FILE = SCRIPT_DIR / "spills.json"
+SPILLS_FULL_FILE = SCRIPT_DIR / "spills_full.json"
 
 # Flags shared by every configuration. These are the environment the corpus is
 # measured in, not scheduler tuning: the static simulator that produces the warm
@@ -81,12 +92,13 @@ class Config:
     label: str
     flags: List[str]
     use_note_flags: bool  # append the per-test Flags section from note.txt
+    strip_sched_strategy: bool = False  # strip IR-level amdgpu-sched-strategy attr
 
 
 # Off  : base only, default scheduler, no anti-hints.
 # On   : base + CoExec scheduler + anti-hints.
 # Tuned: On + the per-test tuning flags recorded in each note.txt Flags section.
-CONFIG_OFF = Config("off", "Off", list(BASE_FLAGS), use_note_flags=False)
+CONFIG_OFF = Config("off", "Off", list(BASE_FLAGS), use_note_flags=False, strip_sched_strategy=True)
 CONFIG_ON = Config("on", "On", BASE_FLAGS + COEXEC_FLAGS, use_note_flags=False)
 CONFIG_TUNED = Config("tuned", "On+tuned", BASE_FLAGS + COEXEC_FLAGS, use_note_flags=True)
 
@@ -112,6 +124,12 @@ SCHED_PERF_PATTERN = re.compile(r"Sched Perf\s*\n\s*(\d+)\s*warm cycles")
 # Pattern to match the Flags section header in note.txt
 # Supports both "Flags" and "Flags:" formats
 FLAGS_SECTION_PATTERN = re.compile(r"^Flags:?\s*$", re.MULTILINE)
+
+# Pattern to strip the amdgpu-sched-strategy function attribute from IR text,
+# so the Off config truly falls back to the default (MaxOccupancy) scheduler.
+SCHED_STRATEGY_ATTR_PATTERN = re.compile(r'\s*"amdgpu-sched-strategy"="[^"]*"')
+
+VGPR_SPILL_PATTERN = re.compile(r"\.vgpr_spill_count:\s*(\d+)")
 
 
 def get_llc_path() -> Path:
@@ -139,17 +157,26 @@ def get_llc_path() -> Path:
     )
 
 
-def find_test_files() -> List[Path]:
-    """Find all .ll files in the MI450 corpus."""
+def find_test_files(full: bool = False) -> List[Path]:
+    """Find all test files in the corpus."""
+    if full:
+        if not FULL_CORPUS_DIR.exists():
+            raise RuntimeError(
+                f"Full corpus not found: {FULL_CORPUS_DIR}\n"
+                "Initialize the submodule: git submodule update --init "
+                "llvm/lib/Target/AMDGPU/PerfCorpus/MLKernelCorpus"
+            )
+        return sorted(FULL_CORPUS_DIR.rglob("*.llir"))
     mi450_dir = SCRIPT_DIR / "MI450"
     if not mi450_dir.exists():
         raise RuntimeError(f"MI450 directory not found: {mi450_dir}")
     return sorted(mi450_dir.rglob("*.ll"))
 
 
-def get_test_name(ll_file: Path) -> str:
+def get_test_name(ll_file: Path, full: bool = False) -> str:
     """Generate a unique test name from file path."""
-    rel_path = ll_file.relative_to(SCRIPT_DIR / "MI450")
+    base_dir = FULL_CORPUS_DIR if full else SCRIPT_DIR / "MI450"
+    rel_path = ll_file.relative_to(base_dir)
     return str(rel_path.with_suffix(""))
 
 
@@ -196,9 +223,18 @@ def parse_flags_from_note(note_file: Path) -> List[str]:
         return []
 
 
-def run_llc(llc_path: Path, ll_file: Path, config: Config = REGRESSION_CONFIG, sched_only: bool = False, user_flags: Optional[List[str]] = None) -> Tuple[Optional[int], Optional[str]]:
+def run_llc(llc_path: Path, ll_file: Path, config: Config = REGRESSION_CONFIG, sched_only: bool = False, user_flags: Optional[List[str]] = None) -> Tuple[Optional[int], int, Optional[str]]:
     """Run llc under a configuration and extract the innermost loop warm cycles."""
-    cmd = [str(llc_path), str(ll_file), "-o", "-"]
+    ir_input = None
+    if config.strip_sched_strategy:
+        ir_text = ll_file.read_text()
+        if '"amdgpu-sched-strategy"' in ir_text:
+            ir_input = SCHED_STRATEGY_ATTR_PATTERN.sub('', ir_text)
+
+    if ir_input is not None:
+        cmd = [str(llc_path), "-", "-o", "-"]
+    else:
+        cmd = [str(llc_path), str(ll_file), "-o", "-"]
     cmd.extend(config.flags)
 
     # Add sched-only flag if requested
@@ -214,9 +250,10 @@ def run_llc(llc_path: Path, ll_file: Path, config: Config = REGRESSION_CONFIG, s
         cmd.extend(user_flags)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                input=ir_input)
         if result.returncode != 0:
-            return None, f"llc failed: {result.stderr[:200]}"
+            return None, 0, f"llc failed: {result.stderr[:200]}"
 
         # Find all warm cycle counts and return the one for the innermost loop
         # The innermost loop is typically the last one encountered before "Inner Loop Header"
@@ -226,21 +263,28 @@ def run_llc(llc_path: Path, ll_file: Path, config: Config = REGRESSION_CONFIG, s
         # Find all matches
         matches = list(WARM_PATTERN.finditer(output))
         if not matches:
-            return None, "No warm cycle annotation found in output"
+            return None, 0, "No warm cycle annotation found in output"
 
         # Use the first loop block (typically the main hot loop)
         warm_cycles = int(matches[0].group(1))
-        return warm_cycles, None
+
+        spill_counts = [int(m.group(1)) for m in VGPR_SPILL_PATTERN.finditer(output)]
+        max_spills = max(spill_counts) if spill_counts else 0
+
+        return warm_cycles, max_spills, None
 
     except subprocess.TimeoutExpired:
-        return None, "llc timed out after 120 seconds"
+        return None, 0, "llc timed out after 120 seconds"
     except Exception as e:
-        return None, str(e)
+        return None, 0, str(e)
 
 
-def load_baseline(sched_only: bool = False) -> Dict[str, int]:
+def load_baseline(sched_only: bool = False, full: bool = False) -> Dict[str, int]:
     """Load baseline warm cycle counts."""
-    baseline_file = SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
+    if full:
+        baseline_file = SCHED_BASELINE_FULL_FILE if sched_only else BASELINE_FULL_FILE
+    else:
+        baseline_file = SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
     if not baseline_file.exists():
         return {}
     with open(baseline_file) as f:
@@ -289,15 +333,18 @@ def load_sched_perf_targets() -> Dict[str, int]:
     return targets
 
 
-def save_baseline(baseline: Dict[str, int], sched_only: bool = False) -> None:
+def save_baseline(baseline: Dict[str, int], sched_only: bool = False, full: bool = False) -> None:
     """Save baseline warm cycle counts."""
-    baseline_file = SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
+    if full:
+        baseline_file = SCHED_BASELINE_FULL_FILE if sched_only else BASELINE_FULL_FILE
+    else:
+        baseline_file = SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
     with open(baseline_file, "w") as f:
         json.dump(baseline, f, indent=2, sort_keys=True)
         f.write("\n")
 
 
-def run_tests(verbose: bool = False, migration_target: bool = False, sched_only: bool = False, user_flags: Optional[List[str]] = None) -> List[TestResult]:
+def run_tests(verbose: bool = False, migration_target: bool = False, sched_only: bool = False, user_flags: Optional[List[str]] = None, full: bool = False) -> List[TestResult]:
     """Run all tests and return results."""
     llc_path = get_llc_path()
     if migration_target:
@@ -306,8 +353,8 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
         else:
             baseline = load_migration_targets()
     else:
-        baseline = load_baseline(sched_only=sched_only)
-    ll_files = find_test_files()
+        baseline = load_baseline(sched_only=sched_only, full=full)
+    ll_files = find_test_files(full=full)
 
     if not ll_files:
         print("No test files found!")
@@ -316,12 +363,12 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
     results = []
 
     for ll_file in ll_files:
-        test_name = get_test_name(ll_file)
+        test_name = get_test_name(ll_file, full=full)
         if verbose:
             print(f"Running: {test_name}...", end=" ", flush=True)
 
         start = time.monotonic()
-        warm_cycles, error = run_llc(llc_path, ll_file, REGRESSION_CONFIG, sched_only=sched_only, user_flags=user_flags)
+        warm_cycles, spill_count, error = run_llc(llc_path, ll_file, REGRESSION_CONFIG, sched_only=sched_only, user_flags=user_flags)
         elapsed = time.monotonic() - start
         baseline_cycles = baseline.get(test_name)
 
@@ -340,6 +387,7 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
             baseline_cycles=baseline_cycles,
             passed=passed,
             error=error,
+            vgpr_spill_count=spill_count,
         )
         results.append(result)
 
@@ -394,15 +442,28 @@ def print_summary(results: List[TestResult], migration_target: bool = False, sch
                 print(f"  {r.name}: {r.error}")
 
 
-def update_baseline(results: List[TestResult], sched_only: bool = False) -> None:
+def update_baseline(results: List[TestResult], sched_only: bool = False, full: bool = False) -> None:
     """Update baseline with current results."""
     baseline = {}
     for r in results:
         if r.warm_cycles is not None:
             baseline[r.name] = r.warm_cycles
-    save_baseline(baseline, sched_only=sched_only)
-    baseline_name = "sched_baseline.json" if sched_only else "baseline.json"
+    save_baseline(baseline, sched_only=sched_only, full=full)
+    if full:
+        baseline_name = "sched_baseline_full.json" if sched_only else "baseline_full.json"
+    else:
+        baseline_name = "sched_baseline.json" if sched_only else "baseline.json"
     print(f"Updated {baseline_name} with {len(baseline)} entries.")
+
+
+def save_spills(results: List[TestResult], full: bool = False) -> None:
+    """Write kernels with vgpr spills to spills.json / spills_full.json."""
+    spilling = sorted(r.name for r in results if r.vgpr_spill_count > 0)
+    spills_file = SPILLS_FULL_FILE if full else SPILLS_FILE
+    with open(spills_file, "w") as f:
+        json.dump(spilling, f, indent=2)
+        f.write("\n")
+    print(f"Updated {spills_file.name} with {len(spilling)} spilling kernels.")
 
 
 def llc_version(llc_path: Path) -> str:
@@ -423,7 +484,8 @@ def llc_version(llc_path: Path) -> str:
 
 def measure_config(llc_path: Path, ll_file: Path, config: Config, user_flags: Optional[List[str]] = None) -> Tuple[Optional[int], Optional[str]]:
     """Measure warm cycles for one file under one config (full warm cycles, not sched-only)."""
-    return run_llc(llc_path, ll_file, config, sched_only=False, user_flags=user_flags)
+    warm_cycles, _, error = run_llc(llc_path, ll_file, config, sched_only=False, user_flags=user_flags)
+    return warm_cycles, error
 
 
 def _pct(new: Optional[int], base: Optional[int]) -> Optional[float]:
@@ -442,29 +504,43 @@ def _pct_cell(p: Optional[float]) -> str:
     return f"{p:+.1f}%"
 
 
-def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = None) -> int:
-    """Run every corpus file under Off / On+tuned and write PERF_REPORT.md."""
+def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = None, full: bool = False) -> int:
+    """Run every corpus file under Off / On(+tuned) and write a perf report."""
     llc_path = get_llc_path()
-    ll_files = find_test_files()
+    ll_files = find_test_files(full=full)
     if not ll_files:
         print("No test files found!")
         return 1
 
-    print(f"Generating perf report...")
+    # Full corpus has no note.txt, so On+tuned degrades to On.
+    if full:
+        on_config = CONFIG_ON
+        report_configs = [CONFIG_OFF, CONFIG_ON]
+        report_file = REPORT_FULL_FILE
+    else:
+        on_config = CONFIG_TUNED
+        report_configs = REPORT_CONFIGS
+        report_file = REPORT_FILE
+
+    on_key = on_config.key
+    on_label = on_config.label
+
+    corpus_label = "full corpus" if full else "MI450 corpus"
+    print(f"Generating perf report ({corpus_label})...")
     print(f"LLC: {llc_path}")
     print()
 
     # rows: source -> list of (kernel, {config_key: cycles})
     from collections import OrderedDict
     rows_by_source: "OrderedDict[str, list]" = OrderedDict()
-    tuned_ratios = []  # On+tuned/Off ratio, <1 = faster
+    on_ratios = []  # On/Off ratio, <1 = faster
 
     for ll_file in ll_files:
-        test_name = get_test_name(ll_file)
+        test_name = get_test_name(ll_file, full=full)
         source = test_name.split(os.sep)[0]
         kernel = os.sep.join(test_name.split(os.sep)[1:])
         cycles = {}
-        for cfg in REPORT_CONFIGS:
+        for cfg in report_configs:
             if verbose:
                 print(f"  {test_name} [{cfg.label}]...", end=" ", flush=True)
             c, err = measure_config(llc_path, ll_file, cfg, user_flags=user_flags)
@@ -473,11 +549,10 @@ def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = Non
                 print(f"{c if c is not None else 'ERR: ' + (err or '')}")
         rows_by_source.setdefault(source, []).append((kernel, cycles))
         off = cycles.get("off")
-        if off and off > 0 and cycles.get("tuned"):
-            tuned_ratios.append(cycles["tuned"] / off)
+        if off and off > 0 and cycles.get(on_key):
+            on_ratios.append(cycles[on_key] / off)
 
     def geomean_pct(ratios):
-        # Geometric mean of the ratios, expressed as percent change vs Off.
         if not ratios:
             return None
         g = math.exp(sum(math.log(r) for r in ratios) / len(ratios))
@@ -493,59 +568,66 @@ def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = Non
 
     lines = []
     lines.append("# AMDGPU CoExec Scheduler Perf Report")
+    if full:
+        lines.append("")
+        lines.append("Full MLKernelCorpus (397 kernels).")
     lines.append("")
     lines.append("Warm cycle counts of the innermost hot loop for each corpus kernel, "
                  "measured by the AMDGPU static simulator, comparing the CoExec scheduler "
-                 "off versus on (with per-kernel tuning).")
+                 f"off versus {on_label.lower()}.")
     lines.append("")
     lines.append(f"- llc: `{llc_version(llc_path)}`")
-    lines.append(f"- Generated by: `perf_test.py --report`")
+    cmd = "perf_test.py --report --full" if full else "perf_test.py --report"
+    lines.append(f"- Generated by: `{cmd}`")
     lines.append("")
-    lines.append("Lower is better. The `Δ` column is relative to **Off** (negative = faster).")
+    lines.append(f"Lower is better. The `Δ` column is relative to **Off** (negative = faster).")
     lines.append("")
     lines.append("## Configurations")
     lines.append("")
     lines.append(f"- **Base** (shared by all): `{' '.join(BASE_FLAGS)}`")
     lines.append(f"- **Off**: base only, default scheduler.")
-    lines.append(f"- **On+tuned**: base + `{' '.join(COEXEC_FLAGS)}` + the per-test flags "
-                 f"from each kernel's `note.txt` Flags section.")
+    if full:
+        lines.append(f"- **{on_label}**: base + `{' '.join(COEXEC_FLAGS)}`.")
+    else:
+        lines.append(f"- **{on_label}**: base + `{' '.join(COEXEC_FLAGS)}` + the per-test flags "
+                     f"from each kernel's `note.txt` Flags section.")
     lines.append("")
 
     for source, rows in rows_by_source.items():
         lines.append(f"## {source}")
         lines.append("")
-        lines.append("| Kernel | Off | On+tuned | Δ |")
+        lines.append(f"| Kernel | Off | {on_label} | Δ |")
         lines.append("|---|---:|---:|---:|")
         for kernel, cyc in rows:
             lines.append(
-                f"| {kernel} | {_cell(cyc.get('off'))} | {_cell(cyc.get('tuned'))} | "
-                f"{_pct_cell(_pct(cyc.get('tuned'), cyc.get('off')))} |"
+                f"| {kernel} | {_cell(cyc.get('off'))} | {_cell(cyc.get(on_key))} | "
+                f"{_pct_cell(_pct(cyc.get(on_key), cyc.get('off')))} |"
             )
         lines.append("")
 
     lines.append("## Summary")
     lines.append("")
     total = sum(len(r) for r in rows_by_source.values())
-    improved = sum(1 for r in tuned_ratios if r < 1.0)
-    regressed = sum(1 for r in tuned_ratios if r > 1.0)
-    unchanged = sum(1 for r in tuned_ratios if r == 1.0)
-    g_tuned = geomean_pct(tuned_ratios)
-    m_tuned = median_pct(tuned_ratios)
+    improved = sum(1 for r in on_ratios if r < 1.0)
+    regressed = sum(1 for r in on_ratios if r > 1.0)
+    unchanged = sum(1 for r in on_ratios if r == 1.0)
+    g = geomean_pct(on_ratios)
+    m = median_pct(on_ratios)
     lines.append(f"- Kernels measured: {total}")
-    lines.append(f"- On+tuned vs Off: {improved} faster, {regressed} slower, {unchanged} unchanged")
-    if g_tuned is not None:
-        lines.append(f"- Geomean Δ On+tuned vs Off: {g_tuned:+.1f}%")
-    if m_tuned is not None:
-        lines.append(f"- Median Δ On+tuned vs Off: {m_tuned:+.1f}%")
+    lines.append(f"- {on_label} vs Off: {improved} faster, {regressed} slower, {unchanged} unchanged")
+    if g is not None:
+        lines.append(f"- Geomean Δ {on_label} vs Off: {g:+.1f}%")
+    if m is not None:
+        lines.append(f"- Median Δ {on_label} vs Off: {m:+.1f}%")
     lines.append("")
     lines.append("Geometric mean is used to average per-kernel ratios; it is not skewed "
                  "by a single large outlier the way an arithmetic mean of percentages is.")
     lines.append("")
 
-    REPORT_FILE.write_text("\n".join(lines) + "\n")
-    print(f"\nWrote {REPORT_FILE}")
-    if g_tuned is not None:
-        print(f"  {total} kernels, geomean On+tuned vs Off {g_tuned:+.1f}%")
+    report_file.write_text("\n".join(lines) + "\n")
+    print(f"\nWrote {report_file}")
+    if g is not None:
+        print(f"  {total} kernels, geomean {on_label} vs Off {g:+.1f}%")
     return 0
 
 
@@ -568,43 +650,60 @@ def main():
                         help="Extra llc flag applied to every kernel run (repeatable).")
     parser.add_argument("--report", action="store_true",
                         help="Run Off/On+tuned for every kernel and write PERF_REPORT.md")
+    parser.add_argument("--full", action="store_true",
+                        help="Use the full MLKernelCorpus (submodule) instead of the built-in MI450 corpus")
     args = parser.parse_args()
 
+    if args.full and args.migration_target:
+        print("Error: --migration-target is not supported with --full (no note.txt files in full corpus)")
+        return 1
+
     if args.list:
-        for f in find_test_files():
-            print(get_test_name(f))
+        for f in find_test_files(full=args.full):
+            print(get_test_name(f, full=args.full))
         return 0
 
     if args.report:
-        return generate_report(verbose=args.verbose, user_flags=args.llc_flags)
+        return generate_report(verbose=args.verbose, user_flags=args.llc_flags, full=args.full)
 
-    print(f"Running performance tests...")
+    corpus_label = "full corpus" if args.full else "MI450 corpus"
+    print(f"Running performance tests ({corpus_label})...")
     print(f"LLC: {get_llc_path()}")
     if args.llc_flags:
         print(f"Extra llc flags: {' '.join(args.llc_flags)}")
 
+    # Resolve baseline file names for display.
+    if args.full:
+        bl_file = BASELINE_FULL_FILE
+        sbl_file = SCHED_BASELINE_FULL_FILE
+    else:
+        bl_file = BASELINE_FILE
+        sbl_file = SCHED_BASELINE_FILE
+
     # --update updates both baselines, ignoring --sched-only
     if args.update or args.update_on_pass:
-        print(f"Baseline: {BASELINE_FILE}")
+        print(f"Baseline: {bl_file}")
         print()
-        results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=False, user_flags=args.llc_flags)
+        results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=False, user_flags=args.llc_flags, full=args.full)
         print_summary(results, migration_target=args.migration_target, sched_only=False)
         all_passed = all(r.passed for r in results)
 
         print(f"\nRunning sched-only tests...")
-        print(f"Baseline: {SCHED_BASELINE_FILE}")
+        print(f"Baseline: {sbl_file}")
         print(f"Mode: sched-only (--amdgpu-static-sim-measure-sched=1)")
         print()
-        sched_results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=True, user_flags=args.llc_flags)
+        sched_results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=True, user_flags=args.llc_flags, full=args.full)
         print_summary(sched_results, migration_target=args.migration_target, sched_only=True)
         sched_all_passed = all(r.passed for r in sched_results)
 
         if args.update:
-            update_baseline(results, sched_only=False)
-            update_baseline(sched_results, sched_only=True)
+            update_baseline(results, sched_only=False, full=args.full)
+            update_baseline(sched_results, sched_only=True, full=args.full)
+            save_spills(results, full=args.full)
         elif args.update_on_pass and all_passed and sched_all_passed:
-            update_baseline(results, sched_only=False)
-            update_baseline(sched_results, sched_only=True)
+            update_baseline(results, sched_only=False, full=args.full)
+            update_baseline(sched_results, sched_only=True, full=args.full)
+            save_spills(results, full=args.full)
 
         return 0 if (all_passed and sched_all_passed) else 1
 
@@ -613,15 +712,15 @@ def main():
         if args.migration_target:
             print(f"Baseline: Sched Perf targets from note.txt files")
         else:
-            print(f"Baseline: {SCHED_BASELINE_FILE}")
+            print(f"Baseline: {sbl_file}")
         print(f"Mode: sched-only (--amdgpu-static-sim-measure-sched=1)")
     elif args.migration_target:
         print(f"Baseline: migration targets from note.txt files")
     else:
-        print(f"Baseline: {BASELINE_FILE}")
+        print(f"Baseline: {bl_file}")
     print()
 
-    results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=args.sched_only, user_flags=args.llc_flags)
+    results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=args.sched_only, user_flags=args.llc_flags, full=args.full)
     print_summary(results, migration_target=args.migration_target, sched_only=args.sched_only)
 
     all_passed = all(r.passed for r in results)
