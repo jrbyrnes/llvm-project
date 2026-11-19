@@ -15,6 +15,9 @@ Usage:
     ./perf_test.py --full                       # Run tests against baseline_full.json (full MLKernelCorpus)
     ./perf_test.py --update --full              # Update baseline_full.json and sched_baseline_full.json
     ./perf_test.py --full --verbose             # Full corpus with detailed output
+    ./perf_test.py --scoring                    # Run with weighted cost model + best known weights
+    ./perf_test.py --scoring --update           # Update scoring baselines
+    ./perf_test.py --scoring --full --report    # Full corpus scoring report
 """
 
 from __future__ import annotations
@@ -66,6 +69,16 @@ REPORT_FULL_FILE = SCRIPT_DIR / "PERF_REPORT_FULL.md"
 SPILLS_FILE = SCRIPT_DIR / "spills.json"
 SPILLS_FULL_FILE = SCRIPT_DIR / "spills_full.json"
 
+BEST_CONFIG_FILE = SCRIPT_DIR / "cmaes_results" / "best_config.json"
+SCORING_BASELINE_FILE = SCRIPT_DIR / "scoring_baseline.json"
+SCORING_SCHED_BASELINE_FILE = SCRIPT_DIR / "scoring_sched_baseline.json"
+SCORING_BASELINE_FULL_FILE = SCRIPT_DIR / "scoring_baseline_full.json"
+SCORING_SCHED_BASELINE_FULL_FILE = SCRIPT_DIR / "scoring_sched_baseline_full.json"
+SCORING_REPORT_FILE = SCRIPT_DIR / "PERF_REPORT_SCORING.md"
+SCORING_REPORT_FULL_FILE = SCRIPT_DIR / "PERF_REPORT_SCORING_FULL.md"
+SCORING_SPILLS_FILE = SCRIPT_DIR / "scoring_spills.json"
+SCORING_SPILLS_FULL_FILE = SCRIPT_DIR / "scoring_spills_full.json"
+
 # Flags shared by every configuration. These are the environment the corpus is
 # measured in, not scheduler tuning: the static simulator that produces the warm
 # cycle counts, expert scheduling mode, and disabled post-RA scheduling. FP
@@ -84,6 +97,12 @@ COEXEC_FLAGS = [
     "--amdgpu-anti-hints-for-va-vdst",
 ]
 
+# Flags for the weighted cost model scoring mode.
+SCORING_FLAGS = [
+    "--amdgpu-coexec-use-scoring=1",
+    f"--amdgpu-sched-config={BEST_CONFIG_FILE}",
+]
+
 
 @dataclass
 class Config:
@@ -98,9 +117,11 @@ class Config:
 # Off  : base only, default scheduler, no anti-hints.
 # On   : base + CoExec scheduler + anti-hints.
 # Tuned: On + the per-test tuning flags recorded in each note.txt Flags section.
+# Scoring: On + weighted cost model with best known weights (no note.txt flags).
 CONFIG_OFF = Config("off", "Off", list(BASE_FLAGS), use_note_flags=False, strip_sched_strategy=True)
 CONFIG_ON = Config("on", "On", BASE_FLAGS + COEXEC_FLAGS, use_note_flags=False)
 CONFIG_TUNED = Config("tuned", "On+tuned", BASE_FLAGS + COEXEC_FLAGS, use_note_flags=True)
+CONFIG_SCORING = Config("scoring", "Scoring", BASE_FLAGS + COEXEC_FLAGS + SCORING_FLAGS, use_note_flags=False)
 
 # Columns of the perf report, left to right.
 REPORT_CONFIGS = [CONFIG_OFF, CONFIG_TUNED]
@@ -279,12 +300,20 @@ def run_llc(llc_path: Path, ll_file: Path, config: Config = REGRESSION_CONFIG, s
         return None, 0, str(e)
 
 
-def load_baseline(sched_only: bool = False, full: bool = False) -> Dict[str, int]:
-    """Load baseline warm cycle counts."""
+def _baseline_path(sched_only: bool = False, full: bool = False, scoring: bool = False) -> Path:
+    """Return the baseline file path for the given mode combination."""
+    if scoring:
+        if full:
+            return SCORING_SCHED_BASELINE_FULL_FILE if sched_only else SCORING_BASELINE_FULL_FILE
+        return SCORING_SCHED_BASELINE_FILE if sched_only else SCORING_BASELINE_FILE
     if full:
-        baseline_file = SCHED_BASELINE_FULL_FILE if sched_only else BASELINE_FULL_FILE
-    else:
-        baseline_file = SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
+        return SCHED_BASELINE_FULL_FILE if sched_only else BASELINE_FULL_FILE
+    return SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
+
+
+def load_baseline(sched_only: bool = False, full: bool = False, scoring: bool = False) -> Dict[str, int]:
+    """Load baseline warm cycle counts."""
+    baseline_file = _baseline_path(sched_only=sched_only, full=full, scoring=scoring)
     if not baseline_file.exists():
         return {}
     with open(baseline_file) as f:
@@ -333,18 +362,15 @@ def load_sched_perf_targets() -> Dict[str, int]:
     return targets
 
 
-def save_baseline(baseline: Dict[str, int], sched_only: bool = False, full: bool = False) -> None:
+def save_baseline(baseline: Dict[str, int], sched_only: bool = False, full: bool = False, scoring: bool = False) -> None:
     """Save baseline warm cycle counts."""
-    if full:
-        baseline_file = SCHED_BASELINE_FULL_FILE if sched_only else BASELINE_FULL_FILE
-    else:
-        baseline_file = SCHED_BASELINE_FILE if sched_only else BASELINE_FILE
+    baseline_file = _baseline_path(sched_only=sched_only, full=full, scoring=scoring)
     with open(baseline_file, "w") as f:
         json.dump(baseline, f, indent=2, sort_keys=True)
         f.write("\n")
 
 
-def run_tests(verbose: bool = False, migration_target: bool = False, sched_only: bool = False, user_flags: Optional[List[str]] = None, full: bool = False) -> List[TestResult]:
+def run_tests(verbose: bool = False, migration_target: bool = False, sched_only: bool = False, user_flags: Optional[List[str]] = None, full: bool = False, scoring: bool = False) -> List[TestResult]:
     """Run all tests and return results."""
     llc_path = get_llc_path()
     if migration_target:
@@ -353,13 +379,14 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
         else:
             baseline = load_migration_targets()
     else:
-        baseline = load_baseline(sched_only=sched_only, full=full)
+        baseline = load_baseline(sched_only=sched_only, full=full, scoring=scoring)
     ll_files = find_test_files(full=full)
 
     if not ll_files:
         print("No test files found!")
         return []
 
+    config = CONFIG_SCORING if scoring else REGRESSION_CONFIG
     results = []
 
     for ll_file in ll_files:
@@ -368,7 +395,7 @@ def run_tests(verbose: bool = False, migration_target: bool = False, sched_only:
             print(f"Running: {test_name}...", end=" ", flush=True)
 
         start = time.monotonic()
-        warm_cycles, spill_count, error = run_llc(llc_path, ll_file, REGRESSION_CONFIG, sched_only=sched_only, user_flags=user_flags)
+        warm_cycles, spill_count, error = run_llc(llc_path, ll_file, config, sched_only=sched_only, user_flags=user_flags)
         elapsed = time.monotonic() - start
         baseline_cycles = baseline.get(test_name)
 
@@ -442,24 +469,24 @@ def print_summary(results: List[TestResult], migration_target: bool = False, sch
                 print(f"  {r.name}: {r.error}")
 
 
-def update_baseline(results: List[TestResult], sched_only: bool = False, full: bool = False) -> None:
+def update_baseline(results: List[TestResult], sched_only: bool = False, full: bool = False, scoring: bool = False) -> None:
     """Update baseline with current results."""
     baseline = {}
     for r in results:
         if r.warm_cycles is not None:
             baseline[r.name] = r.warm_cycles
-    save_baseline(baseline, sched_only=sched_only, full=full)
-    if full:
-        baseline_name = "sched_baseline_full.json" if sched_only else "baseline_full.json"
-    else:
-        baseline_name = "sched_baseline.json" if sched_only else "baseline.json"
+    save_baseline(baseline, sched_only=sched_only, full=full, scoring=scoring)
+    baseline_name = _baseline_path(sched_only=sched_only, full=full, scoring=scoring).name
     print(f"Updated {baseline_name} with {len(baseline)} entries.")
 
 
-def save_spills(results: List[TestResult], full: bool = False) -> None:
+def save_spills(results: List[TestResult], full: bool = False, scoring: bool = False) -> None:
     """Write kernels with vgpr spills to spills.json / spills_full.json."""
     spilling = sorted(r.name for r in results if r.vgpr_spill_count > 0)
-    spills_file = SPILLS_FULL_FILE if full else SPILLS_FILE
+    if scoring:
+        spills_file = SCORING_SPILLS_FULL_FILE if full else SCORING_SPILLS_FILE
+    else:
+        spills_file = SPILLS_FULL_FILE if full else SPILLS_FILE
     with open(spills_file, "w") as f:
         json.dump(spilling, f, indent=2)
         f.write("\n")
@@ -504,7 +531,7 @@ def _pct_cell(p: Optional[float]) -> str:
     return f"{p:+.1f}%"
 
 
-def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = None, full: bool = False) -> int:
+def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = None, full: bool = False, scoring: bool = False) -> int:
     """Run every corpus file under Off / On(+tuned) and write a perf report."""
     llc_path = get_llc_path()
     ll_files = find_test_files(full=full)
@@ -512,8 +539,11 @@ def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = Non
         print("No test files found!")
         return 1
 
-    # Full corpus has no note.txt, so On+tuned degrades to On.
-    if full:
+    if scoring:
+        on_config = CONFIG_SCORING
+        report_configs = [CONFIG_OFF, CONFIG_SCORING]
+        report_file = SCORING_REPORT_FULL_FILE if full else SCORING_REPORT_FILE
+    elif full:
         on_config = CONFIG_ON
         report_configs = [CONFIG_OFF, CONFIG_ON]
         report_file = REPORT_FULL_FILE
@@ -577,7 +607,12 @@ def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = Non
                  f"off versus {on_label.lower()}.")
     lines.append("")
     lines.append(f"- llc: `{llc_version(llc_path)}`")
-    cmd = "perf_test.py --report --full" if full else "perf_test.py --report"
+    cmd_parts = ["perf_test.py --report"]
+    if scoring:
+        cmd_parts.append("--scoring")
+    if full:
+        cmd_parts.append("--full")
+    cmd = " ".join(cmd_parts)
     lines.append(f"- Generated by: `{cmd}`")
     lines.append("")
     lines.append(f"Lower is better. The `Δ` column is relative to **Off** (negative = faster).")
@@ -586,7 +621,10 @@ def generate_report(verbose: bool = False, user_flags: Optional[List[str]] = Non
     lines.append("")
     lines.append(f"- **Base** (shared by all): `{' '.join(BASE_FLAGS)}`")
     lines.append(f"- **Off**: base only, default scheduler.")
-    if full:
+    if scoring:
+        lines.append(f"- **{on_label}**: base + `{' '.join(COEXEC_FLAGS)}` + "
+                     f"`{' '.join(SCORING_FLAGS)}`.")
+    elif full:
         lines.append(f"- **{on_label}**: base + `{' '.join(COEXEC_FLAGS)}`.")
     else:
         lines.append(f"- **{on_label}**: base + `{' '.join(COEXEC_FLAGS)}` + the per-test flags "
@@ -652,10 +690,16 @@ def main():
                         help="Run Off/On+tuned for every kernel and write PERF_REPORT.md")
     parser.add_argument("--full", action="store_true",
                         help="Use the full MLKernelCorpus (submodule) instead of the built-in MI450 corpus")
+    parser.add_argument("--scoring", action="store_true",
+                        help="Use weighted cost model with best known weights instead of note.txt flags")
     args = parser.parse_args()
 
     if args.full and args.migration_target:
         print("Error: --migration-target is not supported with --full (no note.txt files in full corpus)")
+        return 1
+
+    if args.scoring and args.migration_target:
+        print("Error: --scoring and --migration-target are mutually exclusive")
         return 1
 
     if args.list:
@@ -664,27 +708,26 @@ def main():
         return 0
 
     if args.report:
-        return generate_report(verbose=args.verbose, user_flags=args.llc_flags, full=args.full)
+        return generate_report(verbose=args.verbose, user_flags=args.llc_flags, full=args.full, scoring=args.scoring)
 
     corpus_label = "full corpus" if args.full else "MI450 corpus"
-    print(f"Running performance tests ({corpus_label})...")
+    mode_label = "scoring" if args.scoring else "performance"
+    print(f"Running {mode_label} tests ({corpus_label})...")
     print(f"LLC: {get_llc_path()}")
+    if args.scoring:
+        print(f"Mode: scoring (weighted cost model + {BEST_CONFIG_FILE.name})")
     if args.llc_flags:
         print(f"Extra llc flags: {' '.join(args.llc_flags)}")
 
     # Resolve baseline file names for display.
-    if args.full:
-        bl_file = BASELINE_FULL_FILE
-        sbl_file = SCHED_BASELINE_FULL_FILE
-    else:
-        bl_file = BASELINE_FILE
-        sbl_file = SCHED_BASELINE_FILE
+    bl_file = _baseline_path(sched_only=False, full=args.full, scoring=args.scoring)
+    sbl_file = _baseline_path(sched_only=True, full=args.full, scoring=args.scoring)
 
     # --update updates both baselines, ignoring --sched-only
     if args.update or args.update_on_pass:
         print(f"Baseline: {bl_file}")
         print()
-        results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=False, user_flags=args.llc_flags, full=args.full)
+        results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=False, user_flags=args.llc_flags, full=args.full, scoring=args.scoring)
         print_summary(results, migration_target=args.migration_target, sched_only=False)
         all_passed = all(r.passed for r in results)
 
@@ -692,18 +735,18 @@ def main():
         print(f"Baseline: {sbl_file}")
         print(f"Mode: sched-only (--amdgpu-static-sim-measure-sched=1)")
         print()
-        sched_results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=True, user_flags=args.llc_flags, full=args.full)
+        sched_results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=True, user_flags=args.llc_flags, full=args.full, scoring=args.scoring)
         print_summary(sched_results, migration_target=args.migration_target, sched_only=True)
         sched_all_passed = all(r.passed for r in sched_results)
 
         if args.update:
-            update_baseline(results, sched_only=False, full=args.full)
-            update_baseline(sched_results, sched_only=True, full=args.full)
-            save_spills(results, full=args.full)
+            update_baseline(results, sched_only=False, full=args.full, scoring=args.scoring)
+            update_baseline(sched_results, sched_only=True, full=args.full, scoring=args.scoring)
+            save_spills(results, full=args.full, scoring=args.scoring)
         elif args.update_on_pass and all_passed and sched_all_passed:
-            update_baseline(results, sched_only=False, full=args.full)
-            update_baseline(sched_results, sched_only=True, full=args.full)
-            save_spills(results, full=args.full)
+            update_baseline(results, sched_only=False, full=args.full, scoring=args.scoring)
+            update_baseline(sched_results, sched_only=True, full=args.full, scoring=args.scoring)
+            save_spills(results, full=args.full, scoring=args.scoring)
 
         return 0 if (all_passed and sched_all_passed) else 1
 
@@ -720,7 +763,7 @@ def main():
         print(f"Baseline: {bl_file}")
     print()
 
-    results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=args.sched_only, user_flags=args.llc_flags, full=args.full)
+    results = run_tests(verbose=args.verbose, migration_target=args.migration_target, sched_only=args.sched_only, user_flags=args.llc_flags, full=args.full, scoring=args.scoring)
     print_summary(results, migration_target=args.migration_target, sched_only=args.sched_only)
 
     all_passed = all(r.passed for r in results)
