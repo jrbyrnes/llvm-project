@@ -1,0 +1,786 @@
+<title>Weighted Scheduling</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+/* Dark sci-fi deck — black + red, single committed theme */
+:root {
+  --bg: #07080a;
+  --bg-grid: rgba(200, 30, 40, 0.04);
+  --fg: #c8ccd4;
+  --fg-dim: #5a5f6e;
+  --surface: #0e1014;
+  --surface-raised: #151820;
+  --border: #1e1215;
+  --border-red: rgba(200, 30, 40, 0.25);
+  --accent: #d42030;
+  --accent-bright: #ff3344;
+  --accent-glow: rgba(212, 32, 48, 0.12);
+  --green: #30d87a;
+  --amber: #e8a020;
+  --heading: #f0f1f4;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+  background-image:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+.deck {
+  height: 100%;
+  position: relative;
+}
+
+.slide-logo {
+  position: absolute;
+  top: 20px;
+  left: max(36px, env(safe-area-inset-left, 0px));
+  height: 28px;
+  opacity: 0.7;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  padding-left: max(48px, env(safe-area-inset-left, 0px));
+  padding-right: max(48px, env(safe-area-inset-right, 0px));
+  padding-block: 48px;
+  overflow-y: auto;
+}
+
+.slide.active {
+  display: flex;
+}
+
+.slide-number {
+  position: absolute;
+  top: 24px;
+  right: max(48px, env(safe-area-inset-right, 0px));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--fg-dim);
+  letter-spacing: 0.05em;
+}
+
+h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(28px, 4vw, 48px);
+  font-weight: 700;
+  color: var(--heading);
+  line-height: 1.15;
+  text-wrap: balance;
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(22px, 3vw, 36px);
+  font-weight: 700;
+  color: var(--heading);
+  line-height: 1.2;
+  text-wrap: balance;
+  margin-bottom: 20px;
+}
+
+h3 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(16px, 2vw, 22px);
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.subtitle {
+  font-size: clamp(16px, 2vw, 22px);
+  color: var(--fg-dim);
+  max-width: 700px;
+}
+
+.content {
+  max-width: 900px;
+}
+
+.content p {
+  font-size: clamp(15px, 1.6vw, 19px);
+  margin-bottom: 16px;
+  max-width: 72ch;
+}
+
+.content ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.content li {
+  font-size: clamp(15px, 1.6vw, 18px);
+  padding-left: 20px;
+  position: relative;
+}
+
+.content li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+@media (max-width: 600px) {
+  .stat-grid { grid-template-columns: 1fr; }
+  .slide {
+    padding-left: max(24px, env(safe-area-inset-left, 0px));
+    padding-right: max(24px, env(safe-area-inset-right, 0px));
+    padding-block: 32px;
+  }
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  border-radius: 2px;
+  padding: 20px 24px;
+}
+
+.stat-card h3 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 0;
+  font-size: 15px;
+  border-bottom: 1px solid var(--border-red);
+}
+
+.stat-row:last-child { border-bottom: none; }
+
+.stat-label { color: var(--fg-dim); }
+.stat-value { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+.stat-value.good { color: var(--green); }
+.stat-value.warn { color: var(--amber); }
+
+.eq-box {
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 2px 2px 0;
+  padding: 28px 32px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(14px, 1.8vw, 20px);
+  line-height: 1.8;
+  margin: 20px 0;
+  overflow-x: auto;
+}
+
+.eq-box .eq-line {
+  white-space: nowrap;
+}
+
+.eq-accent { color: var(--accent); font-weight: 600; }
+.eq-dim { color: var(--fg-dim); }
+
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin: 20px 0;
+}
+
+@media (max-width: 700px) {
+  .pillars { grid-template-columns: 1fr 1fr; }
+}
+
+.pillar {
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  border-top: 3px solid var(--accent);
+  border-radius: 0;
+  padding: 20px 16px;
+  text-align: center;
+}
+
+.pillar-icon {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.pillar-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--heading);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-top: 16px;
+}
+
+@media (max-width: 600px) {
+  .two-col { grid-template-columns: 1fr; }
+}
+
+.principle-card {
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  border-radius: 2px;
+  padding: 20px 24px;
+}
+
+.principle-card h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.principle-card p {
+  font-size: 15px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+.flow-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+
+.flow-step {
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  border-radius: 2px;
+  padding: 16px 20px;
+  flex: 1;
+  min-width: 150px;
+}
+
+.flow-step .step-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.flow-step p {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--fg-dim);
+  font-size: 20px;
+  padding-top: 20px;
+}
+
+@media (max-width: 600px) {
+  .flow-arrow { display: none; }
+}
+
+.drawback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.drawback {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.drawback-marker {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-bright);
+}
+
+.drawback p {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.drawback .drawback-title {
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.feedback-prompt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(20px, 3vw, 32px);
+  color: var(--accent);
+  text-align: center;
+  margin-top: 32px;
+  text-wrap: balance;
+}
+
+.nav {
+  position: fixed;
+  bottom: 24px;
+  right: max(48px, env(safe-area-inset-right, 0px));
+  display: flex;
+  gap: 8px;
+  z-index: 100;
+}
+
+.nav button {
+  background: var(--surface);
+  border: 1px solid var(--border-red);
+  color: var(--fg);
+  width: 40px;
+  height: 40px;
+  border-radius: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.nav button:hover { background: var(--surface-raised); border-color: var(--accent); }
+.nav button:disabled { opacity: 0.3; cursor: default; }
+
+.progress {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--border-red);
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-bright);
+  transition: width 0.3s ease;
+}
+
+/* Title slide special styling */
+.title-slide {
+  align-items: center;
+  text-align: center;
+}
+
+.title-slide h1 {
+  font-size: clamp(36px, 5.5vw, 64px);
+  text-shadow: 0 0 40px rgba(212, 32, 48, 0.3);
+}
+
+.title-slide .scare-quotes {
+  color: var(--accent-bright);
+}
+
+.title-slide .slide-logo {
+  height: 40px;
+  opacity: 0.85;
+}
+
+.code-inline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--border-red);
+}
+
+.highlight-box {
+  border-left: 3px solid var(--accent);
+  padding: 12px 20px;
+  background: var(--accent-glow);
+  border-radius: 0 2px 2px 0;
+  margin: 16px 0;
+}
+
+.highlight-box p {
+  margin-bottom: 0;
+}
+</style>
+
+<div class="deck">
+
+  <!-- Title Slide -->
+  <div class="slide title-slide active" data-slide="0">
+    <h1><span class="scare-quotes">"Solving"</span> scheduling</h1>
+    <p class="subtitle">A weight-optimization approach to AMDGPU instruction scheduling</p>
+  </div>
+
+  <!-- Slide 1 -->
+  <div class="slide" data-slide="1">
+    <span class="slide-number">01 / 12</span>
+    <div class="content">
+      <h2>The truth about scheduling</h2>
+      <p>Scheduling is impossible to get right. Different kernels want fundamentally different things &mdash; one needs maximum occupancy, another needs maximum coexecution. No single policy is optimal everywhere.</p>
+      <p>The CoExec scheduler was built on this insight: ML kernels care about coexecution, and there is no one scheduler that achieves near-optimal performance across all of them.</p>
+      <div class="highlight-box">
+        <p>But there is a harder problem we have to face: scheduling has <em>side effects</em>. Two schedules with similar register pressure can produce very different register allocation outcomes &mdash; one may spill, the other may not. Heuristics that look locally correct can produce globally poor results.</p>
+      </div>
+      <p>We would thus like a way to <strong>teach the scheduler how to schedule for these side effects</strong> &mdash; to optimize for the final compiled result, not just the intermediate scheduling state.</p>
+    </div>
+  </div>
+
+  <!-- Slide 2: Results (moved before "A new/old approach") -->
+  <div class="slide" data-slide="2">
+    <span class="slide-number">02 / 12</span>
+    <div class="content">
+      <h2>Results</h2>
+      <p>Measured against the MaxOcc baseline scheduler across 397 ML kernels:</p>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <h3>Weighted + solved</h3>
+          <div class="stat-row">
+            <span class="stat-label">Faster</span>
+            <span class="stat-value good">338</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Slower</span>
+            <span class="stat-value warn">20</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Unchanged</span>
+            <span class="stat-value">22</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Geomean &Delta;</span>
+            <span class="stat-value good">&minus;29.8%</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Median &Delta;</span>
+            <span class="stat-value good">&minus;31.2%</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <h3>Default (tiered)</h3>
+          <div class="stat-row">
+            <span class="stat-label">Faster</span>
+            <span class="stat-value good">310</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Slower</span>
+            <span class="stat-value warn">48</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Unchanged</span>
+            <span class="stat-value">22</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Geomean &Delta;</span>
+            <span class="stat-value good">&minus;18.6%</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Median &Delta;</span>
+            <span class="stat-value good">&minus;29.0%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 3 -->
+  <div class="slide" data-slide="3">
+    <span class="slide-number">03 / 12</span>
+    <div class="content">
+      <h2>A new/old approach</h2>
+      <p>Traditional schedulers use a <em>tiered heuristic cascade</em>: check condition A, then B, then C, with rigid priority ordering. The first heuristic that differentiates two candidates wins. The underlying scheduling problem is NP-hard &mdash; heuristics are inherently approximate, and the cascade's rigid ordering leaves performance on the table.</p>
+      <p>The weighted cost approach replaces this with a single scoring function:</p>
+      <div class="eq-box">
+        <div class="eq-line"><span class="eq-accent">Score(candidate)</span> <span class="eq-dim">=</span> <span class="eq-dim">&Sigma;</span> w<sub>i</sub> &times; heuristic<sub>i</sub>(candidate)</div>
+      </div>
+      <p>Each heuristic returns a numerical cost. Each has an associated weight. The candidate with the highest weighted sum is scheduled next.</p>
+      <div class="highlight-box">
+        <p>The weights are configurable via a JSON file. This transforms the intractable NP scheduling problem into a <strong>continuous numerical optimization problem</strong> &mdash; a domain where highly effective solvers exist.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 4 -->
+  <div class="slide" data-slide="4">
+    <span class="slide-number">04 / 12</span>
+    <div class="content">
+      <h2>The framework (overfitting: a problem, or a solution?)</h2>
+      <p>The scheduling framework is a function of four components. We solve the optimization problem by measuring performance on the kernel corpus using the perf evaluation tool. If the corpus is representative, overfitting to it <em>is</em> the goal.</p>
+      <div class="pillars">
+        <div class="pillar">
+          <div class="pillar-icon">f(w)</div>
+          <div class="pillar-title">Optimization problem</div>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">&nabla;</div>
+          <div class="pillar-title">Solver</div>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">&cong;</div>
+          <div class="pillar-title">Perf tool</div>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">{}</div>
+          <div class="pillar-title">Kernel corpus</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 5 -->
+  <div class="slide" data-slide="5">
+    <span class="slide-number">05 / 12</span>
+    <div class="content">
+      <h2>Optimization problem</h2>
+      <div class="eq-box">
+        <div class="eq-line"><span class="eq-accent">&theta;*</span> <span class="eq-dim">=</span> argmin<sub>&theta;</sub> <span class="eq-dim">&Sigma;</span><sub>i=1..N</sub> PerfEval( schedule(&theta;, kernel<sub>i</sub>) )</div>
+      </div>
+      <ul>
+        <li><strong>&theta;</strong> is the weight vector &mdash; for example, currently 21 weights controlling the scheduling cost model</li>
+        <li><strong>PerfEval</strong> evaluates a compiled kernel, currently returning stall percentage from the static simulator</li>
+        <li>The total cost is the <strong>sum of stall % across all kernels</strong> in the corpus</li>
+        <li>The formulation is extensible &mdash; we could weight specific kernels more heavily, or change the metric entirely</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Slide 6 -->
+  <div class="slide" data-slide="6">
+    <span class="slide-number">06 / 12</span>
+    <div class="content">
+      <h2>Optimization solver</h2>
+      <h3>CMA-ES</h3>
+      <p>Covariance Matrix Adaptation Evolution Strategy &mdash; a derivative-free optimizer for continuous black-box problems.</p>
+      <ul>
+        <li><strong>No gradients needed</strong> &mdash; the objective (compile N kernels, sum stall %) has no analytic derivative. CMA-ES works from function evaluations alone.</li>
+        <li><strong>Learns variable correlations</strong> &mdash; adapts a full covariance matrix, discovering that e.g. increasing WStall should coincide with decreasing WMissedSlots</li>
+        <li><strong>Invariant to monotone transformations</strong> &mdash; we search in log<sub>10</sub> space to handle the 16-order-of-magnitude weight range (10<sup>&minus;1</sup> to 10<sup>15</sup>)</li>
+        <li><strong>Robust to noise</strong> &mdash; population-based sampling averages out per-kernel variance</li>
+        <li><strong>Well-suited to 21 dimensions</strong> &mdash; CMA-ES is designed for problems with 5&ndash;100 parameters</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Slide 7 -->
+  <div class="slide" data-slide="7">
+    <span class="slide-number">07 / 12</span>
+    <div class="content">
+      <h2>Perf evaluation &amp; kernel corpus</h2>
+      <div class="two-col">
+        <div class="principle-card">
+          <h3>GPUCSim</h3>
+          <p>The static simulator provides cycle-accurate performance estimates at compile time. Each weight vector is evaluated by compiling all 397 kernels and summing their stall percentages &mdash; no GPU hardware required.</p>
+          <p style="margin-top: 8px; color: var(--fg-dim); font-size: 14px;">Full simulation captures spills, va_vdst hazards, and memory pipeline effects that simpler models miss.</p>
+        </div>
+        <div class="principle-card">
+          <h3>MLKernelCorpus</h3>
+          <p>397 production IR files drawn from aiter, triton, gluon, and OAI workloads &mdash; intended to be the complete representative set of ML kernels that matter.</p>
+          <p style="margin-top: 8px; color: var(--fg-dim); font-size: 14px;">Covers FA, GEMM, MoE, and other operator shapes across bf16, fp8, and fp4 dtypes.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 8 -->
+  <div class="slide" data-slide="8">
+    <span class="slide-number">08 / 12</span>
+    <div class="content">
+      <h2>Design principles</h2>
+      <div class="two-col">
+        <div class="principle-card">
+          <h3>Pluggable weights</h3>
+          <p>Any user can train weights against their own kernel set. This lets us specialize a delivery for a specific customer, or go back in time and re-optimize against an older compiler.</p>
+        </div>
+        <div class="principle-card">
+          <h3>Side effects are first-class</h3>
+          <p>By optimizing against final compiled output, we directly account for RA spills, va_vdst insertion, and other post-scheduling effects. This contrasts with approaches like MLGO, which relies on rewards based on state observable to the scheduler and cannot capture downstream compilation effects.</p>
+        </div>
+        <div class="principle-card">
+          <h3>Straightforward delivery</h3>
+          <p>A JSON weight vector ships with the compiler. Enable with a flag and point it at the config. No runtime dependencies, no model inference, no rebuilding the compiler.</p>
+        </div>
+        <div class="principle-card">
+          <h3>Maximum solver control</h3>
+          <p>The impacted decision point is <span class="code-inline">pickNode</span>. The weights determine which instruction is scheduled next at every step, giving the solver full control over the schedule.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 9 -->
+  <div class="slide" data-slide="9">
+    <span class="slide-number">09 / 12</span>
+    <div class="content">
+      <h2>Best practices</h2>
+
+      <ul>
+        <li><strong>Representative corpus</strong> &mdash; The weighted model is designed to optimize a set of kernels. That set must cover everything we care about scheduling. Missing workloads means unoptimized workloads.</li>
+        <li><strong>Well-designed knobs</strong> &mdash; Heuristic scores should be smooth and monotonic where possible. A score that jumps discontinuously gives the solver less signal to work with. Orthogonal scores (measuring distinct things) are better than redundant ones.</li>
+        <li><strong>Accurate perf evaluation</strong> &mdash; The solver is only as good as its feedback. Static simulation accuracy directly translates to real-hardware gains. Garbage in, garbage out.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Slide 10 -->
+  <div class="slide" data-slide="10">
+    <span class="slide-number">10 / 12</span>
+    <div class="content">
+      <h2>Dev flow</h2>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="step-num">Identify</div>
+          <p>New kernel from triton/aiter has poor scheduling with current weights</p>
+        </div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">
+          <div class="step-num">Add</div>
+          <p>Include the kernel in the corpus</p>
+        </div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">
+          <div class="step-num">Retrain</div>
+          <p>Re-run CMA-ES &mdash; solver finds new weights that balance old and new kernels</p>
+        </div>
+      </div>
+      <div class="highlight-box" style="margin-top: 20px">
+        <p>The solver does not <em>solve</em> all compiler problems &mdash; it finds the best compromise given every current deficiency. If a severe RA bug is compensated for by the weights, fixing that bug lets the solver push further. Designing new heuristics which are better fit for the solver, or capture some new scheduling property, gives it increased control.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 11 -->
+  <div class="slide" data-slide="11">
+    <span class="slide-number">11 / 12</span>
+    <div class="content">
+      <h2>Known drawbacks</h2>
+
+      <div class="drawback-list">
+        <div class="drawback">
+          <div class="drawback-marker">1</div>
+          <div>
+            <p><span class="drawback-title">Generalization is not guaranteed.</span> The optimized weights are tuned to the corpus. Kernels outside it may not benefit &mdash; or could regress. The corpus must be kept representative of real workloads.</p>
+          </div>
+        </div>
+        <div class="drawback">
+          <div class="drawback-marker">2</div>
+          <div>
+            <p><span class="drawback-title">Accuracy bottleneck.</span> The solver optimizes what the perf tool measures. If the static simulator is inaccurate on a class of kernels, the weights will be mis-tuned for them.</p>
+          </div>
+        </div>
+        <div class="drawback">
+          <div class="drawback-marker">3</div>
+          <div>
+            <p><span class="drawback-title">Periodic retuning required.</span> Compiler changes (new passes, RA improvements) and new kernel shapes can shift the landscape enough that weights need re-solving.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 12 -->
+  <div class="slide" data-slide="12">
+    <span class="slide-number">12 / 12</span>
+    <div class="content" style="text-align: center; max-width: 700px; margin: 0 auto;">
+      <h2>Feedback</h2>
+      <p class="feedback-prompt">Is this the final design, or a stepping stone?</p>
+      <p style="margin-top: 32px; color: var(--fg-dim);">The weighted cost model and CMA-ES solver are production-ready today. But the framework &mdash; pluggable weights, configurable corpus, swappable perf tools &mdash; is designed to evolve. What should it become?</p>
+    </div>
+  </div>
+
+</div>
+
+<nav class="nav">
+  <button id="prev" aria-label="Previous slide">&larr;</button>
+  <button id="next" aria-label="Next slide">&rarr;</button>
+</nav>
+
+<div class="progress">
+  <div class="progress-bar" id="progress"></div>
+</div>
+
+<script>
+(function() {
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  let current = 0;
+
+  function goTo(n) {
+    if (n < 0 || n >= total) return;
+    slides[current].classList.remove('active');
+    current = n;
+    slides[current].classList.add('active');
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === total - 1;
+    document.getElementById('progress').style.width = ((current / (total - 1)) * 100) + '%';
+  }
+
+  document.getElementById('prev').addEventListener('click', () => goTo(current - 1));
+  document.getElementById('next').addEventListener('click', () => goTo(current + 1));
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(current - 1); }
+  });
+
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) { dx < 0 ? goTo(current + 1) : goTo(current - 1); }
+  });
+
+  goTo(0);
+})();
+</script>
